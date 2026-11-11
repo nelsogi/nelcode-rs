@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "La fenêtre principale : événements et appels des commandes de l'application.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

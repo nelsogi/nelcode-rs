@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["nel-engine"]
+members = ["nel-engine", "nel-desktop"]
 
 [profile.dev.package."*"]
 opt-level = 3

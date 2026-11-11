@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nel Code</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand"><span class="logo">✻</span> Nel Code</div>
+    <button id="new-chat" class="new-chat" title="Nouvelle conversation (Ctrl+N)">
+      <span>＋ Nouvelle conversation</span><kbd>Ctrl N</kbd>
+    </button>
+    <input id="search" class="search" type="search" placeholder="Rechercher…" spellcheck="false">
+    <div class="section-title">Conversations</div>
+    <ul id="sessions" class="list sessions"></ul>
+    <div class="section-title models-title">
+      <span>Modèles</span>
+      <button id="import-btn" class="icon-btn" title="Importer un .nelmodel (ou glisse-le dans la fenêtre)">＋</button>
+    </div>
+    <ul id="models" class="list models"></ul>
+    <div class="sidebar-foot">
+      <button id="settings-btn" class="ghost" title="Réglages (Ctrl+,)">⚙ Réglages</button>
+      <button id="palette-btn" class="ghost" title="Palette de commandes"><kbd>Ctrl K</kbd></button>
+    </div>
+  </aside>
+
+  <section id="main">
+    <header id="topbar">
+      <div id="title" class="title" title="Double-clic pour renommer (F2)">Nouvelle conversation</div>
+      <div class="chips">
+        <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span class="chip-icon">📁</span><span id="folder-name"></span></button>
+        <button id="folder-open" class="chip icon-only" title="Ouvrir le dossier dans l'Explorateur">↗</button>
+      </div>
+    </header>
+
+    <div id="scroller">
+      <div id="messages"></div>
+      <div id="empty" class="empty">
+        <div class="empty-logo">✻</div>
+        <h1>Bienvenue dans Nel Code</h1>
+        <p id="empty-hint">Écris un message pour commencer. <kbd>/</kbd> pour les commandes, <kbd>Ctrl K</kbd> pour la palette.</p>
+      </div>
+    </div>
+
+    <div id="composer">
+      <div id="suggest" class="suggest" hidden></div>
+      <div class="input-box">
+        <span class="prompt-char">›</span>
+        <textarea id="input" rows="1" placeholder="Écris un message…  (/ pour les commandes)" spellcheck="false"></textarea>
+        <button id="send" class="send" title="Envoyer (Entrée)">↑</button>
+      </div>
+      <div id="statusbar">
+        <div id="context" class="context" title="Ce que le modèle verra au prochain message">
+          <div class="bar"><div id="context-fill"></div></div>
+          <span id="context-text">— / — tokens</span>
+        </div>
+        <span id="status" class="status"></span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon">⬇</div>Dépose un fichier <b>.nelmodel</b> pour l'importer</div></div>
+<div id="overlay" class="overlay" hidden></div>
+<div id="menu" class="menu" hidden></div>
+<div id="toasts" class="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
