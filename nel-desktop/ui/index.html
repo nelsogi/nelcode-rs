@@ -9,21 +9,21 @@
 <body>
 <div id="app">
   <aside id="sidebar">
-    <div class="brand"><span class="logo">✻</span> Nel Code</div>
+    <div class="brand"><span class="logo"><span data-icon="asterisk"></span></span> Nel Code</div>
     <button id="new-chat" class="new-chat" title="Nouvelle conversation (Ctrl+N)">
-      <span>＋ Nouvelle conversation</span><kbd>Ctrl N</kbd>
+      <span><span data-icon="plus"></span> Nouvelle conversation</span><kbd>Ctrl N</kbd>
     </button>
     <input id="search" class="search" type="search" placeholder="Rechercher…" spellcheck="false">
     <div class="section-title">Conversations</div>
     <ul id="sessions" class="list sessions"></ul>
     <div class="section-title models-title">
       <span>Modèles</span>
-      <button id="import-btn" class="icon-btn" title="Importer un .nelmodel (ou glisse-le dans la fenêtre)">＋</button>
+      <button id="import-btn" class="icon-btn" title="Importer un .nelmodel (ou glisse-le dans la fenêtre)" aria-label="Importer un modèle"><span data-icon="plus"></span></button>
     </div>
     <ul id="models" class="list models"></ul>
     <div class="sidebar-foot">
-      <button id="settings-btn" class="ghost" title="Réglages (Ctrl+,)">⚙ Réglages</button>
-      <button id="arena-btn" class="ghost" title="Classement du mode comparaison">🏆</button>
+      <button id="settings-btn" class="ghost" title="Réglages (Ctrl+,)"><span data-icon="settings"></span> Réglages</button>
+      <button id="arena-btn" class="ghost" title="Classement du mode comparaison" aria-label="Classement"><span data-icon="trophy"></span></button>
       <button id="palette-btn" class="ghost" title="Palette de commandes"><kbd>Ctrl K</kbd></button>
     </div>
   </aside>
@@ -33,16 +33,16 @@
       <div id="title" class="title" title="Double-clic pour renommer (F2)">Nouvelle conversation</div>
       <div class="chips">
         <span id="compare-chip" class="chip" hidden title="Conversation comparée : chaque message part aux deux modèles"></span>
-        <button id="transp-btn" class="chip" title="Mode transparence : au survol d'un mot, les 5 choix du modèle">◐ Transparence</button>
-        <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span class="chip-icon">📁</span><span id="folder-name"></span></button>
-        <button id="folder-open" class="chip icon-only" title="Ouvrir le dossier dans l'Explorateur">↗</button>
+        <button id="transp-btn" class="chip" title="Mode transparence : au survol d'un mot, les 5 choix du modèle"><span data-icon="eye"></span><span>Transparence</span></button>
+        <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span data-icon="folder"></span><span id="folder-name"></span></button>
+        <button id="folder-open" class="chip icon-only" title="Ouvrir le dossier dans l'Explorateur" aria-label="Ouvrir le dossier"><span data-icon="external-link"></span></button>
       </div>
     </header>
 
     <div id="scroller">
       <div id="messages"></div>
       <div id="empty" class="empty">
-        <div class="empty-logo">✻</div>
+        <div class="empty-logo"><span data-icon="asterisk"></span></div>
         <h1>Bienvenue dans Nel Code</h1>
         <p id="empty-hint">Écris un message pour commencer. <kbd>/</kbd> pour les commandes, <kbd>Ctrl K</kbd> pour la palette.</p>
       </div>
@@ -51,9 +51,9 @@
     <div id="composer">
       <div id="suggest" class="suggest" hidden></div>
       <div class="input-box">
-        <span class="prompt-char">›</span>
+        <span class="prompt-char"><span data-icon="chevron-right"></span></span>
         <textarea id="input" rows="1" placeholder="Écris un message…  (/ pour les commandes)" spellcheck="false"></textarea>
-        <button id="send" class="send" title="Envoyer (Entrée)">↑</button>
+        <button id="send" class="send" title="Envoyer (Entrée)" aria-label="Envoyer"><span data-icon="arrow-up"></span></button>
       </div>
       <div id="statusbar">
         <div id="context" class="context" title="Ce que le modèle verra au prochain message">
@@ -66,12 +66,13 @@
   </section>
 </div>
 
-<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon">⬇</div>Dépose un fichier <b>.nelmodel</b> pour l'importer</div></div>
+<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> pour l'importer</div></div>
 <div id="overlay" class="overlay" hidden></div>
 <div id="menu" class="menu" hidden></div>
 <div id="toasts" class="toasts"></div>
 <div id="tip" class="tip" hidden></div>
 
+<script src="icons.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

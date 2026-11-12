@@ -147,3 +147,6 @@ construit l'installateur et crée une release **brouillon** (voir `.github/workf
 
 Le code est sous licence [MIT](LICENSE). Les modèles ont leur propre licence : celle de `minichat-v3b` est dans sa
 [carte](MODEL-CARD.md) (usage non commercial).
+
+Les icônes de l'interface (`nel-desktop/ui/icons.js`) sont tirées de [Lucide](https://lucide.dev), sous licence
+[ISC](https://github.com/lucide-icons/lucide/blob/main/LICENSE) : © Lucide Contributors (2022), © Cole Bemis (2013-2022, Feather).

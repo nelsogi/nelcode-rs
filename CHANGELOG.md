@@ -13,6 +13,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
     ≥ 60 %) ou rouge (hésitant, < 30 %). Les probabilités sont gardées avec le message ;
   - mode comparaison (Ctrl+Maj+N) : chaque message part à deux modèles, réponses côte à côte, votes « A / B / égalité »
     dans `arena.json`, et un classement (score Elo, pourcentage de victoires).
+  - couleur d'accent rouge par défaut ; l'ancienne (terre cuite) se choisit dans les Réglages. Toutes les couleurs sont
+    des variables CSS, avec un thème clair (`"theme": "light"` dans settings.json, comme Nel Code C#) ; texte ≥ 4,5:1 ;
+  - icônes SVG (Lucide, licence ISC) à la place des emojis et symboles ; les erreurs ont leur icône et leur fond.
 
 ## [0.1.0] - 2026-11-11
 

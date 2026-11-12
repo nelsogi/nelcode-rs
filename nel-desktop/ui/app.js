@@ -54,10 +54,17 @@ function relDate(iso) {
 }
 
 function toast(text, kind = '', ms = 4500) {
-  const el = h('div', { class: 'toast ' + kind }, text);
+  const el = h('div', { class: 'toast ' + kind }, kind === 'error' ? [icon('circle-alert'), h('div', {}, text)] : text);
   $('toasts').append(el);
   if (ms) setTimeout(() => el.remove(), ms);
   return el;
+}
+
+// Thème (settings.json, partagé avec Nel Code C#) et couleur d'accent : des attributs sur <html>, lus par style.css.
+function applyTheme() {
+  const d = document.documentElement.dataset;
+  d.theme = S.settings.theme === 'light' ? 'light' : 'dark';
+  d.accent = S.settings.accent === 'orange' ? 'orange' : 'red';
 }
 
 // --- Conversations ---------------------------------------------------------------------------------------
@@ -417,12 +424,12 @@ function compareEl(m, i) {
   const btn = (winner, label) => h('button', { class: m.vote === winner ? 'on' : '', disabled: busy, onclick: () => vote(i, winner) }, label);
   return h('div', { class: 'msg compare' },
     h('div', { class: 'pair' }, sideEl('a', m.model, m.content, m.tokens, m.vote === 'a'), sideEl('b', m.compare.model, m.compare.content, m.compare.tokens, m.vote === 'b')),
-    h('div', { class: 'votes' }, btn('a', '◀ A est meilleur'), btn('tie', '＝ Égalité'), btn('b', 'B est meilleur ▶')));
+    h('div', { class: 'votes' }, btn('a', [icon('chevron-left'), 'A est meilleur']), btn('tie', [icon('equal'), 'Égalité']), btn('b', ['B est meilleur', icon('chevron-right')])));
 }
 
 function compareStreamingEl() {
   const g = S.gen, s = g.session.compare;
-  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), h('div', { class: 'body' }, g[k].text.trimStart()));
+  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), h('div', { class: 'body' }, g[k].text ? g[k].text.trimStart() : waiting('en attente…')));
   return h('div', { class: 'msg compare' }, h('div', { class: 'pair' }, side('a', s.a), side('b', s.b)));
 }
 
@@ -497,12 +504,12 @@ function renderSessions() {
   if (S.current && !S.current.messages.length && !q)
     ul.append(h('li', { class: 'active' }, h('span', { class: 'label' }, 'Nouvelle conversation')));
   for (const s of list) {
-    const more = h('button', { class: 'more', title: 'Plus…', onclick: (e) => { e.stopPropagation(); sessionMenu(s, e); } }, '⋯');
+    const more = h('button', { class: 'more', title: 'Plus…', 'aria-label': 'Plus', onclick: (e) => { e.stopPropagation(); sessionMenu(s, e); } }, icon('ellipsis'));
     ul.append(h('li', {
       class: s === S.current ? 'active' : '', title: titleOf(s),
       onclick: () => openSession(s), oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e); },
       ondblclick: () => renameSession(s),
-    }, h('span', { class: 'label' }, (s.compare ? '⇄ ' : '') + titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
+    }, h('span', { class: 'label' }, s.compare ? icon('arrow-left-right') : null, titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
   }
   if (!ul.children.length) ul.append(h('li', { class: 'none' }, q ? 'Aucun résultat.' : 'Pas encore de conversation.'));
 }
@@ -517,9 +524,9 @@ function renderModels() {
       class: (active ? 'active ' : '') + (loading ? 'loading' : ''), title: tip,
       onclick: () => !active && loadModel(m.name), oncontextmenu: (e) => { e.preventDefault(); modelMenu(m, e); },
     }, h('span', { class: 'dot' }), h('span', { class: 'label' }, m.name), h('span', { class: 'meta' }, loading ? 'chargement…' : paramsText(m.parameters)),
-    h('button', { class: 'more', title: 'Plus…', onclick: (e) => { e.stopPropagation(); modelMenu(m, e); } }, '⋯')));
+    h('button', { class: 'more', title: 'Plus…', 'aria-label': 'Plus', onclick: (e) => { e.stopPropagation(); modelMenu(m, e); } }, icon('ellipsis'))));
   }
-  if (!S.models.length) ul.append(h('li', { class: 'none', onclick: () => importFlow() }, 'Aucun modèle. Glisse un .nelmodel ici, ou ＋.'));
+  if (!S.models.length) ul.append(h('li', { class: 'none', onclick: () => importFlow() }, 'Aucun modèle. Glisse un .nelmodel ici, ou ', icon('plus'), '.'));
 }
 
 function renderHeader() {
@@ -530,7 +537,7 @@ function renderHeader() {
   $('folder-chip').title = 'Dossier de travail : ' + (dir || '(aucun)') + '\nClic : changer';
   document.title = `${titleOf(s)} — Nel Code`;
   $('compare-chip').hidden = !s.compare;
-  if (s.compare) $('compare-chip').textContent = `A ${s.compare.a} ⇄ B ${s.compare.b}`;
+  if (s.compare) $('compare-chip').replaceChildren(`A ${s.compare.a}`, icon('arrow-left-right'), h('span', {}, `B ${s.compare.b}`));
   $('transp-btn').classList.toggle('on', !!S.settings.transparency);
 }
 
@@ -563,14 +570,16 @@ function renderMessages() {
   if (g) { const sc = $('scroller'); sc.scrollTop = sc.scrollHeight; }
 }
 
+const waiting = (text) => h('span', { class: 'waiting' }, icon('asterisk'), text);
+
 function streamingEl() {
-  const el = h('div', { class: 'msg assistant ' + (S.gen.text ? 'streaming' : 'thinking') }, h('div', { class: 'body' }, S.gen.text.trimStart()));
-  return el;
+  return h('div', { class: 'msg assistant ' + (S.gen.text ? 'streaming' : 'thinking') }, h('div', { class: 'body' }, S.gen.text ? S.gen.text.trimStart() : waiting('réfléchit…')));
 }
 
 function messageEl(m, i, faded) {
   const user = m.role === 'user';
   const el = h('div', { class: `msg ${user ? 'user' : 'assistant'}${faded ? ' faded' : ''}` });
+  if (user) el.append(h('span', { class: 'marker' }, icon('chevron-right')));
   if (user && editing === i) {
     const ta = h('textarea', { class: 'edit-box', spellcheck: 'false' });
     ta.value = m.content;
@@ -588,20 +597,21 @@ function messageEl(m, i, faded) {
   el.append(user ? h('div', { class: 'body' }, m.content) : bodyEl(m.content, m.tokens));
   const busy = !!S.gen;
   const acts = h('div', { class: 'actions' });
-  acts.append(actionButton('⧉ Copier', 'Copier le message', async (e) => {
+  acts.append(actionButton([icon('copy'), 'Copier'], 'Copier le message', async (e) => {
+    const b = e.currentTarget;
     await navigator.clipboard.writeText(m.content);
-    e.target.textContent = '✓ Copié'; setTimeout(() => (e.target.textContent = '⧉ Copier'), 1200);
+    b.replaceChildren(icon('check'), 'Copié'); setTimeout(() => b.replaceChildren(icon('copy'), 'Copier'), 1200);
   }));
-  if (user) acts.append(actionButton('✎ Modifier', 'Modifier et renvoyer (la suite est retirée)', () => startEdit(i), busy));
+  if (user) acts.append(actionButton([icon('pencil'), 'Modifier'], 'Modifier et renvoyer (la suite est retirée)', () => startEdit(i), busy));
   else {
     const prev = S.current.messages[i - 1];
-    if (prev?.role === 'user' && !S.current.compare) acts.append(actionButton('↻ Régénérer', 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
+    if (prev?.role === 'user' && !S.current.compare) acts.append(actionButton([icon('refresh-cw'), 'Régénérer'], 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
     if (m.versions?.length > 1) {
       const at = m.versions.indexOf(m.content);
       acts.append(h('span', { class: 'versions' },
-        actionButton('‹', 'Version précédente', () => stepVersion(i, -1), busy || at <= 0),
+        actionButton(icon('chevron-left'), 'Version précédente', () => stepVersion(i, -1), busy || at <= 0),
         `${at + 1}/${m.versions.length}`,
-        actionButton('›', 'Version suivante', () => stepVersion(i, +1), busy || at >= m.versions.length - 1)));
+        actionButton(icon('chevron-right'), 'Version suivante', () => stepVersion(i, +1), busy || at >= m.versions.length - 1)));
       acts.classList.add('keep');
     }
   }
@@ -612,8 +622,9 @@ function messageEl(m, i, faded) {
 function renderComposer() {
   const b = $('send');
   b.classList.toggle('stop', !!S.gen);
-  b.textContent = S.gen ? '■' : '↑';
+  b.replaceChildren(icon(S.gen ? 'square' : 'arrow-up'));
   b.title = S.gen ? 'Arrêter (Échap)' : 'Envoyer (Entrée)';
+  b.setAttribute('aria-label', S.gen ? 'Arrêter' : 'Envoyer');
 }
 
 function renderStatus() {
@@ -654,7 +665,7 @@ const COMMANDS = [
   { name: 'classement', desc: 'Classement du mode comparaison', run: () => openLeaderboard() },
   { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
   { name: 'model', args: '<nom>', desc: 'Charger un modèle installé', run: (a) => a ? loadModel(a) : toast('Usage : /model <nom>', 'warning') },
-  { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.map((m) => `${m.name === S.model.name ? '● ' : '  '}${m.name} — ${sizeText(m.bytes)}`).join('\n') || 'Aucun modèle.', '', 8000) },
+  { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.length ? S.models.map((m) => h('div', { class: 'line' }, m.name === S.model.name ? icon('check') : h('span', { class: 'pad' }), `${m.name} — ${sizeText(m.bytes)}`)) : 'Aucun modèle.', '', 8000) },
   { name: 'import', args: '[fichier]', desc: 'Importer un .nelmodel (chemin relatif au dossier de travail)', run: (a) => importFlow(a || null) },
   { name: 'temp', args: '<0.1 à 2>', desc: 'Température : bas = sage, haut = créatif', run: (a) => setSetting('temperature', a) },
   { name: 'topk', args: '<n>', desc: 'Tirage parmi les K tokens les plus probables (0 = sans limite)', run: (a) => setSetting('topK', a) },
@@ -757,12 +768,18 @@ async function openSettings() {
     r.addEventListener('input', () => (out.textContent = r.value));
     return h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, f.label), out), r, h('div', { class: 'hint' }, f.hint));
   });
+  const accent = h('select', { class: 'text-input' }, h('option', { value: 'red' }, 'Rouge (par défaut)'), h('option', { value: 'orange' }, 'Terre cuite (ancienne couleur)'));
+  accent.value = s.accent === 'orange' ? 'orange' : 'red';
+  accent.addEventListener('change', () => (document.documentElement.dataset.accent = accent.value));
+  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
-  if (!choice) return;
-  const changes = choice === 'reset'
-    ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80 }
-    : Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)]));
-  try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
+  if (choice) {
+    const changes = choice === 'reset'
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, accent: 'red' }
+      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value };
+    try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
+  }
+  applyTheme();
 }
 
 function showHelp() {
@@ -828,7 +845,7 @@ function openPalette() {
   input.focus();
 }
 
-// Menu contextuel (⋯ ou clic droit).
+// Menu contextuel (bouton « Plus » ou clic droit).
 function showMenu(e, items) {
   const menu = $('menu');
   menu.replaceChildren(...items.map((it) => it === '-' ? h('hr') : h('button', { class: it.danger ? 'danger' : '', onclick: () => { menu.hidden = true; it.run(); } }, it.label)));
@@ -981,6 +998,7 @@ listen('tauri://drag-drop', (e) => {
 
 (async () => {
   [S.info, S.settings, S.sessions] = await Promise.all([invoke('app_info'), invoke('get_settings'), invoke('list_sessions')]);
+  applyTheme();
   await refreshModels();
   S.current = newSession();
   const st = await invoke('model_status');
