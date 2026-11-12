@@ -108,9 +108,16 @@ export async function launch({ settings = {}, files = {}, env = {} } = {}) {
 
   const close = async () => {
     ws.close();
+    const exited = app.exitCode !== null ? Promise.resolve() : new Promise((r) => app.once('exit', r));
     app.kill();
-    await sleep(1000);   // WebView2 lâche ses fichiers
-    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    await Promise.race([exited, sleep(10_000)]);
+    // Les processus de WebView2 peuvent garder le dossier quelques secondes de plus : ce n'est qu'un dossier
+    // temporaire, un échec ici n'en est pas un pour les tests.
+    try {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 });
+    } catch (e) {
+      console.warn(`dossier temporaire non effacé : ${home} (${e.code})`);
+    }
   };
 
   await waitFor(`typeof S === 'object' && !!S.info.version && !!S.current`, 30_000, 'démarrage de l\'interface');
