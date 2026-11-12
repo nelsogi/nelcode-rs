@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   windows:
-    # windows-2025 : Visual Studio 2022 (MSVC v143), que nvcc 12.9 accepte (pas MSVC 14.5x de VS 2026).
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
@@ -62,7 +61,23 @@ jobs:
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev"]'
 
+      # L'image a Visual Studio 2026 (MSVC 14.5x), que nvcc 12.9 refuse : on y ajoute MSVC v143 (14.44), et c'est
+      # lui qui est mis dans le PATH (cl.exe pour nvcc, et le reste de la compilation).
+      - name: MSVC v143 pour nvcc
+        shell: pwsh
+        run: |
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vs = & "$installer\vswhere.exe" -latest -products * -property installationPath
+          if (-not (Test-Path "$vs\VC\Tools\MSVC\14.44.*")) {
+            $p = Start-Process "$installer\setup.exe" -Wait -PassThru -ArgumentList 'modify', '--installPath', "`"$vs`"",
+              '--add', 'Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64', '--quiet', '--norestart'
+            if ($p.ExitCode -notin 0, 3010) { throw "installation de MSVC v143 : code $($p.ExitCode)" }
+          }
+          Get-ChildItem "$vs\VC\Tools\MSVC" -Name
+
       - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: "14.44"
 
       # La section de CHANGELOG.md pour cette version : en tête de la release, et dans latest.json (le bandeau
       # « Nel Code X.Y.Z est disponible » l'affiche, jusqu'au « --- »).
