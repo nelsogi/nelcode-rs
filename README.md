@@ -14,7 +14,7 @@ en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust
 
 ## Installation
 
-1. Télécharge `Nel Code_0.1.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.2.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul

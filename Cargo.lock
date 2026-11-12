@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "nel-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "candle-core",
  "nel-engine",
@@ -2571,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "nel-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "candle-core",
  "candle-nn",
