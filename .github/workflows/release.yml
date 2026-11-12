@@ -1,0 +1,58 @@
+# Un tag v* (par exemple v0.1.0) : tests, installateur Windows, release brouillon sur GitHub.
+# La release reste un brouillon : rien n'est publié tant qu'on ne clique pas sur « Publish release ».
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # créer la release brouillon et y joindre l'installateur
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Le tag correspond à la version de nel-desktop/Cargo.toml
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version' nel-desktop/Cargo.toml | cut -d '"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas à la version $version de nel-desktop/Cargo.toml"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Les tests comparent le moteur aux sorties de référence du modèle de test, qui n'est pas dans le dépôt
+      # (222 Mo) : il est pris dans la release « models ».
+      - name: Modèle de test
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download models --pattern "minichat-v3b.nelmodel" --dir test-models
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Installateur et release brouillon
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: nel-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Nel Code ${{ github.ref_name }}
+          releaseBody: |
+            Installateur Windows de Nel Code. Les changements sont dans [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
+
+            Un modèle à importer (glisser-déposer le `.nelmodel` dans la fenêtre) : voir la release [models](https://github.com/${{ github.repository }}/releases/tag/models) et sa [carte](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/MODEL-CARD.md).
+
+            L'installateur n'est pas signé : Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » → « Informations complémentaires » → « Exécuter quand même ».
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: false

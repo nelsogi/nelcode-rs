@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nel Code",
-  "version": "0.1.0",
+  "mainBinaryName": "Nel Code",
   "identifier": "com.nelcode.desktop",
   "build": {
     "frontendDist": "ui"
@@ -27,9 +27,45 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
     "shortDescription": "Discuter avec des modèles MiniChat",
-    "fileAssociations": [{ "ext": ["nelmodel"], "name": "Modèle Nel Code", "description": "Modèle MiniChat pour Nel Code", "role": "Viewer" }]
+    "fileAssociations": [
+      {
+        "ext": [
+          "nelmodel"
+        ],
+        "name": "Modèle Nel Code",
+        "description": "Modèle MiniChat pour Nel Code",
+        "role": "Viewer"
+      }
+    ],
+    "publisher": "Nelson Rossi",
+    "copyright": "© 2026 Nelson Rossi",
+    "homepage": "https://github.com/nelsogi/nelcode-rs",
+    "category": "Productivity",
+    "licenseFile": "../LICENSE",
+    "longDescription": "Nel Code discute avec les petits modèles de langage entraînés par MiniChat (.nelmodel), entièrement sur ton PC, sans connexion.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "languages": [
+          "French"
+        ],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
   }
 }
