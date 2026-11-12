@@ -323,6 +323,38 @@ pub fn save_settings(changes: &serde_json::Map<String, serde_json::Value>) -> Re
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// arena.json : les votes du mode comparaison, { votes: [{ id, a, b, winner: "a" | "b" | "tie", date }] }.
+// `id` (conversation#message) : revoter sur la même réponse remplace l'ancien vote.
+
+pub fn load_arena() -> serde_json::Value {
+    fs::read(root().join("arena.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .filter(|v| v["votes"].is_array())
+        .unwrap_or_else(|| serde_json::json!({ "votes": [] }))
+}
+
+pub fn arena_vote(vote: serde_json::Value) -> Result<serde_json::Value> {
+    let str_of = |k: &str| vote[k].as_str().filter(|s| !s.is_empty());
+    let (Some(id), Some(_), Some(_), Some(winner)) = (str_of("id"), str_of("a"), str_of("b"), str_of("winner")) else {
+        return Err("vote incomplet".into());
+    };
+    if !["a", "b", "tie"].contains(&winner) {
+        return Err(format!("vote inconnu : {winner}"));
+    }
+    let mut arena = load_arena();
+    let votes = arena["votes"].as_array_mut().unwrap();
+    votes.retain(|v| v["id"].as_str() != Some(id));
+    votes.push(vote);
+    fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+    let path = root().join("arena.json");
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, serde_json::to_string_pretty(&arena).unwrap()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(arena)
+}
+
+// ---------------------------------------------------------------------------------------------------------
 
 /// weights.dat de TorchSharp (`module.save`) : nombre de tenseurs, puis pour chacun son nom, son type,
 /// sa forme et ses données brutes (little-endian). Les entiers sont en LEB128, le nom en UTF-8 préfixé
@@ -461,6 +493,14 @@ mod tests {
         delete_session("2026-01-01_00-00-00-000").unwrap();
         assert!(list_sessions().is_empty());
         assert!(save_session(&serde_json::json!({ "id": "../x", "messages": [] })).is_err());
+
+        // Arène : un vote par réponse (revoter remplace), votes invalides refusés.
+        assert_eq!(load_arena()["votes"].as_array().unwrap().len(), 0);
+        arena_vote(serde_json::json!({ "id": "s#1", "a": "v3", "b": "v4", "winner": "a" })).unwrap();
+        let arena = arena_vote(serde_json::json!({ "id": "s#1", "a": "v3", "b": "v4", "winner": "tie" })).unwrap();
+        assert_eq!(arena["votes"].as_array().unwrap().len(), 1);
+        assert_eq!(load_arena()["votes"][0]["winner"], "tie");
+        assert!(arena_vote(serde_json::json!({ "id": "s#2", "a": "v3", "b": "v4", "winner": "x" })).is_err());
         fs::remove_dir_all(&home).unwrap();
     }
 

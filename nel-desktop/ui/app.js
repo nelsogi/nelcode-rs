@@ -100,7 +100,7 @@ async function saveSession(s) {
   renderSessions();
 }
 
-function touch(s) { s.date = localIso(); if (S.model.name) s.model = S.model.name; }
+function touch(s) { s.date = localIso(); if (s.compare) s.model = s.compare.a; else if (S.model.name) s.model = S.model.name; }
 
 function openSession(s) {
   if (S.current === s) return;
@@ -111,7 +111,7 @@ function openSession(s) {
 }
 
 function startNew() {
-  if (S.current && !S.current.messages.length) { $('input').focus(); return; }
+  if (S.current && !S.current.messages.length && !S.current.compare) { $('input').focus(); return; }
   openSession(newSession());
 }
 
@@ -140,6 +140,7 @@ async function exportSession(s, markdown) {
   let text = (markdown ? `# ${title}` : title) + '\n\n' + (markdown ? `*${about}*` : about) + '\n\n';
   for (const m of s.messages) {
     const user = m.role === 'user';
+    if (m.compare) { text += `● [${m.model}] ${m.content}\n\n● [${m.compare.model}] ${m.compare.content}\n\n`; continue; }
     text += markdown ? `${user ? '**Moi**' : '**MiniChat**'}\n\n${m.content}\n\n` : `${user ? '>' : '●'} ${m.content}\n\n`;
   }
   const fileName = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + (markdown ? '.md' : '.txt');
@@ -225,12 +226,12 @@ async function importFlow(path) {
 
 function genOptions() {
   const s = S.settings;
-  return { temperature: s.temperature, topK: s.topK, topP: s.topP, maxReplyTokens: s.maxReplyTokens };
+  return { temperature: s.temperature, topK: s.topK, topP: s.topP, maxReplyTokens: s.maxReplyTokens, transparency: !!s.transparency };
 }
 
 function canGenerate() {
   if (S.gen) return false;
-  if (!S.model.name) {
+  if (!S.model.name && !S.current?.compare) {
     toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, ou importe un .nelmodel.', 'warning');
     return false;
   }
@@ -243,12 +244,13 @@ async function send(text) {
   const s = S.current;
   const history = turnsOf(s.messages);
   s.messages.push({ role: 'user', content: text });
+  if (s.compare) return startGen(s, { kind: 'compare', question: text, history, historyB: turnsOf(s.messages.map((m) => m.compare ? { role: 'assistant', content: m.compare.content } : m), s.messages.length - 1), a: { text: '', tokens: [] }, b: { text: '', tokens: [] }, side: 'a' });
   return startGen(s, { kind: 'send', index: s.messages.length, question: text, history });
 }
 
 async function regenerate(index) {
   const s = S.current;
-  if (!canGenerate() || s.messages[index]?.role !== 'assistant') return;
+  if (!canGenerate() || s.compare || s.messages[index]?.role !== 'assistant') return;
   const question = s.messages[index - 1].content;
   s.messages.splice(index + 1);          // la suite de la conversation est retirée
   await saveSession(s);
@@ -256,29 +258,36 @@ async function regenerate(index) {
 }
 
 async function startGen(s, g) {
-  S.gen = { ...g, session: s, text: '' };
+  S.gen = { ...g, session: s, text: '', tokens: [] };
   renderMessages();
   renderComposer();
+  renderStatus();
   try {
-    await invoke('generate', { history: g.history, message: g.question, options: genOptions() });
+    if (g.kind === 'compare')
+      await invoke('compare_generate', { a: s.compare.a, b: s.compare.b, historyA: g.history, historyB: g.historyB, message: g.question, options: genOptions() });
+    else await invoke('generate', { history: g.history, message: g.question, options: genOptions() });
     return true;
   } catch (e) {
     S.gen = null;
-    if (g.kind === 'send') s.messages.pop();
+    if (g.kind !== 'regen') s.messages.pop();
     toast(errText(e), 'error');
     renderAll();
     return false;
   }
 }
 
-function onToken(text) {
+// p : { text, side, choices? } ; side "a" / "b" en mode comparaison.
+function onToken(p) {
   const g = S.gen;
   if (!g) return;
-  g.text += text;
-  if (g.el && S.current === g.session) {
-    g.el.classList.remove('thinking');
-    g.el.classList.add('streaming');
-    g.el.querySelector('.body').textContent = g.text.trimStart();
+  const out = g.kind === 'compare' ? g[p.side] : g;
+  out.text += p.text;
+  if (p.choices) out.tokens.push([p.text, p.choices.map(([t, pr]) => [t, +pr.toFixed(4)])]);
+  const el = g.kind === 'compare' ? g.el?.querySelector(`[data-side=${p.side}]`) : g.el;
+  if (el && S.current === g.session) {
+    el.classList.remove('thinking');
+    el.classList.add('streaming');
+    el.querySelector('.body').textContent = out.text.trimStart();
     followEnd();
   }
 }
@@ -288,16 +297,18 @@ async function onDone(p) {
   if (!g) return;
   S.gen = null;
   const s = g.session;
+  if (g.kind === 'compare') return onCompareDone(g, s, p);
   const text = (p.text ?? '').trim();
   if (p.error || !text) {
     if (g.kind === 'send') { s.messages.pop(); if (S.current === s) $('input').value ||= g.question; }
     toast(p.error ? 'Erreur pendant la réponse : ' + p.error : 'Le modèle n\'a rien répondu.', p.error ? 'error' : 'warning');
   } else if (g.kind === 'send') {
-    s.messages.push({ role: 'assistant', content: text });
+    s.messages.push({ role: 'assistant', content: text, tokens: g.tokens.length ? g.tokens : undefined });
   } else {
     const versions = g.old.versions ? [...g.old.versions] : [g.old.content];
     versions.push(text);
-    s.messages[g.index] = { ...g.old, content: text, versions };
+    // Les probabilités ne suivent que la dernière version écrite (bodyEl vérifie qu'elles collent au texte).
+    s.messages[g.index] = { ...g.old, content: text, versions, tokens: g.tokens.length ? g.tokens : g.old.tokens };
   }
   if (text) { touch(s); await saveSession(s); }
   if (!p.error && p.tokens) {
@@ -306,7 +317,138 @@ async function onDone(p) {
   renderAll();
 }
 
+async function onCompareDone(g, s, p) {
+  const a = (p.a.text ?? '').trim(), b = (p.b.text ?? '').trim();
+  const error = p.a.error || p.b.error;
+  if (error) toast('Erreur pendant la réponse : ' + error, 'error');
+  if (!a && !b) {
+    s.messages.pop();
+    if (S.current === s) $('input').value ||= g.question;
+    if (!error) toast('Les modèles n\'ont rien répondu.', 'warning');
+  } else {
+    const tokens = (x) => x.tokens.length ? x.tokens : undefined;
+    s.messages.push({ role: 'assistant', content: a, model: s.compare.a, tokens: tokens(g.a), compare: { model: s.compare.b, content: b, tokens: tokens(g.b) } });
+    touch(s);
+    await saveSession(s);
+  }
+  renderAll();
+}
+
 function stop() { if (S.gen) invoke('stop_generation'); }
+
+// --- Mode transparence -----------------------------------------------------------------------------------
+
+async function toggleTransparency() {
+  try { S.settings = await invoke('save_settings', { changes: { transparency: !S.settings.transparency } }); } catch (e) { return toast(errText(e), 'error'); }
+  toast(S.settings.transparency ? 'Transparence activée : survole les mots des prochaines réponses.' : 'Transparence désactivée.', '', 2500);
+  renderHeader(); renderMessages();
+}
+
+// Probabilité du token écrit parmi ses 5 choix (0 s'il n'y est pas : tiré plus loin par top-k/top-p).
+const chosenProb = ([text, choices]) => choices.find(([t]) => t === text)?.[1] ?? 0;
+
+// Le texte d'une réponse ; en mode transparence, un <span> par token, teinté selon la confiance.
+function bodyEl(content, tokens) {
+  const body = h('div', { class: 'body' });
+  if (!S.settings.transparency || !tokens || tokens.map(([t]) => t).join('').trim() !== content) { body.textContent = content; return body; }
+  let lead = true;
+  tokens.forEach((tok, k) => {
+    const text = lead ? tok[0].trimStart() : tok[0];
+    if (!text) return;
+    lead = false;
+    const p = chosenProb(tok);
+    body.append(h('span', { class: 'tok' + (p >= 0.6 ? ' sure' : p < 0.3 ? ' unsure' : ''), 'data-k': k }, text));
+  });
+  body.tokens = tokens;
+  return body;
+}
+
+const visible = (t) => t.replace(/\n/g, '↵').replace(/ /g, '·') || '∅';
+
+document.addEventListener('mouseover', (e) => {
+  const span = e.target.closest?.('.tok'), tip = $('tip');
+  if (!span) { tip.hidden = true; return; }
+  const tok = span.parentElement.tokens[span.dataset.k];
+  tip.replaceChildren(...tok[1].map(([t, p]) => h('div', { class: 'row' + (t === tok[0] ? ' chosen' : '') },
+    h('span', { class: 'name' }, visible(t)), h('div', { class: 'bar' }, h('div', { style: `width:${(p * 100).toFixed(1)}%` })), h('span', { class: 'pct' }, (p * 100).toFixed(1) + ' %'))));
+  if (!tok[1].some(([t]) => t === tok[0])) tip.append(h('div', { class: 'row chosen' }, h('span', { class: 'name' }, visible(tok[0])), h('span', {}, 'tiré hors des 5'), h('span')));
+  tip.hidden = false;
+  const r = span.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(r.left, innerWidth - t.width - 8)) + 'px';
+  tip.style.top = (r.bottom + 6 + t.height > innerHeight ? r.top - t.height - 6 : r.bottom + 6) + 'px';
+});
+
+// --- Mode comparaison ------------------------------------------------------------------------------------
+
+async function openCompare() {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  if (S.models.length < 2) return toast('Il faut au moins deux modèles installés pour comparer.', 'warning');
+  const select = (value) => {
+    const el = h('select', { class: 'text-input' }, S.models.map((m) => h('option', { value: m.name }, m.name)));
+    el.value = value;
+    return el;
+  };
+  const a = select(S.model.name ?? S.models[0].name);
+  const b = select(S.models.find((m) => m.name !== a.value).name);
+  const body = [h('label', { class: 'field' }, h('div', { class: 'row' }, 'Modèle A'), a), h('label', { class: 'field' }, h('div', { class: 'row' }, 'Modèle B'), b),
+    h('div', { class: 'hint' }, 'Chaque message part aux deux modèles ; les réponses s\'écrivent l\'une après l\'autre.')];
+  if (!(await dialog('Conversation comparée', body, [{ label: 'Annuler', value: false }, { label: 'Comparer', value: true, primary: true }], a))) return;
+  if (a.value === b.value) return toast('Choisis deux modèles différents.', 'warning');
+  closeEdit();
+  S.current = { ...newSession(), compare: { a: a.value, b: b.value } };
+  renderAll();
+  $('input').focus();
+}
+
+async function vote(i, winner) {
+  const s = S.current, m = s.messages[i];
+  try { await invoke('arena_vote', { vote: { id: `${s.id}#${i}`, a: m.model, b: m.compare.model, winner, date: localIso() } }); } catch (e) { return toast(errText(e), 'error'); }
+  m.vote = winner;
+  await saveSession(s);
+  renderMessages();
+}
+
+function sideEl(side, model, content, tokens, won) {
+  return h('div', { class: 'side' + (won ? ' won' : ''), 'data-side': side }, h('div', { class: 'who' }, `${side.toUpperCase()} · ${model}`), bodyEl(content || '(pas de réponse)', tokens));
+}
+
+function compareEl(m, i) {
+  const busy = !!S.gen;
+  const btn = (winner, label) => h('button', { class: m.vote === winner ? 'on' : '', disabled: busy, onclick: () => vote(i, winner) }, label);
+  return h('div', { class: 'msg compare' },
+    h('div', { class: 'pair' }, sideEl('a', m.model, m.content, m.tokens, m.vote === 'a'), sideEl('b', m.compare.model, m.compare.content, m.compare.tokens, m.vote === 'b')),
+    h('div', { class: 'votes' }, btn('a', '◀ A est meilleur'), btn('tie', '＝ Égalité'), btn('b', 'B est meilleur ▶')));
+}
+
+function compareStreamingEl() {
+  const g = S.gen, s = g.session.compare;
+  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), h('div', { class: 'body' }, g[k].text.trimStart()));
+  return h('div', { class: 'msg compare' }, h('div', { class: 'pair' }, side('a', s.a), side('b', s.b)));
+}
+
+// Classement : Elo (départ 1000, K = 32) rejoué dans l'ordre des votes, et pourcentage de victoires (égalité : ni l'un ni l'autre).
+function ranking(votes) {
+  const r = {};
+  const of = (m) => (r[m] ??= { name: m, elo: 1000, w: 0, t: 0, l: 0 });
+  for (const v of [...votes].sort((x, y) => Date.parse(x.date) - Date.parse(y.date))) {
+    const a = of(v.a), b = of(v.b);
+    const sa = v.winner === 'a' ? 1 : v.winner === 'tie' ? 0.5 : 0;
+    const delta = 32 * (sa - 1 / (1 + 10 ** ((b.elo - a.elo) / 400)));
+    a.elo += delta; b.elo -= delta;
+    if (sa === 0.5) { a.t++; b.t++; } else if (sa === 1) { a.w++; b.l++; } else { a.l++; b.w++; }
+  }
+  return Object.values(r).sort((x, y) => y.elo - x.elo);
+}
+
+async function openLeaderboard() {
+  const { votes } = await invoke('arena');
+  const rows = ranking(votes);
+  const body = rows.length
+    ? h('table', { class: 'board' }, h('tr', {}, ['', 'Modèle', 'Score', 'Victoires', 'V / N / D'].map((t) => h('th', {}, t))),
+      rows.map((m, k) => h('tr', {}, h('td', {}, k + 1), h('td', {}, m.name), h('td', {}, Math.round(m.elo)), h('td', {}, Math.round(100 * m.w / (m.w + m.t + m.l)) + ' %'), h('td', {}, `${m.w} / ${m.t} / ${m.l}`))))
+    : h('p', {}, 'Pas encore de vote. Ctrl+Maj+N ouvre une conversation comparée.');
+  dialog(`Classement · ${votes.length} vote(s)`, body, [{ label: 'Fermer', value: null, primary: true }]);
+}
 
 function stepVersion(index, delta) {
   const s = S.current, m = s.messages[index];
@@ -360,7 +502,7 @@ function renderSessions() {
       class: s === S.current ? 'active' : '', title: titleOf(s),
       onclick: () => openSession(s), oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e); },
       ondblclick: () => renameSession(s),
-    }, h('span', { class: 'label' }, titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
+    }, h('span', { class: 'label' }, (s.compare ? '⇄ ' : '') + titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
   }
   if (!ul.children.length) ul.append(h('li', { class: 'none' }, q ? 'Aucun résultat.' : 'Pas encore de conversation.'));
 }
@@ -387,6 +529,9 @@ function renderHeader() {
   $('folder-name').textContent = dir ? dir.split(/[\\/]/).filter(Boolean).pop() || dir : 'aucun dossier';
   $('folder-chip').title = 'Dossier de travail : ' + (dir || '(aucun)') + '\nClic : changer';
   document.title = `${titleOf(s)} — Nel Code`;
+  $('compare-chip').hidden = !s.compare;
+  if (s.compare) $('compare-chip').textContent = `A ${s.compare.a} ⇄ B ${s.compare.b}`;
+  $('transp-btn').classList.toggle('on', !!S.settings.transparency);
 }
 
 function followEnd() {
@@ -402,16 +547,19 @@ function renderMessages() {
   const s = S.current, box = $('messages'), g = S.gen?.session === s ? S.gen : null;
   box.replaceChildren();
   $('empty').hidden = s.messages.length > 0 || !!g;
+  box.classList.toggle('wide', !!s.compare);
+  $('tip').hidden = true;
   // Les tours que le modèle ne voit plus (contexte plein) sont grisés.
   const turns = turnsOf(s.messages).length;
-  const fadedTurns = S.context && !g ? Math.max(0, turns - S.context.keptTurns) : 0;
+  const fadedTurns = S.context && !g && !s.compare ? Math.max(0, turns - S.context.keptTurns) : 0;
   const fadedEnd = fadedTurns * 2;
   s.messages.forEach((m, i) => {
     if (fadedEnd && i === fadedEnd) box.append(h('div', { class: 'faded-sep' }, 'au-dessus : hors de la mémoire du modèle'));
     if (g?.kind === 'regen' && i === g.index) return box.append(g.el = streamingEl());
-    box.append(messageEl(m, i, i < fadedEnd));
+    box.append(m.compare ? compareEl(m, i) : messageEl(m, i, i < fadedEnd));
   });
   if (g?.kind === 'send') box.append(g.el = streamingEl());
+  if (g?.kind === 'compare') box.append(g.el = compareStreamingEl());
   if (g) { const sc = $('scroller'); sc.scrollTop = sc.scrollHeight; }
 }
 
@@ -437,7 +585,7 @@ function messageEl(m, i, faded) {
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); autoGrow(ta); }, 0);
     return el;
   }
-  el.append(h('div', { class: 'body' }, m.content));
+  el.append(user ? h('div', { class: 'body' }, m.content) : bodyEl(m.content, m.tokens));
   const busy = !!S.gen;
   const acts = h('div', { class: 'actions' });
   acts.append(actionButton('⧉ Copier', 'Copier le message', async (e) => {
@@ -447,7 +595,7 @@ function messageEl(m, i, faded) {
   if (user) acts.append(actionButton('✎ Modifier', 'Modifier et renvoyer (la suite est retirée)', () => startEdit(i), busy));
   else {
     const prev = S.current.messages[i - 1];
-    if (prev?.role === 'user') acts.append(actionButton('↻ Régénérer', 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
+    if (prev?.role === 'user' && !S.current.compare) acts.append(actionButton('↻ Régénérer', 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
     if (m.versions?.length > 1) {
       const at = m.versions.indexOf(m.content);
       acts.append(h('span', { class: 'versions' },
@@ -472,6 +620,7 @@ function renderStatus() {
   const st = $('status');
   st.replaceChildren();
   if (S.model.loading) st.append(h('span', { class: 'spinner' }), `Chargement de ${S.model.loading}…`);
+  else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), `${S.gen.side.toUpperCase()} · ${S.gen.session.compare[S.gen.side]} écrit…  Échap pour arrêter`);
   else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
   else if (S.model.name) st.append(`${S.model.name}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else st.append('aucun modèle chargé');
@@ -501,6 +650,9 @@ function refreshContext() {
 
 const COMMANDS = [
   { name: 'new', desc: 'Nouvelle conversation', run: () => startNew() },
+  { name: 'compare', desc: 'Conversation comparée entre deux modèles', run: () => openCompare() },
+  { name: 'classement', desc: 'Classement du mode comparaison', run: () => openLeaderboard() },
+  { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
   { name: 'model', args: '<nom>', desc: 'Charger un modèle installé', run: (a) => a ? loadModel(a) : toast('Usage : /model <nom>', 'warning') },
   { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.map((m) => `${m.name === S.model.name ? '● ' : '  '}${m.name} — ${sizeText(m.bytes)}`).join('\n') || 'Aucun modèle.', '', 8000) },
   { name: 'import', args: '[fichier]', desc: 'Importer un .nelmodel (chemin relatif au dossier de travail)', run: (a) => importFlow(a || null) },
@@ -615,7 +767,7 @@ async function openSettings() {
 
 function showHelp() {
   const rows = COMMANDS.flatMap((c) => [h('dt', {}, '/' + c.name + (c.args ? ' ' + c.args : '')), h('dd', {}, c.desc)]);
-  const keys = [['Entrée', 'envoyer'], ['Maj+Entrée', 'nouvelle ligne'], ['Échap', 'arrêter la réponse'], ['Ctrl+K', 'palette'], ['Ctrl+N', 'nouvelle conversation'], ['Ctrl+,', 'réglages'], ['F2', 'renommer'], ['Ctrl+I', 'importer un modèle']]
+  const keys = [['Entrée', 'envoyer'], ['Maj+Entrée', 'nouvelle ligne'], ['Échap', 'arrêter la réponse'], ['Ctrl+K', 'palette'], ['Ctrl+N', 'nouvelle conversation'], ['Ctrl+Maj+N', 'conversation comparée'], ['Ctrl+,', 'réglages'], ['F2', 'renommer'], ['Ctrl+I', 'importer un modèle']]
     .flatMap(([k, d]) => [h('dt', {}, k), h('dd', {}, d)]);
   dialog('Aide', [h('dl', { class: 'info-grid' }, rows), h('h2', { style: 'margin-top:16px' }, 'Raccourcis'), h('dl', { class: 'info-grid' }, keys)], [{ label: 'Fermer', value: null, primary: true }]);
 }
@@ -636,7 +788,8 @@ async function showInfo() {
 function openPalette() {
   if (closeOverlay) return;
   const actions = [
-    ['Nouvelle conversation', 'Ctrl+N', startNew], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Réglages', 'Ctrl+,', openSettings],
+    ['Nouvelle conversation', 'Ctrl+N', startNew], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard],
+    ['Mode transparence', '', toggleTransparency], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Réglages', 'Ctrl+,', openSettings],
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
     ['Ouvrir le dossier de travail', '', () => openFolder()], ['Supprimer la conversation', '', () => S.current.messages.length && deleteSession(S.current)],
@@ -752,6 +905,8 @@ $('new-chat').onclick = startNew;
 $('search').oninput = renderSessions;
 $('import-btn').onclick = () => importFlow();
 $('settings-btn').onclick = openSettings;
+$('arena-btn').onclick = openLeaderboard;
+$('transp-btn').onclick = toggleTransparency;
 $('palette-btn').onclick = openPalette;
 $('title').ondblclick = () => renameSession(S.current);
 $('folder-chip').onclick = () => chooseFolder();
@@ -770,6 +925,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (closeOverlay) return;
   if (ctrl && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openCompare(); }
   else if (ctrl && e.key.toLowerCase() === 'n') { e.preventDefault(); startNew(); }
   else if (ctrl && e.key.toLowerCase() === 'i') { e.preventDefault(); importFlow(); }
   else if (ctrl && e.key === ',') { e.preventDefault(); openSettings(); }
@@ -781,6 +937,7 @@ document.addEventListener('keydown', (e) => {
 
 listen('gen-token', (e) => onToken(e.payload));
 listen('gen-done', (e) => onDone(e.payload));
+listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payload; renderStatus(); } });
 listen('model-loading', (e) => { S.model.loading = e.payload; renderModels(); renderStatus(); });
 listen('model-loaded', (e) => {
   Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, loading: null });

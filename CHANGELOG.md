@@ -2,6 +2,18 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+
+- **nel-engine** : `generate_with_choices` (mode transparence) rend, pour chaque token écrit, les 5 tokens les plus
+  probables avec leur probabilité (après la température, avant top-k/top-p). `generate` ne change pas.
+- **Nel Code** :
+  - mode transparence (bouton ◐) : au survol d'un mot, ses 5 choix avec une barre par probabilité ; fond vert (sûr,
+    ≥ 60 %) ou rouge (hésitant, < 30 %). Les probabilités sont gardées avec le message ;
+  - mode comparaison (Ctrl+Maj+N) : chaque message part à deux modèles, réponses côte à côte, votes « A / B / égalité »
+    dans `arena.json`, et un classement (score Elo, pourcentage de victoires).
+
 ## [0.1.0] - 2026-11-11
 
 Première version publique.

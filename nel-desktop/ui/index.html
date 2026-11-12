@@ -23,6 +23,7 @@
     <ul id="models" class="list models"></ul>
     <div class="sidebar-foot">
       <button id="settings-btn" class="ghost" title="Réglages (Ctrl+,)">⚙ Réglages</button>
+      <button id="arena-btn" class="ghost" title="Classement du mode comparaison">🏆</button>
       <button id="palette-btn" class="ghost" title="Palette de commandes"><kbd>Ctrl K</kbd></button>
     </div>
   </aside>
@@ -31,6 +32,8 @@
     <header id="topbar">
       <div id="title" class="title" title="Double-clic pour renommer (F2)">Nouvelle conversation</div>
       <div class="chips">
+        <span id="compare-chip" class="chip" hidden title="Conversation comparée : chaque message part aux deux modèles"></span>
+        <button id="transp-btn" class="chip" title="Mode transparence : au survol d'un mot, les 5 choix du modèle">◐ Transparence</button>
         <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span class="chip-icon">📁</span><span id="folder-name"></span></button>
         <button id="folder-open" class="chip icon-only" title="Ouvrir le dossier dans l'Explorateur">↗</button>
       </div>
@@ -67,6 +70,7 @@
 <div id="overlay" class="overlay" hidden></div>
 <div id="menu" class="menu" hidden></div>
 <div id="toasts" class="toasts"></div>
+<div id="tip" class="tip" hidden></div>
 
 <script src="app.js"></script>
 </body>

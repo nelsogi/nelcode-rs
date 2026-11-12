@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use nel_engine::{NelModel, Rng, Sampling, read_entry, sample, softmax};
+use nel_engine::{NelModel, Rng, Sampling, TOP_CHOICES, read_entry, sample, softmax, top_choices};
 use serde_json::Value;
 
 fn path() -> PathBuf {
@@ -95,4 +95,30 @@ fn depasse_block_size() {
     let prompt = m.tokenizer.encode(&"Bonjour, comment vas-tu ? ".repeat(60))[..block - 5].to_vec();
     let out = m.generate(&prompt, 20, &Sampling::GREEDY, &mut Rng(0), false, |_| true).unwrap();
     assert_eq!(out.len(), 20);
+}
+
+#[test]
+fn mode_transparence() {
+    let m = model();
+    let case = &reference()["chat"][0];
+    let prompt = ids(&case["promptIds"]);
+    // Top-k 1 à température 1 : même texte que le glouton, et les probabilités du premier token sont celles de MiniChat.
+    let s = Sampling { temperature: 1.0, top_k: 1, top_p: 1.0 };
+    let out = m.generate_with_choices(&prompt, 10, &s, &mut Rng(0), false, true, |_, c| c.len() == TOP_CHOICES).unwrap();
+    let plain = m.generate(&prompt, 10, &s, &mut Rng(0), false, |_| true).unwrap();
+    assert_eq!(out.iter().map(|(id, _)| *id).collect::<Vec<_>>(), plain);
+    assert_eq!(plain, ids(&case["greedyIds"])[..10]);
+    for (id, choices) in &out {
+        assert_eq!(choices[0].0, *id);
+        assert!(choices.windows(2).all(|w| w[0].1 >= w[1].1));
+    }
+    for (rank, top) in case["topTokens"].as_array().unwrap().iter().take(TOP_CHOICES).enumerate() {
+        assert_eq!(out[0].1[rank].0 as u64, top["id"].as_u64().unwrap());
+        assert!((out[0].1[rank].1 - top["probability"].as_f64().unwrap() as f32).abs() < 1e-4);
+    }
+    // Après la température : plus basse, le premier choix est plus sûr. Sans transparence, pas de choix.
+    let logits = m.logits(&prompt).unwrap();
+    assert!(top_choices(&logits, 0.5)[0].1 > top_choices(&logits, 1.0)[0].1);
+    let off = m.generate_with_choices(&prompt, 3, &s, &mut Rng(0), false, false, |_, c| c.is_empty()).unwrap();
+    assert!(off.iter().all(|(_, c)| c.is_empty()));
 }

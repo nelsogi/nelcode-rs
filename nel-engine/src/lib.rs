@@ -103,6 +103,19 @@ pub fn sample(logits: &[f32], s: &Sampling, rng: &mut Rng) -> u32 {
     *kept.last().unwrap() as u32
 }
 
+/// Mode transparence : combien de choix sont rendus pour chaque token écrit.
+pub const TOP_CHOICES: usize = 5;
+
+/// Les `TOP_CHOICES` tokens les plus probables (id, probabilité), du plus probable au moins probable :
+/// softmax(logits / température), avant top-k/top-p. Température ≤ 0 (glouton) : comptée comme 1.
+pub fn top_choices(logits: &[f32], temperature: f32) -> Vec<(u32, f32)> {
+    let t = if temperature > 0.0 { temperature } else { 1.0 };
+    let probs = softmax(&logits.iter().map(|l| l / t).collect::<Vec<_>>());
+    let mut order: Vec<usize> = (0..probs.len()).collect();
+    order.sort_by(|&a, &b| probs[b].total_cmp(&probs[a]));
+    order.into_iter().take(TOP_CHOICES).map(|i| (i as u32, probs[i])).collect()
+}
+
 pub struct NelModel {
     pub model: MiniGpt,
     pub tokenizer: Tokenizer,
@@ -142,6 +155,23 @@ impl NelModel {
         stop_on_special: bool,
         mut on_token: impl FnMut(u32) -> bool,
     ) -> Result<Vec<u32>> {
+        let out = self.generate_with_choices(prompt, max_new, sampling, rng, stop_on_special, false, |id, _| on_token(id))?;
+        Ok(out.into_iter().map(|(id, _)| id).collect())
+    }
+
+    /// Comme `generate`. Avec `transparency`, chaque token écrit vient avec ses `TOP_CHOICES` choix les plus
+    /// probables (`top_choices`), donnés à `on_token` et rendus ; sans, la liste est vide.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub fn generate_with_choices(
+        &self,
+        prompt: &[u32],
+        max_new: usize,
+        sampling: &Sampling,
+        rng: &mut Rng,
+        stop_on_special: bool,
+        transparency: bool,
+        mut on_token: impl FnMut(u32, &[(u32, f32)]) -> bool,
+    ) -> Result<Vec<(u32, Vec<(u32, f32)>)>> {
         let block = self.model.config.block_size;
         let mut ids = prompt.to_vec();
         let mut cache = self.model.new_cache();
@@ -158,10 +188,12 @@ impl NelModel {
             if stop_on_special && self.tokenizer.is_special(next) {
                 break;
             }
+            let choices = if transparency { top_choices(&logits, sampling.temperature) } else { Vec::new() };
             ids.push(next);
-            written.push(next);
             pending = 1;
-            if !on_token(next) {
+            let go_on = on_token(next, &choices);
+            written.push((next, choices));
+            if !go_on {
                 break;
             }
         }

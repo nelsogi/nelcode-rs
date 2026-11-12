@@ -26,6 +26,8 @@ struct Loaded {
 #[derive(Default)]
 struct AppState {
     model: Mutex<Option<Loaded>>,
+    /// Mode comparaison : les modèles A et B quand ce ne sont pas celui chargé, gardés d'un message à l'autre.
+    compare: Mutex<Vec<Loaded>>,
     loading: Mutex<Option<String>>,
     importing: AtomicBool,
     generating: Arc<AtomicBool>,
@@ -123,6 +125,7 @@ fn delete_model(state: State<AppState>, name: String) -> Result<()> {
         }
         *model = None;
     }
+    state.compare.lock().unwrap().retain(|m| m.name != name);
     store::delete_model(&name)
 }
 
@@ -249,11 +252,52 @@ struct GenOptions {
     top_k: usize,
     top_p: f32,
     max_reply_tokens: usize,
+    /// Mode transparence : les 5 choix les plus probables de chaque token.
+    #[serde(default)]
+    transparency: bool,
+}
+
+impl GenOptions {
+    fn sampling(&self) -> Sampling {
+        Sampling {
+            temperature: if self.temperature.is_finite() { self.temperature.clamp(0.1, 2.0) } else { 0.8 },
+            top_k: self.top_k,
+            top_p: if self.top_p.is_finite() { self.top_p.clamp(0.05, 1.0) } else { 0.9 },
+        }
+    }
+}
+
+/// Écrit une réponse. Chaque token part dans « gen-token » : { text, side, choices? } (choices : [[texte, p] ×5]
+/// en mode transparence). Rend le résumé pour « gen-done ».
+fn write_reply(app: &AppHandle, model: &NelModel, name: &str, history: &[(String, String)], message: &str, options: &GenOptions, stop: &AtomicBool, side: &str) -> Value {
+    let clock = Instant::now();
+    let prompt = model.chat_prompt(history, message);
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+    let t = &model.tokenizer;
+    let max = options.max_reply_tokens.clamp(16, 128);
+    let result = model.generate_with_choices(&prompt, max, &options.sampling(), &mut Rng(seed), true, options.transparency, |id, choices| {
+        let mut token = json!({ "text": t.decode(&[id]), "side": side });
+        if options.transparency {
+            token["choices"] = choices.iter().map(|&(c, p)| json!([t.decode(&[c]), p])).collect();
+        }
+        let _ = app.emit("gen-token", token);
+        !stop.load(Ordering::SeqCst)
+    });
+    match result {
+        Ok(out) => json!({
+            "text": t.decode(&out.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            "model": name,
+            "tokens": out.len(),
+            "promptTokens": prompt.len(),
+            "seconds": clock.elapsed().as_secs_f64(),
+            "stopped": stop.load(Ordering::SeqCst),
+        }),
+        Err(e) => json!({ "error": e.to_string() }),
+    }
 }
 
 /// Lance la réponse à `message` (après les tours `history`) dans un thread à part : l'interface ne se fige
-/// jamais. Chaque token part dans un événement « gen-token » ; la fin dans « gen-done » (texte complet,
-/// arrêtée ou non, ou erreur).
+/// jamais. Les tokens partent dans « gen-token », la fin dans « gen-done » (texte complet, arrêtée ou non, ou erreur).
 #[tauri::command]
 fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String)>, message: String, options: GenOptions) -> Result<()> {
     let (name, model) = current(&state)?;
@@ -262,38 +306,70 @@ fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String
     }
     state.stop.store(false, Ordering::SeqCst);
     let (generating, stop) = (state.generating.clone(), state.stop.clone());
-    let sampling = Sampling {
-        temperature: if options.temperature.is_finite() { options.temperature.clamp(0.1, 2.0) } else { 0.8 },
-        top_k: options.top_k,
-        top_p: if options.top_p.is_finite() { options.top_p.clamp(0.05, 1.0) } else { 0.9 },
-    };
-    let max = options.max_reply_tokens.clamp(16, 128);
     std::thread::spawn(move || {
-        let clock = Instant::now();
-        let prompt = model.chat_prompt(&history, &message);
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
-        let result = model.generate(&prompt, max, &sampling, &mut Rng(seed), true, |id| {
-            let _ = app.emit("gen-token", model.tokenizer.decode(&[id]));
-            !stop.load(Ordering::SeqCst)
-        });
-        let stopped = stop.load(Ordering::SeqCst);
+        let done = write_reply(&app, &model, &name, &history, &message, &options, &stop, "");
         generating.store(false, Ordering::SeqCst);
-        let _ = app.emit(
-            "gen-done",
-            match result {
-                Ok(ids) => json!({
-                    "text": model.tokenizer.decode(&ids),
-                    "model": name,
-                    "tokens": ids.len(),
-                    "promptTokens": prompt.len(),
-                    "seconds": clock.elapsed().as_secs_f64(),
-                    "stopped": stopped,
-                }),
-                Err(e) => json!({ "error": e.to_string() }),
-            },
-        );
+        let _ = app.emit("gen-done", done);
     });
     Ok(())
+}
+
+/// Le modèle `name` pour la comparaison : celui chargé s'il a ce nom, sinon un de la réserve, sinon chargé dans la réserve.
+fn compare_model(state: &AppState, name: &str) -> Result<Arc<NelModel>> {
+    if let Some(l) = state.model.lock().unwrap().as_ref().filter(|l| l.name == name) {
+        return Ok(l.model.clone());
+    }
+    let mut cache = state.compare.lock().unwrap();
+    if let Some(l) = cache.iter().find(|l| l.name == name) {
+        return Ok(l.model.clone());
+    }
+    let model = Arc::new(store::load_folder(&store::models_dir().join(name))?);
+    cache.push(Loaded { name: name.to_string(), model: model.clone() });
+    Ok(model)
+}
+
+/// Mode comparaison : `message` part à A puis à B (l'un après l'autre : un seul modèle calcule à la fois, le CPU
+/// n'est pas partagé). Tokens dans « gen-token » (side "a" ou "b"), fin dans « gen-done » : { compare, a, b }.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn compare_generate(app: AppHandle, state: State<AppState>, a: String, b: String, history_a: Vec<(String, String)>, history_b: Vec<(String, String)>, message: String, options: GenOptions) -> Result<()> {
+    if !store::valid_name(&a) || !store::valid_name(&b) {
+        return Err("nom de modèle invalide".into());
+    }
+    if state.generating.swap(true, Ordering::SeqCst) {
+        return Err("une réponse est déjà en cours".into());
+    }
+    state.stop.store(false, Ordering::SeqCst);
+    // ponytail: la réserve ne garde que A et B (au pire 3 modèles en mémoire avec celui chargé) ; décharger si la RAM manque.
+    state.compare.lock().unwrap().retain(|m| m.name == a || m.name == b);
+    let (generating, stop) = (state.generating.clone(), state.stop.clone());
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let reply = |name: &str, history: &[(String, String)], side: &str| {
+            if stop.load(Ordering::SeqCst) {
+                return json!({ "text": "", "model": name, "stopped": true });
+            }
+            let _ = app.emit("gen-side", side);
+            match compare_model(&state, name) {
+                Ok(model) => write_reply(&app, &model, name, history, &message, &options, &stop, side),
+                Err(e) => json!({ "error": format!("{name} : {e}") }),
+            }
+        };
+        let done = json!({ "compare": true, "a": reply(&a, &history_a, "a"), "b": reply(&b, &history_b, "b") });
+        generating.store(false, Ordering::SeqCst);
+        let _ = app.emit("gen-done", done);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn arena() -> Value {
+    store::load_arena()
+}
+
+#[tauri::command]
+fn arena_vote(vote: Value) -> Result<Value> {
+    store::arena_vote(vote)
 }
 
 /// Stop / Échap : le thread de génération s'arrête après le token en cours.
@@ -337,6 +413,9 @@ fn main() {
             save_settings,
             context_info,
             generate,
+            compare_generate,
+            arena,
+            arena_vote,
             stop_generation,
         ])
         .run(tauri::generate_context!())
