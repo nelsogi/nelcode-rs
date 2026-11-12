@@ -53,7 +53,11 @@ function relDate(iso) {
   return d.toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' });
 }
 
+// Une ligne du journal (%APPDATA%\NelCode\logs). Seulement des événements, jamais le texte d'une conversation.
+const logEvent = (message, level = 'info') => invoke('log_event', { level, message: String(message) }).catch(() => {});
+
 function toast(text, kind = '', ms = 4500) {
+  if (kind === 'error' && typeof text === 'string') logEvent(text, 'error');
   const el = h('div', { class: 'toast ' + kind }, kind === 'error' ? [icon('circle-alert'), h('div', {}, text)] : text);
   $('toasts').append(el);
   if (ms) setTimeout(() => el.remove(), ms);
@@ -233,11 +237,12 @@ async function importFlow(path) {
 
 function genOptions() {
   const s = S.settings;
-  return { temperature: s.temperature, topK: s.topK, topP: s.topP, maxReplyTokens: s.maxReplyTokens, transparency: !!s.transparency };
+  return { temperature: s.temperature, topK: s.topK, topP: s.topP, maxReplyTokens: s.maxReplyTokens, repetitionPenalty: s.repetitionPenalty, transparency: !!s.transparency };
 }
 
 function canGenerate() {
   if (S.gen) return false;
+  if (S.bench) { toast('Test de vitesse en cours…', 'warning'); return false; }
   if (U.state === 'installing') { toast('Installation de la mise à jour en cours…', 'warning'); return false; }
   if (!S.model.name && !S.current?.compare) {
     toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, ou importe un .nelmodel.', 'warning');
@@ -489,9 +494,10 @@ async function checkUpdate(manual) {
   U.checking = true;
   try {
     const update = await window.__TAURI__.updater.check();
-    if (update) { U.update = update; U.state = 'available'; renderUpdate(); }
+    if (update) { U.update = update; U.state = 'available'; renderUpdate(); logEvent(`mise à jour ${update.version} disponible`); }
     else if (manual) toast(`Nel Code ${S.info.version} est à jour.`, 'success', 3000);
   } catch (e) {
+    if (!manual) logEvent('recherche de mise à jour : ' + errText(e), 'error');
     toast(updateError(e), manual ? 'error' : '', manual ? 6000 : 3000);
   } finally { U.checking = false; }
 }
@@ -512,6 +518,7 @@ async function installUpdate() {
     });
     if (S.gen) { U.state = 'waiting'; renderUpdate(); await new Promise((r) => (U.idle = () => { U.idle = null; r(); })); }
     U.state = 'installing'; renderUpdate();
+    logEvent(`installation de la mise à jour ${u.version}`);
     await u.install();                          // Windows : l'installateur (passif) ferme puis relance Nel Code
     await window.__TAURI__.process.relaunch();
   } catch (e) {
@@ -703,7 +710,8 @@ function renderStatus() {
   if (S.model.loading) st.append(h('span', { class: 'spinner' }), `Chargement de ${S.model.loading}…`);
   else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), `${S.gen.side.toUpperCase()} · ${S.gen.session.compare[S.gen.side]} écrit…  Échap pour arrêter`);
   else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
-  else if (S.model.name) st.append(`${S.model.name}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
+  else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
+  else if (S.model.name) st.append(`${S.model.name} · ${S.model.device ?? 'CPU'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else st.append('aucun modèle chargé');
 }
 
@@ -830,6 +838,7 @@ async function openSettings() {
     { key: 'topK', label: 'Top-k', min: 0, max: 100, step: 1, hint: 'Tirage parmi les K tokens les plus probables (0 = pas de limite).' },
     { key: 'topP', label: 'Top-p', min: 0.05, max: 1, step: 0.01, hint: 'Tirage parmi les tokens qui font cette part des chances (1 = pas de limite).' },
     { key: 'maxReplyTokens', label: 'Longueur max', min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse, en tokens (environ 3 caractères chacun).' },
+    { key: 'repetitionPenalty', label: 'Pénalité de répétition', min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
   ];
   const inputs = {};
   const body = fields.map((f) => {
@@ -842,17 +851,133 @@ async function openSettings() {
   accent.value = s.accent === 'orange' ? 'orange' : 'red';
   accent.addEventListener('change', () => (document.documentElement.dataset.accent = accent.value));
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
+  const calc = await calcSection(s);
+  body.push(calc.el);
   const auto = h('input', { type: 'checkbox', checked: s.autoUpdate !== false });
   body.push(h('div', { class: 'field updates' }, h('label', { class: 'check' }, auto, 'Rechercher les mises à jour au démarrage (une fois par jour)'),
     h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
+  body.push(h('div', { class: 'field updates' }, h('div', { class: 'row' }, h('span', {}, 'Problème ?')),
+    h('button', { class: 'btn', onclick: copyBugReport }, icon('copy'), 'Copier un rapport de bug'),
+    h('div', { class: 'hint' }, 'Version, Windows, modèle actif et les 50 dernières lignes du journal (jamais tes conversations).')));
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, accent: 'red', autoUpdate: true }
-      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked };
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, accent: 'red', autoUpdate: true, device: 'auto' }
+      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value };
+    const before = s.device ?? 'auto';
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
+    // Un autre périphérique : le modèle est rechargé dessus.
+    if ((S.settings.device ?? 'auto') !== before && S.model.name) loadModel(S.model.name);
   }
   applyTheme();
+}
+
+// --- Calcul : GPU, pack GPU, test de vitesse ------------------------------------------------------------
+
+const G = { installing: false, received: 0, total: 0 };   // le pack GPU en cours d'installation
+
+async function copyBugReport() {
+  try {
+    await navigator.clipboard.writeText(await invoke('bug_report'));
+    toast('Rapport de bug copié : colle-le dans une issue GitHub.', 'success');
+  } catch (e) { toast('Rapport impossible : ' + errText(e), 'error'); }
+}
+
+// La section Calcul des réglages : rend { el, device } (le choix est enregistré avec les autres réglages).
+async function calcSection(s) {
+  const st = await invoke('gpu_status');
+  const device = h('select', { class: 'text-input' }, h('option', { value: 'auto' }, 'Automatique (GPU si disponible)'), h('option', { value: 'cpu' }, 'CPU'), h('option', { value: 'gpu' }, 'GPU'));
+  device.value = ['cpu', 'gpu'].includes(s.device) ? s.device : 'auto';
+  const info = h('div', { class: 'gpu-info' });
+  const el = h('div', { class: 'field calc' }, h('div', { class: 'row' }, h('span', {}, 'Calcul')), device, info,
+    h('button', { class: 'btn', onclick: () => runBenchmark() }, icon('gauge'), 'Tester la vitesse'));
+  const draw = (st) => {
+    const lines = [];
+    if (!st.compiled) lines.push(h('div', { class: 'hint' }, 'Cette version de Nel Code est compilée sans CUDA : CPU seulement.'));
+    else if (!st.card) lines.push(h('div', { class: 'hint' }, 'Aucune carte NVIDIA détectée : le CPU est utilisé.'));
+    else {
+      lines.push(h('div', {}, `${st.card} · pilote ${st.driver ?? '?'} (CUDA ${st.driverCuda ?? '?'})`));
+      if (!st.driverOk) lines.push(h('div', { class: 'warn-text' }, `Ce pilote est trop ancien pour CUDA ${st.needCuda} : installe le pilote NVIDIA ${st.needDriver} ou plus récent. `,
+        h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_driver_page'); } }, 'Télécharger le pilote NVIDIA')));
+      if (st.active) lines.push(h('div', { class: 'hint' }, `Actif : ${st.active}`));
+      if (st.error) lines.push(h('div', { class: 'warn-text' }, `GPU indisponible : ${st.error}`));
+      if (G.installing) lines.push(h('div', { class: 'progress' }, h('div', { class: 'bar' }, h('div', { id: 'gpu-fill' })), h('span', { id: 'gpu-text' }, 'Téléchargement…'),
+        h('button', { class: 'btn', onclick: () => invoke('cancel_gpu_pack') }, 'Annuler')));
+      else if (st.installed) lines.push(h('button', { class: 'btn', onclick: () => removePack(redraw) }, 'Retirer le pack GPU'));
+      else lines.push(h('button', { class: 'btn', onclick: () => installPack(redraw) }, icon('download'), `Installer le pack GPU (${sizeText(st.packBytes)})`),
+        h('div', { class: 'hint' }, 'Les bibliothèques CUDA de NVIDIA, dans %APPDATA%\\NelCode\\gpu (empreinte vérifiée).'));
+    }
+    info.replaceChildren(...lines);
+    if (G.installing) gpuProgress();
+  };
+  const redraw = async () => { if (info.isConnected) draw(await invoke('gpu_status')); };
+  draw(st);
+  return { el, device };
+}
+
+function gpuProgress() {
+  const fill = $('gpu-fill'), text = $('gpu-text');
+  if (!fill) return;
+  fill.style.width = G.total ? (100 * G.received / G.total).toFixed(1) + '%' : '0';
+  text.textContent = G.extracting ? 'Vérification et installation…' : `Téléchargement… ${sizeText(G.received)} / ${sizeText(G.total)}`;
+}
+
+async function installPack(redraw) {
+  Object.assign(G, { installing: true, received: 0, total: 0, extracting: false });
+  redraw();
+  try {
+    await invoke('install_gpu_pack');
+    toast('Pack GPU installé. Le modèle est rechargé.', 'success');
+    if (S.model.name && S.settings.device !== 'cpu') loadModel(S.model.name);
+  } catch (e) {
+    toast(errText(e) === 'annulé' ? 'Installation du pack GPU annulée.' : 'Pack GPU : ' + errText(e), errText(e) === 'annulé' ? 'warning' : 'error', 8000);
+  }
+  G.installing = false;
+  redraw();
+}
+
+async function removePack(redraw) {
+  try {
+    const now = await invoke('remove_gpu_pack');
+    toast(now ? 'Pack GPU retiré.' : 'Pack GPU retiré au prochain démarrage (il est en cours d\'utilisation).', 'success');
+    if (!now && S.model.name) loadModel(S.model.name);   // rechargé sur le CPU
+  } catch (e) { toast(errText(e), 'error'); }
+  redraw();
+}
+
+listen('gpu-pack-progress', (e) => { Object.assign(G, e.payload); gpuProgress(); });
+
+async function runBenchmark() {
+  if (!S.model.name) return toast('Charge d\'abord un modèle.', 'warning');
+  if (S.gen || S.bench) return toast('Attends la fin de la réponse en cours.', 'warning');
+  try { await invoke('benchmark'); } catch (e) { return toast(errText(e), 'error'); }
+  S.bench = 'CPU';
+  renderStatus();
+}
+
+listen('bench-progress', (e) => { S.bench = e.payload; renderStatus(); });
+listen('bench-done', (e) => {
+  S.bench = null;
+  renderStatus();
+  if (e.payload.error) toast('Test de vitesse : ' + e.payload.error, 'error', 8000);
+  // Une fenêtre déjà ouverte (les réglages) : un résumé, les détails restent dans « Résultats des tests de vitesse ».
+  const mine = e.payload.results[e.payload.name] ?? {};
+  if (closeOverlay) toast(['cpu', 'gpu'].filter((d) => mine[d]).map((d) => `${mine[d].device} : ${mine[d].tokensPerSecond.toFixed(1)} tokens/s`).join(' · ') || 'Test de vitesse terminé.', 'success', 8000);
+  else showBenchmarks(e.payload.results);
+});
+
+// Les résultats gardés (benchmarks.json) : le dernier test de chaque modèle, sur chaque périphérique.
+async function showBenchmarks(all) {
+  all ??= await invoke('benchmarks');
+  const rows = Object.entries(all).flatMap(([model, by]) => ['cpu', 'gpu'].filter((d) => by[d]).map((d) => [model, by[d]]));
+  const n = (x, digits) => Number(x).toLocaleString('fr-CH', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const body = rows.length
+    ? h('table', { class: 'board' }, h('tr', {}, ['Modèle', 'Calcul', 'Chargement', 'Prompt', 'Tokens/s'].map((t) => h('th', {}, t))),
+      rows.map(([model, r]) => h('tr', { title: `${r.tokens} tokens écrits · ${new Date(Number(r.date)).toLocaleString('fr-CH')}` },
+        h('td', {}, model), h('td', {}, r.device), h('td', {}, n(r.loadSeconds, 2) + ' s'), h('td', {}, `${n(r.promptSeconds, 2)} s · ${r.promptTokens} tok.`), h('td', {}, n(r.tokensPerSecond, 1)))))
+    : h('p', {}, 'Pas encore de test. « Tester la vitesse » mesure le modèle chargé.');
+  dialog('Test de vitesse', [body, h('div', { class: 'hint', style: 'margin-top:8px' }, '200 tokens gloutons. Prompt : temps jusqu\'au premier token.')],
+    [{ label: 'Tester le modèle chargé', value: 'run' }, { label: 'Fermer', value: null, primary: true }]).then((v) => v && runBenchmark());
 }
 
 function showHelp() {
@@ -867,7 +992,7 @@ async function showInfo() {
   const s = S.settings;
   const rows = [
     ['Modèle', st.name ?? '(aucun)'], ['Contexte', st.blockSize ? st.blockSize + ' tokens' : '—'], ['Paramètres', st.parameters?.toLocaleString('fr-CH') ?? '—'],
-    ['Calcul', 'CPU (Candle)'], ['Réglages', `température ${s.temperature} · top-k ${s.topK} · top-p ${s.topP} · max ${s.maxReplyTokens}`],
+    ['Calcul', st.device ?? '—'], ['Réglages', `température ${s.temperature} · top-k ${s.topK} · top-p ${s.topP} · pénalité ${s.repetitionPenalty} · max ${s.maxReplyTokens}`],
     ['Conversation', `${turnsOf(S.current.messages).length} échange(s) · ${S.current.id}`], ['Dossier', S.current.workingDirectory || '—'],
     ['Données', S.info.root], ['Version', S.info.version],
   ];
@@ -884,6 +1009,7 @@ function openPalette() {
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
     ['Ouvrir le dossier de travail', '', () => openFolder()], ['Supprimer la conversation', '', () => S.current.messages.length && deleteSession(S.current)],
     ['Infos', '', showInfo], ['Aide', '', showHelp], ['Rechercher des mises à jour', '', () => checkUpdate(true)],
+    ['Tester la vitesse', '', () => runBenchmark()], ['Résultats des tests de vitesse', '', () => showBenchmarks()], ['Copier un rapport de bug', '', copyBugReport],
   ].map(([text, key, run]) => ({ kind: 'Action', text, key, run }));
   const all = [
     ...actions,
@@ -1031,10 +1157,10 @@ listen('gen-done', async (e) => { await onDone(e.payload); U.idle?.(); });
 listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payload; renderStatus(); } });
 listen('model-loading', (e) => { S.model.loading = e.payload; renderModels(); renderStatus(); });
 listen('model-loaded', (e) => {
-  Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, loading: null });
+  Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, device: e.payload.device, loading: null });
   S.lastSpeed = '';
   renderModels(); renderStatus(); refreshContext();
-  toast(`Modèle ${e.payload.name} chargé (${e.payload.seconds.toFixed(1)} s).`, 'success', 2500);
+  toast(`Modèle ${e.payload.name} chargé sur ${e.payload.device} (${e.payload.seconds.toFixed(1)} s).`, 'success', 2500);
 });
 listen('model-error', (e) => {
   S.model.loading = null;
@@ -1076,7 +1202,7 @@ listen('tauri://drag-drop', (e) => {
   await refreshModels();
   S.current = newSession();
   const st = await invoke('model_status');
-  Object.assign(S.model, { name: st.name, loading: st.loading, blockSize: st.blockSize });
+  Object.assign(S.model, { name: st.name, loading: st.loading, blockSize: st.blockSize, device: st.device });
   renderAll();
   $('input').focus();
   if (!S.model.name && !S.model.loading && S.models.length) {

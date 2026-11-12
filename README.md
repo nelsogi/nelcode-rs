@@ -14,13 +14,14 @@ en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust
 
 ## Installation
 
-1. Télécharge `Nel Code_0.3.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.4.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
    (une connexion internet est alors nécessaire).
 
-Windows 10 ou 11, 64 bits. Pas besoin de carte graphique.
+Windows 10 ou 11, 64 bits. Pas besoin de carte graphique ; avec une carte NVIDIA, le [pack GPU](#calcul-sur-gpu-nvidia)
+accélère les réponses.
 
 ## Utilisation
 
@@ -81,6 +82,9 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 
 Sans valeur, `/temp`, `/topk`, `/topp` et `/max` affichent le réglage actuel.
 
+Dans les **Réglages** (Ctrl+,), la **pénalité de répétition** (1 à 2, 1,15 par défaut) rend moins probables les tokens
+des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haute, il évite même les mots utiles.
+
 ### Raccourcis
 
 | Touche | Effet |
@@ -110,6 +114,32 @@ l'installation attend qu'elle soit finie.
 
 Les conversations, réglages et modèles (`%APPDATA%\NelCode`) ne sont pas touchés par une mise à jour.
 Depuis la 0.1.0 ou la 0.2.0, il faut installer la 0.3.0 à la main une fois.
+
+### Calcul sur GPU NVIDIA
+
+Nel Code calcule sur le processeur. Avec une carte NVIDIA (Turing ou plus récente : GTX 16xx, RTX 20xx, 30xx, 40xx…,
+pilote **576.02** ou plus récent), il peut calculer sur le GPU :
+
+1. **Réglages → Calcul** : la carte et le pilote détectés s'affichent (avec un lien vers les pilotes NVIDIA si le tien est
+   trop ancien) ;
+2. **Installer le pack GPU (593 Mo)** : les bibliothèques CUDA de NVIDIA, téléchargées une fois dans `%APPDATA%\NelCode\gpu`.
+   L'espace disque et l'empreinte SHA-256 sont vérifiés avant l'installation ; Annuler, ou une erreur, ne laisse rien ;
+3. le modèle est rechargé sur le GPU : la barre d'état affiche `GPU · <ta carte>`.
+
+**Automatique** (par défaut) prend le GPU s'il est disponible, sinon le CPU, sans erreur ; **CPU** et **GPU** forcent le
+choix. **Retirer le pack GPU** l'efface (au prochain démarrage s'il est en cours d'utilisation). L'installateur de Nel Code
+ne contient aucune bibliothèque CUDA : elles ne viennent que du pack, et ne sont chargées que depuis son dossier.
+
+**Tester la vitesse** (Réglages, palette Ctrl+K) mesure le modèle chargé sur CPU puis sur GPU : chargement, temps du
+prompt, tokens/s sur 200 tokens. Les résultats sont gardés par modèle. Sur une NVIDIA T400 : 348 tokens/s, contre
+134 sur le processeur.
+
+### En cas de problème
+
+Nel Code tient un journal dans `%APPDATA%\NelCode\logs` (un fichier par jour, 7 jours gardés) : démarrage, modèles,
+erreurs, mises à jour, GPU, jamais le texte des conversations. **Copier un rapport de bug** (Réglages, palette Ctrl+K)
+copie la version, Windows, le modèle actif et les 50 dernières lignes du journal : à coller dans une
+[issue](https://github.com/nelsogi/nelcode-rs/issues).
 
 ### Où sont les données
 
@@ -146,6 +176,47 @@ construire l'installateur sans les fichiers de mise à jour :
 
 Le dossier `test-models` peut être remplacé par la variable `NELMODEL` (chemin du `.nelmodel` de test).
 
+### Tests de l'interface
+
+L'application de développement est lancée avec des dossiers de données et WebView2 temporaires (rien ne touche à
+`%APPDATA%\NelCode`), puis pilotée par le port de débogage de WebView2 ([Node](https://nodejs.org) 22 ou plus récent) :
+
+```powershell
+cargo build -p nel-desktop
+node --test --test-reporter=spec "e2e/*.test.mjs"
+```
+
+`e2e/nelcode.test.mjs` couvre le démarrage, l'import, une réponse, Stop, Régénérer et les versions, Modifier, le
+changement de modèle, la recherche, renommer et supprimer, les réglages, la transparence, la comparaison et le vote, le
+test de vitesse et le rapport de bug. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans
+CUDA ou sans pack. `E2E_VERBOSE=1` affiche la sortie de l'application.
+
+### Avec CUDA
+
+Il faut en plus le [CUDA Toolkit 12.9](https://developer.nvidia.com/cuda-12-9-1-download-archive) et MSVC **v143**
+(Visual Studio 2022, ou le composant « MSVC v143 » de Visual Studio 2026 : nvcc 12.9 refuse MSVC 14.5x). Depuis une
+« Developer PowerShell » MSVC 14.44 (`vcvars64.bat -vcvars_ver=14.44`) :
+
+```powershell
+$env:CUDA_COMPUTE_CAP = "75"   # Turing et plus récent ; sans GPU dans la machine, obligatoire
+cargo build --release -p nel-desktop --features cuda
+cargo test --release -p nel-engine --features cuda   # reference.json aussi sur GPU, à 1e-3
+
+# Les tests de l'interface sur GPU, avec le pack construit en local
+cargo build -p nel-desktop --features cuda --target-dir target\cuda
+.\make-gpu-pack.ps1
+$env:NELCODE_EXE = "target\cuda\debug\nel-desktop.exe"; node --test --test-reporter=spec e2e/gpu.test.mjs
+```
+
+Les DLL CUDA sont chargées en différé (`nel-desktop/build.rs`) : Nel Code démarre sans elles, et les charge depuis le
+pack, par chemin complet, avant le premier calcul sur GPU.
+
+`make-gpu-pack.ps1` construit le pack : uniquement les DLL dont Candle a besoin (liste `PACK_DLLS` de
+`nel-engine/src/gpu.rs`), prises dans le CUDA Toolkit, chacune vérifiée dans la liste des fichiers redistribuables du
+CUDA EULA (Attachment A), plus l'avis de licence de NVIDIA. Il écrit la taille et l'empreinte SHA-256 dans
+`nel-desktop/src/gpu.rs` ; `-Publish` l'envoie dans la release `gpu-pack-cuda12` (pre-release), sans jamais remplacer un
+pack déjà publié.
+
 Pour discuter en ligne de commande, sans l'interface :
 
 ```powershell
@@ -156,17 +227,25 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 
 | Dossier | Contenu |
 |---|---|
-| `nel-engine/` | La bibliothèque : tokenizer BPE, réseau MiniGpt, cache KV, génération ; tests contre `reference.json` ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import), `ui/` (HTML, CSS, JS sans framework) |
+| `nel-engine/` | La bibliothèque : tokenizer BPE, réseau MiniGpt, cache KV, génération, GPU (`gpu.rs`) ; tests contre `reference.json` ; `nel-chat` |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
+| `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
 
 Une release se fait en poussant un tag `v<version>` (la version de `nel-desktop/Cargo.toml`) : GitHub Actions lance les tests,
 construit l'installateur et crée une release **brouillon** (voir `.github/workflows/release.yml`).
 
+Le pack GPU est une release à part (`gpu-pack-cuda12`, pre-release, jamais « latest ») : il ne change qu'avec la version
+de CUDA, et son empreinte est écrite dans le code de l'application.
+
 ## Licence
 
 Le code est sous licence [MIT](LICENSE). Les modèles ont leur propre licence : celle de `minichat-v3b` est dans sa
 [carte](MODEL-CARD.md) (usage non commercial).
+
+Le pack GPU contient des bibliothèques du NVIDIA CUDA Toolkit, redistribuées sans modification selon le
+[CUDA EULA](https://docs.nvidia.com/cuda/eula/index.html) ; l'avis de licence de NVIDIA est dans le pack
+(`NVIDIA-LICENSE.txt`).
 
 Les icônes de l'interface (`nel-desktop/ui/icons.js`) sont tirées de [Lucide](https://lucide.dev), sous licence
 [ISC](https://github.com/lucide-icons/lucide/blob/main/LICENSE) : © Lucide Contributors (2022), © Cole Bemis (2013-2022, Feather).

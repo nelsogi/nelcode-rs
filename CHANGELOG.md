@@ -2,6 +2,41 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.4.0] - 2026-11-12
+
+### Ajouté
+
+- **nel-engine** :
+  - pénalité de répétition (`Sampling::repetition_penalty`, défaut 1,15 ; 1,0 = désactivée, résultat identique à avant) sur
+    les 64 derniers tokens, avant température / top-k / top-p ; le mode transparence montre les probabilités après la
+    pénalité. `nel-chat --repetition-penalty` ;
+  - GPU NVIDIA derrière la feature Cargo `cuda` (Candle, CUDA 12) : `gpu::cuda_device`, `NelModel::load_on`. Les tests
+    de `reference.json` passent aussi sur GPU (à 1e-3).
+- **Nel Code** :
+  - réglage « Pénalité de répétition » (curseur de 1 à 2, avec une explication) ;
+  - journal dans `%APPDATA%\NelCode\logs` (un fichier par jour, 7 jours gardés) : démarrage, modèles et durée de
+    chargement, erreurs, mises à jour, GPU. Jamais le texte des conversations ;
+  - « Copier un rapport de bug » (Réglages, palette Ctrl+K) : version, Windows, modèle actif, GPU, 50 dernières lignes
+    du journal ;
+  - « Tester la vitesse » (Réglages, palette) : chargement, prompt et tokens/s sur 200 tokens, sur CPU puis sur GPU ;
+    résultats gardés par modèle (`benchmarks.json`) et affichés dans un tableau ;
+  - section Calcul des Réglages : Automatique / CPU / GPU, carte et pilote détectés (avec un lien si le pilote est trop
+    ancien), « Installer le pack GPU » (progression, annulation, espace disque et empreinte SHA-256 vérifiés, rien
+    n'est laissé à moitié), « Retirer le pack GPU ». Le périphérique actif est dans la barre d'état ;
+  - pack GPU (release `gpu-pack-cuda12`, 593 Mo) : les DLL CUDA redistribuables de NVIDIA, installées à la demande dans
+    `%APPDATA%\NelCode\gpu` et chargées uniquement depuis ce dossier, par chemin complet. `make-gpu-pack.ps1` le
+    construit à partir du CUDA Toolkit ;
+  - tests de l'interface automatiques (`e2e/`, Node) : démarrage, import, réponse, Stop, Régénérer, Modifier, modèles,
+    recherche, renommer, supprimer, réglages, transparence, comparaison, test de vitesse, rapport de bug ; et le pack
+    GPU de bout en bout quand une carte NVIDIA est là.
+
+### Modifié
+
+- L'installateur est compilé avec CUDA (noyaux de Candle) mais ne contient aucune bibliothèque CUDA : sans carte NVIDIA
+  ou sans pack, Nel Code utilise le CPU, sans erreur. 10,9 Mo au lieu de 6,0 Mo.
+- Le workflow de release lance les tests de l'interface après `cargo test`, installe le CUDA Toolkit 12.9 et vérifie
+  qu'aucune DLL CUDA n'est nécessaire au démarrage.
+
 ## [0.3.0] - 2026-11-12
 
 ### Ajouté

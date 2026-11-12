@@ -1,4 +1,4 @@
-//! Discuter avec un .nelmodel : `nel-chat <fichier.nelmodel> [--temperature 0.8] [--top-k 20] [--top-p 0.9] [--seed N]`
+//! Discuter avec un .nelmodel : `nel-chat <fichier.nelmodel> [--temperature 0.8] [--top-k 20] [--top-p 0.9] [--repetition-penalty 1.15] [--seed N]`
 //! Commandes : /reset (oublie la conversation), /quit.
 
 use std::io::{BufRead, Write};
@@ -17,11 +17,12 @@ fn main() -> nel_engine::Result<()> {
             "--temperature" => s.temperature = val()?.parse()?,
             "--top-k" => s.top_k = val()?.parse()?,
             "--top-p" => s.top_p = val()?.parse()?,
+            "--repetition-penalty" => s.repetition_penalty = val()?.parse()?,
             "--seed" => seed = val()?.parse()?,
             _ => path = Some(a.clone()),
         }
     }
-    let path = path.ok_or("usage : nel-chat <fichier.nelmodel> [--temperature T] [--top-k K] [--top-p P] [--seed N]")?;
+    let path = path.ok_or("usage : nel-chat <fichier.nelmodel> [--temperature T] [--top-k K] [--top-p P] [--repetition-penalty R] [--seed N]")?;
 
     let m = NelModel::load(&path)?;
     println!("{} ({} paramètres) — /reset, /quit", m.info["name"].as_str().unwrap_or(&path), m.info["parameters"]);

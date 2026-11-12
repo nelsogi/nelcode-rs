@@ -1,13 +1,14 @@
-//! nel-engine : charge un `.nelmodel` (version 2, voir NELMODEL-FORMAT.md) et le fait parler, sur CPU avec Candle.
+//! nel-engine : charge un `.nelmodel` (version 2, voir NELMODEL-FORMAT.md) et le fait parler avec Candle, sur CPU,
+//! ou sur GPU NVIDIA avec la feature `cuda` (voir `gpu`).
 
+pub mod gpu;
 mod model;
 mod tokenizer;
 
 use std::io::Read;
 use std::path::Path;
 
-use candle_core::Device;
-
+pub use candle_core::Device;
 pub use model::{Config, KvCache, MiniGpt};
 pub use tokenizer::Tokenizer;
 
@@ -40,16 +41,18 @@ pub struct Sampling {
     pub top_k: usize,
     /// 1 : pas de limite.
     pub top_p: f32,
+    /// Pénalité de répétition (`apply_repetition_penalty`) sur les `REPETITION_WINDOW` derniers tokens. 1 : désactivée.
+    pub repetition_penalty: f32,
 }
 
 impl Sampling {
-    pub const GREEDY: Sampling = Sampling { temperature: 0.0, top_k: 0, top_p: 1.0 };
+    pub const GREEDY: Sampling = Sampling { temperature: 0.0, top_k: 0, top_p: 1.0, repetition_penalty: 1.0 };
 }
 
 impl Default for Sampling {
     /// Les réglages par défaut de Nel Code.
     fn default() -> Self {
-        Sampling { temperature: 0.8, top_k: 20, top_p: 0.9 }
+        Sampling { temperature: 0.8, top_k: 20, top_p: 0.9, repetition_penalty: 1.15 }
     }
 }
 
@@ -103,11 +106,31 @@ pub fn sample(logits: &[f32], s: &Sampling, rng: &mut Rng) -> u32 {
     *kept.last().unwrap() as u32
 }
 
+/// La pénalité de répétition regarde les tokens de cette fenêtre (prompt compris).
+pub const REPETITION_WINDOW: usize = 64;
+
+/// Pénalité de répétition (comme CTRL / Hugging Face) : chaque token présent dans `recent` voit son logit divisé
+/// par `penalty` s'il est positif, multiplié s'il est négatif (moins probable dans les deux cas). Une seule fois par
+/// token, même s'il revient plusieurs fois. `penalty` = 1 : rien ne change (les logits ne sont pas touchés).
+pub fn apply_repetition_penalty(logits: &mut [f32], recent: &[u32], penalty: f32) {
+    if penalty == 1.0 || !penalty.is_finite() || penalty <= 0.0 {
+        return;
+    }
+    let mut seen = vec![false; logits.len()];
+    for &id in recent {
+        let Some(l) = logits.get_mut(id as usize) else { continue };
+        if !std::mem::replace(&mut seen[id as usize], true) {
+            *l = if *l > 0.0 { *l / penalty } else { *l * penalty };
+        }
+    }
+}
+
 /// Mode transparence : combien de choix sont rendus pour chaque token écrit.
 pub const TOP_CHOICES: usize = 5;
 
 /// Les `TOP_CHOICES` tokens les plus probables (id, probabilité), du plus probable au moins probable :
 /// softmax(logits / température), avant top-k/top-p. Température ≤ 0 (glouton) : comptée comme 1.
+/// `generate_with_choices` les calcule sur les logits après la pénalité de répétition.
 pub fn top_choices(logits: &[f32], temperature: f32) -> Vec<(u32, f32)> {
     let t = if temperature > 0.0 { temperature } else { 1.0 };
     let probs = softmax(&logits.iter().map(|l| l / t).collect::<Vec<_>>());
@@ -124,6 +147,10 @@ pub struct NelModel {
 
 impl NelModel {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        Self::load_on(path, &Device::Cpu)
+    }
+
+    pub fn load_on(path: impl AsRef<Path>, device: &Device) -> Result<Self> {
         let path = path.as_ref();
         let info: serde_json::Value = serde_json::from_slice(&read_entry(path, "model-info.json")?)?;
         match info["formatVersion"].as_u64() {
@@ -135,7 +162,7 @@ impl NelModel {
         let config: Config = serde_json::from_slice(&read_entry(path, "config.json")?)?;
         let tokenizer = Tokenizer::from_json(std::str::from_utf8(&read_entry(path, "tokenizer.json")?)?, config.vocab_size)?;
         let weights = candle_core::safetensors::load_buffer(&read_entry(path, "model.safetensors")?, &Device::Cpu)?;
-        Ok(Self { model: MiniGpt::new(config, weights)?, tokenizer, info })
+        Ok(Self { model: MiniGpt::new(config, weights, device)?, tokenizer, info })
     }
 
     /// Les logits après `ids` (un seul passage, sans cache gardé).
@@ -183,7 +210,9 @@ impl NelModel {
                 cache.reset();
                 pending = ids.len().min((block * 3 / 4).max(1));
             }
-            let logits: Vec<f32> = self.model.forward(&ids[ids.len() - pending..], &mut cache)?.to_vec1()?;
+            let mut logits: Vec<f32> = self.model.forward(&ids[ids.len() - pending..], &mut cache)?.to_vec1()?;
+            // La pénalité vient avant tout le reste : température, top-k/top-p, et les choix de la transparence.
+            apply_repetition_penalty(&mut logits, &ids[ids.len().saturating_sub(REPETITION_WINDOW)..], sampling.repetition_penalty);
             let next = sample(&logits, sampling, rng);
             if stop_on_special && self.tokenizer.is_special(next) {
                 break;

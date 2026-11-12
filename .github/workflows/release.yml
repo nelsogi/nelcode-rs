@@ -1,6 +1,8 @@
 # Un tag v* (par exemple v0.1.0) : tests, installateur Windows, release brouillon sur GitHub.
 # La release reste un brouillon : rien n'est publié tant qu'on ne clique pas sur « Publish release ».
 # latest.json (mises à jour automatiques) est joint à la release : les installations le voient une fois la release publiée.
+# Les tests tournent sur CPU ; l'installateur est compilé avec la feature cuda (GPU NVIDIA avec le pack GPU), sans
+# aucune bibliothèque CUDA dedans.
 name: Release
 
 on:
@@ -12,7 +14,8 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    # windows-2025 : Visual Studio 2022 (MSVC v143), que nvcc 12.9 accepte (pas MSVC 14.5x de VS 2026).
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
 
@@ -40,6 +43,27 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
+      # L'application debug pilotée par le port de débogage de WebView2, avec un dossier de données temporaire.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # Les tests GPU (e2e/gpu.test.mjs) sont ignorés ici : pas de carte NVIDIA ni de pack.
+      - name: Tests de l'interface
+        run: |
+          cargo build -p nel-desktop
+          node --test --test-reporter=spec "e2e/*.test.mjs"
+
+      # La feature cuda : nvcc compile les noyaux de Candle (cl.exe de MSVC dans le PATH), et l'exécutable est lié
+      # aux bibliothèques d'import CUDA. Les DLL elles-mêmes ne sont pas dans l'installateur (pack GPU à part).
+      - uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "12.9.1"
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev"]'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
       # La section de CHANGELOG.md pour cette version : en tête de la release, et dans latest.json (le bandeau
       # « Nel Code X.Y.Z est disponible » l'affiche, jusqu'au « --- »).
       - name: Notes de version
@@ -56,11 +80,14 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pas de GPU sur le runner : les noyaux sont compilés pour Turing (GTX 16xx, RTX 20xx) et plus récent.
+          CUDA_COMPUTE_CAP: "75"
           # Signature des mises à jour (.sig et latest.json). La clé privée n'est que dans les secrets du dépôt.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: nel-desktop
+          args: --features cuda
           tagName: ${{ github.ref_name }}
           releaseName: Nel Code ${{ github.ref_name }}
           releaseBody: |
@@ -76,3 +103,17 @@ jobs:
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
+
+      # Sans ce contrôle, une DLL CUDA importée normalement empêcherait Nel Code de démarrer sur un PC sans GPU :
+      # elles doivent toutes être en chargement différé (nel-desktop/build.rs). Et l'installateur reste petit.
+      - name: Aucune DLL CUDA au démarrage, aucune dans l'installateur
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem target/release -Filter *.exe | Where-Object { $_.Name -in 'nel-desktop.exe', 'Nel Code.exe' } | Select-Object -First 1
+          $deps = (dumpbin /dependents $exe.FullName) -join "`n"
+          $normal = ($deps -split 'delay load dependencies')[0]
+          if ($normal -match '(?im)^\s+(nvcuda|cudart|cublas|curand|nvrtc)\S*\.dll') { throw "$($Matches[0].Trim()) est importée sans chargement différé" }
+          if ($deps -notmatch '(?i)cublas64_12\.dll') { throw "l'exécutable n'est pas compilé avec la feature cuda" }
+          $setup = Get-ChildItem target/release/bundle/nsis -Filter *-setup.exe | Select-Object -First 1
+          "{0} : {1:N1} Mo" -f $setup.Name, ($setup.Length / 1MB)
+          if ($setup.Length -gt 30MB) { throw "installateur de $([math]::Round($setup.Length / 1MB)) Mo : une bibliothèque CUDA y est-elle entrée ?" }

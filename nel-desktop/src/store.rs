@@ -96,12 +96,12 @@ pub fn list_models() -> Vec<ModelEntry> {
 }
 
 /// Charge un dossier de modèle (config.json, tokenizer.json, model.safetensors ou weights.dat).
-pub fn load_folder(folder: &Path) -> Result<NelModel> {
-    load_counted(folder).map(|(m, _)| m)
+pub fn load_folder(folder: &Path, device: &Device) -> Result<NelModel> {
+    load_counted(folder, device).map(|(m, _)| m)
 }
 
 /// Comme load_folder, avec le vrai nombre de paramètres.
-fn load_counted(folder: &Path) -> Result<(NelModel, u64)> {
+fn load_counted(folder: &Path, device: &Device) -> Result<(NelModel, u64)> {
     let config: Config = serde_json::from_slice(&read(&folder.join("config.json"))?).map_err(|e| format!("config.json : {e}"))?;
     let tok = read(&folder.join("tokenizer.json"))?;
     let tokenizer = Tokenizer::from_json(std::str::from_utf8(&tok).map_err(|e| e.to_string())?, config.vocab_size).map_err(|e| e.to_string())?;
@@ -113,7 +113,7 @@ fn load_counted(folder: &Path) -> Result<(NelModel, u64)> {
     };
     let info = fs::read(folder.join("model-info.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let parameters = tensors.values().map(|t| t.elem_count() as u64).sum();
-    let model = MiniGpt::new(config, tensors).map_err(|e| e.to_string())?;
+    let model = MiniGpt::new(config, tensors, device).map_err(|e| e.to_string())?;
     Ok((NelModel { model, tokenizer, info }, parameters))
 }
 
@@ -216,7 +216,7 @@ pub fn import(path: &Path, name: &str, replace: bool) -> Result<ImportReport> {
                 fs::write(staging.join(file), read_zip_entry(&mut zip, file, limit)?).map_err(|e| e.to_string())?;
             }
         }
-        let (_, parameters) = load_counted(&staging).map_err(|e| format!("le modèle ne se charge pas : {e}"))?;
+        let (_, parameters) = load_counted(&staging, &Device::Cpu).map_err(|e| format!("le modèle ne se charge pas : {e}"))?;
         install(&staging, &target)?;
         let warning = info["parameters"]
             .as_u64()
@@ -308,6 +308,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["topK"] = (num(&s["topK"], 20.0).max(0.0) as u64).into();
     s["topP"] = num(&s["topP"], 0.9).clamp(0.05, 1.0).into();
     s["maxReplyTokens"] = (num(&s["maxReplyTokens"], 80.0).clamp(16.0, 128.0) as u64).into();
+    // Arrondi au centième : le curseur des réglages avance de 0,01.
+    s["repetitionPenalty"] = ((num(&s["repetitionPenalty"], 1.15).clamp(1.0, 2.0) * 100.0).round() / 100.0).into();
     s
 }
 
@@ -320,6 +322,27 @@ pub fn save_settings(changes: &serde_json::Map<String, serde_json::Value>) -> Re
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
     fs::write(root().join("settings.json"), serde_json::to_string_pretty(&s).unwrap()).map_err(|e| e.to_string())?;
     Ok(s)
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// benchmarks.json : les tests de vitesse, { "<modèle>": { "cpu": {...}, "gpu": {...} } }, le dernier par périphérique.
+
+pub fn load_benchmarks() -> serde_json::Value {
+    fs::read(root().join("benchmarks.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+pub fn save_benchmark(model: &str, device: &str, mut result: serde_json::Value) -> Result<()> {
+    let mut all = load_benchmarks();
+    result["date"] = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis().to_string().into();
+    if !all[model].is_object() {
+        all[model] = serde_json::json!({});
+    }
+    all[model][device] = result;
+    fs::write(root().join("benchmarks.json"), serde_json::to_string_pretty(&all).unwrap()).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------------------------------------

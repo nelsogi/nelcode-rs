@@ -43,6 +43,7 @@ struct Block {
 
 pub struct MiniGpt {
     pub config: Config,
+    pub device: Device,
     emb: Tensor,
     blocks: Vec<Block>,
     final_norm: Tensor,
@@ -68,8 +69,9 @@ fn linear(x: &Tensor, w: &Tensor) -> candle_core::Result<Tensor> {
 }
 
 impl MiniGpt {
-    /// Chargement strict : un poids manquant, en trop ou de mauvaise forme est une erreur.
-    pub fn new(config: Config, mut w: HashMap<String, Tensor>) -> Result<Self> {
+    /// Chargement strict : un poids manquant, en trop ou de mauvaise forme est une erreur. Les poids sont
+    /// copiés sur `device` (CPU ou GPU).
+    pub fn new(config: Config, mut w: HashMap<String, Tensor>, device: &Device) -> Result<Self> {
         let arch = config.architecture.as_deref().unwrap_or("Classic");
         if arch != "Modern" {
             return Err(err(format!("architecture « {arch} » non prise en charge (seulement Modern)")));
@@ -83,7 +85,7 @@ impl MiniGpt {
             if t.dims() != shape || t.dtype() != DType::F32 {
                 return Err(err(format!("{name} : {:?} {:?}, attendu F32 {shape:?}", t.dtype(), t.dims())));
             }
-            Ok(t)
+            Ok(t.to_device(device)?)
         };
         let emb = take("_tokenEmbedding.weight".into(), &[v, d])?;
         let blocks = (0..config.layers)
@@ -111,10 +113,10 @@ impl MiniGpt {
         let speeds: Vec<f32> = (0..hd / 2).map(|i| (2.0 * i as f32 * k).exp()).collect();
         let angles: Vec<f32> = (0..config.block_size).flat_map(|p| speeds.iter().map(move |s| p as f32 * s)).collect();
         let shape = (config.block_size, hd / 2);
-        let cos = Tensor::from_vec(angles.iter().map(|a| a.cos()).collect::<Vec<_>>(), shape, &Device::Cpu)?;
-        let sin = Tensor::from_vec(angles.iter().map(|a| a.sin()).collect::<Vec<_>>(), shape, &Device::Cpu)?;
+        let cos = Tensor::from_vec(angles.iter().map(|a| a.cos()).collect::<Vec<_>>(), shape, device)?;
+        let sin = Tensor::from_vec(angles.iter().map(|a| a.sin()).collect::<Vec<_>>(), shape, device)?;
 
-        Ok(Self { config, emb, blocks, final_norm, cos, sin })
+        Ok(Self { config, device: device.clone(), emb, blocks, final_norm, cos, sin })
     }
 
     pub fn new_cache(&self) -> KvCache {
@@ -136,11 +138,11 @@ impl MiniGpt {
             .then(|| {
                 let m: Vec<f32> =
                     (0..t).flat_map(|i| (0..total).map(move |j| if j <= start + i { 0.0 } else { f32::NEG_INFINITY })).collect();
-                Tensor::from_vec(m, (t, total), &Device::Cpu)
+                Tensor::from_vec(m, (t, total), &self.device)
             })
             .transpose()?;
 
-        let mut x = self.emb.index_select(&Tensor::new(ids, &Device::Cpu)?, 0)?; // [t, d]
+        let mut x = self.emb.index_select(&Tensor::new(ids, &self.device)?, 0)?; // [t, d]
         for (b, slot) in self.blocks.iter().zip(cache.kv.iter_mut()) {
             // Attention
             let qkv = linear(&rms_norm(&x, &b.norm1, EPS)?, &b.qkv)?; // [t, 3d]

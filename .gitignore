@@ -2,3 +2,4 @@ target/
 test-models/
 *.nelmodel
 nel-desktop/gen/
+dist/
