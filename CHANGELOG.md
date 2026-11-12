@@ -2,7 +2,9 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
-## [0.4.0] - 2026-11-12
+## [0.4.1] - 2026-11-12
+
+Première publication de la 0.4 : la 0.4.0 n'a pas été publiée (sa compilation échouait sur GitHub Actions).
 
 ### Ajouté
 
