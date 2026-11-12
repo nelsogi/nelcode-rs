@@ -238,6 +238,7 @@ function genOptions() {
 
 function canGenerate() {
   if (S.gen) return false;
+  if (U.state === 'installing') { toast('Installation de la mise à jour en cours…', 'warning'); return false; }
   if (!S.model.name && !S.current?.compare) {
     toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, ou importe un .nelmodel.', 'warning');
     return false;
@@ -276,6 +277,7 @@ async function startGen(s, g) {
     return true;
   } catch (e) {
     S.gen = null;
+    U.idle?.();
     if (g.kind !== 'regen') s.messages.pop();
     toast(errText(e), 'error');
     renderAll();
@@ -465,6 +467,74 @@ function stepVersion(index, delta) {
   saveSession(s);
   renderMessages();
   refreshContext();
+}
+
+// --- Mises à jour (tauri-plugin-updater) -----------------------------------------------------------------
+
+const UPDATE_EVERY = 864e5;   // vérification automatique : au plus une fois par jour
+// state : idle | available | downloading | waiting (téléchargée, une réponse s'écrit) | installing
+const U = { state: 'idle', update: null, checking: false, idle: null };
+
+function updateError(e) {
+  const t = errText(e);
+  if (/signature/i.test(t)) return 'Mise à jour refusée : signature invalide.';
+  // « Could not fetch a valid release JSON » : hors ligne, ou latest.json absent de la dernière release.
+  if (/release JSON|request|connect|dns|resolve|network|timed? ?out/i.test(t)) return 'Mises à jour : impossible de joindre GitHub (pas de connexion ?).';
+  return 'Mise à jour impossible : ' + t;
+}
+
+// manual : depuis la palette ou les réglages (dit aussi « à jour », et l'erreur est un vrai toast d'erreur).
+async function checkUpdate(manual) {
+  if (U.checking || (U.state !== 'idle' && U.state !== 'available')) return;
+  U.checking = true;
+  try {
+    const update = await window.__TAURI__.updater.check();
+    if (update) { U.update = update; U.state = 'available'; renderUpdate(); }
+    else if (manual) toast(`Nel Code ${S.info.version} est à jour.`, 'success', 3000);
+  } catch (e) {
+    toast(updateError(e), manual ? 'error' : '', manual ? 6000 : 3000);
+  } finally { U.checking = false; }
+}
+
+// Télécharge, attend la fin de la réponse en cours (jamais d'installation pendant une génération), installe, redémarre.
+async function installUpdate() {
+  const u = U.update;
+  let got = 0, total = 0;
+  U.state = 'downloading'; renderUpdate();
+  try {
+    await u.download((ev) => {
+      if (ev.event === 'Started') total = ev.data.contentLength ?? 0;
+      else if (ev.event === 'Progress') {
+        got += ev.data.chunkLength;
+        $('update-fill').style.width = total ? (100 * got / total).toFixed(1) + '%' : '100%';
+        $('update-text').textContent = total ? `Téléchargement… ${Math.floor(100 * got / total)} %` : `Téléchargement… ${sizeText(got)}`;
+      }
+    });
+    if (S.gen) { U.state = 'waiting'; renderUpdate(); await new Promise((r) => (U.idle = () => { U.idle = null; r(); })); }
+    U.state = 'installing'; renderUpdate();
+    await u.install();                          // Windows : l'installateur (passif) ferme puis relance Nel Code
+    await window.__TAURI__.process.relaunch();
+  } catch (e) {
+    U.state = 'available'; renderUpdate();
+    toast(updateError(e), 'error', 8000);
+  }
+}
+
+function renderUpdate() {
+  const box = $('update'), u = U.update;
+  box.hidden = !u || U.state === 'idle';
+  if (box.hidden) return;
+  // Les notes : la section du CHANGELOG mise en tête de la release (avant « --- »), sans la mise en forme Markdown.
+  const notes = (u.body ?? '').split(/\n---/)[0].replace(/\*\*|`|^#+ /gm, '').replace(/\n{2,}/g, '\n').trim();
+  const status = { downloading: 'Téléchargement…', waiting: 'Téléchargée : installation à la fin de la réponse en cours…', installing: 'Installation… Nel Code va redémarrer.' }[U.state];
+  box.replaceChildren(
+    h('div', { class: 'head' }, icon('download'), h('b', {}, `Nel Code ${u.version} est disponible`), h('span', { class: 'meta' }, `version actuelle ${u.currentVersion}`)),
+    notes ? h('div', { class: 'notes' }, notes) : '',
+    status
+      ? h('div', { class: 'progress' }, h('div', { class: 'bar' }, h('div', { id: 'update-fill', style: U.state === 'downloading' ? 'width:0' : 'width:100%' })), h('span', { id: 'update-text' }, status))
+      : h('div', { class: 'buttons' },
+        h('button', { class: 'btn', onclick: () => { U.state = 'idle'; renderUpdate(); } }, 'Plus tard'),
+        h('button', { class: 'btn primary', onclick: installUpdate }, icon('download'), 'Installer')));
 }
 
 // --- Modifier un message ---------------------------------------------------------------------------------
@@ -772,11 +842,14 @@ async function openSettings() {
   accent.value = s.accent === 'orange' ? 'orange' : 'red';
   accent.addEventListener('change', () => (document.documentElement.dataset.accent = accent.value));
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
+  const auto = h('input', { type: 'checkbox', checked: s.autoUpdate !== false });
+  body.push(h('div', { class: 'field updates' }, h('label', { class: 'check' }, auto, 'Rechercher les mises à jour au démarrage (une fois par jour)'),
+    h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, accent: 'red' }
-      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value };
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, accent: 'red', autoUpdate: true }
+      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked };
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
   }
   applyTheme();
@@ -810,7 +883,7 @@ function openPalette() {
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
     ['Ouvrir le dossier de travail', '', () => openFolder()], ['Supprimer la conversation', '', () => S.current.messages.length && deleteSession(S.current)],
-    ['Infos', '', showInfo], ['Aide', '', showHelp],
+    ['Infos', '', showInfo], ['Aide', '', showHelp], ['Rechercher des mises à jour', '', () => checkUpdate(true)],
   ].map(([text, key, run]) => ({ kind: 'Action', text, key, run }));
   const all = [
     ...actions,
@@ -953,7 +1026,8 @@ document.addEventListener('keydown', (e) => {
 // --- Événements du Rust ----------------------------------------------------------------------------------
 
 listen('gen-token', (e) => onToken(e.payload));
-listen('gen-done', (e) => onDone(e.payload));
+// Après l'enregistrement de la réponse : une mise à jour qui attendait peut s'installer.
+listen('gen-done', async (e) => { await onDone(e.payload); U.idle?.(); });
 listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payload; renderStatus(); } });
 listen('model-loading', (e) => { S.model.loading = e.payload; renderModels(); renderStatus(); });
 listen('model-loaded', (e) => {
@@ -1010,4 +1084,9 @@ listen('tauri://drag-drop', (e) => {
     loadModel(last.name);
   }
   if (S.info.startupFile) importFlow(S.info.startupFile);
+  // Noté avant de vérifier : hors ligne, on ne réessaie que le lendemain.
+  if (S.settings.autoUpdate !== false && !(Date.now() - S.settings.lastUpdateCheck < UPDATE_EVERY)) {
+    S.settings = await invoke('save_settings', { changes: { lastUpdateCheck: Date.now() } });
+    setTimeout(() => checkUpdate(false), 3000);   // discrète : après le démarrage
+  }
 })().catch((e) => toast('Démarrage : ' + errText(e), 'error', 0));

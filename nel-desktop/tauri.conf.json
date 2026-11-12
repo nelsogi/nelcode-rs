@@ -66,6 +66,18 @@
         "displayLanguageSelector": false,
         "installMode": "currentUser"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzRjcwOTM1RDE4MTQ3RDAKUldUUVI0SFJOUW4zMDJucDM3ZnBub0loMDFqQlNxYlBDZFdiZWJYM3htanJ6SVFEZWh2Y1ZHSTcK",
+      "endpoints": [
+        "https://github.com/nelsogi/nelcode-rs/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

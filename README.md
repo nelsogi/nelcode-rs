@@ -14,7 +14,7 @@ en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust
 
 ## Installation
 
-1. Télécharge `Nel Code_0.2.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.3.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -95,6 +95,22 @@ Sans valeur, `/temp`, `/topk`, `/topp` et `/max` affichent le réglage actuel.
 
 ![La palette Ctrl+K](docs/palette.png)
 
+### Mises à jour
+
+À partir de la 0.3.0, Nel Code se met à jour tout seul. Au démarrage (au plus une fois par jour), il regarde s'il y a
+une nouvelle version dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases) : si oui, un bandeau
+« Nel Code X.Y.Z est disponible » montre les notes de version. **Installer** télécharge la mise à jour, l'installe et
+relance Nel Code ; **Plus tard** la laisse de côté jusqu'au prochain démarrage. Si une réponse est en train de s'écrire,
+l'installation attend qu'elle soit finie.
+
+- **Rechercher des mises à jour** : dans la palette Ctrl+K, ou dans les Réglages ;
+- la vérification automatique se désactive dans les Réglages (« Rechercher les mises à jour au démarrage ») ;
+- les mises à jour sont **signées** : Nel Code refuse un fichier dont la signature ne correspond pas à sa clé publique ;
+- sans connexion, rien ne bloque : une notification le dit, et Nel Code fonctionne normalement.
+
+Les conversations, réglages et modèles (`%APPDATA%\NelCode`) ne sont pas touchés par une mise à jour.
+Depuis la 0.1.0 ou la 0.2.0, il faut installer la 0.3.0 à la main une fois.
+
 ### Où sont les données
 
 Dans `%APPDATA%\NelCode`, comme pour Nel Code C# : les deux versions partagent les modèles (`models\`), les conversations
@@ -123,6 +139,10 @@ cargo run -p nel-desktop
 cd nel-desktop
 cargo tauri build
 ```
+
+`cargo tauri build` signe aussi la mise à jour, et demande donc la clé privée (`TAURI_SIGNING_PRIVATE_KEY`). Sans elle,
+construire l'installateur sans les fichiers de mise à jour :
+`cargo tauri build --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'`.
 
 Le dossier `test-models` peut être remplacé par la variable `NELMODEL` (chemin du `.nelmodel` de test).
 

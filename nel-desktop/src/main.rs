@@ -381,6 +381,8 @@ fn stop_generation(state: State<AppState>) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .setup(|app| {
             let config = app.config().app.windows[0].clone();

@@ -2,6 +2,22 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.3.0] - 2026-11-12
+
+### Ajouté
+
+- **Nel Code** : mises à jour automatiques (tauri-plugin-updater, signées) :
+  - vérification discrète au démarrage, au plus une fois par jour (désactivable dans les Réglages) ;
+  - bandeau « Nel Code X.Y.Z est disponible » avec les notes de version, « Installer » ou « Plus tard » ;
+  - barre de progression du téléchargement, installation en mode passif puis redémarrage. Jamais pendant une réponse :
+    l'installation attend qu'elle soit finie ;
+  - « Rechercher des mises à jour » dans la palette Ctrl+K et dans les Réglages ;
+  - erreurs (pas de connexion, signature invalide) en simple notification, sans bloquer l'application.
+
+### Modifié
+
+- Les releases contiennent `latest.json` et la signature de l'installateur ; leur texte commence par la section du CHANGELOG.
+
 ## [0.2.0] - 2026-11-12
 
 ### Ajouté

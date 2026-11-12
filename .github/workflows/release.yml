@@ -1,5 +1,6 @@
 # Un tag v* (par exemple v0.1.0) : tests, installateur Windows, release brouillon sur GitHub.
 # La release reste un brouillon : rien n'est publié tant qu'on ne clique pas sur « Publish release ».
+# latest.json (mises à jour automatiques) est joint à la release : les installations le voient une fois la release publiée.
 name: Release
 
 on:
@@ -39,15 +40,34 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
+      # La section de CHANGELOG.md pour cette version : en tête de la release, et dans latest.json (le bandeau
+      # « Nel Code X.Y.Z est disponible » l'affiche, jusqu'au « --- »).
+      - name: Notes de version
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<NOTES_EOF'
+            awk -v v="${GITHUB_REF_NAME#v}" '/^## \[/ { p = index($0, "[" v "]") > 0; next } p' CHANGELOG.md
+            echo NOTES_EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: Installateur et release brouillon
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signature des mises à jour (.sig et latest.json). La clé privée n'est que dans les secrets du dépôt.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: nel-desktop
           tagName: ${{ github.ref_name }}
           releaseName: Nel Code ${{ github.ref_name }}
           releaseBody: |
+            ${{ steps.notes.outputs.body }}
+
+            ---
+
             Installateur Windows de Nel Code. Les changements sont dans [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
 
             Un modèle à importer (glisser-déposer le `.nelmodel` dans la fenêtre) : voir la release [models](https://github.com/${{ github.repository }}/releases/tag/models) et sa [carte](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/MODEL-CARD.md).
@@ -55,4 +75,4 @@ jobs:
             L'installateur n'est pas signé : Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » → « Informations complémentaires » → « Exécuter quand même ».
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: false
+          uploadUpdaterJson: true
