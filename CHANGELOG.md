@@ -2,6 +2,19 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.6.0] - 2026-11-16
+
+### Ajouté
+
+- **Nel Code** : serveur local compatible avec l'API OpenAI, **désactivé par défaut** (Réglages → Serveur local) :
+  - `GET /v1/models` et `POST /v1/chat/completions`, avec et sans streaming (SSE) ; erreurs au format OpenAI ;
+  - n'écoute que sur `127.0.0.1`, port réglable (8765 par défaut) ; clé d'accès aléatoire générée, affichée et copiable
+    dans les réglages, renouvelable (`Authorization: Bearer`) ;
+  - indicateur dans la barre d'état (`API :port`, `API · répond…`) ; une réponse à la fois, partagée avec l'interface ;
+  - le journal note le démarrage, l'arrêt et chaque réponse (modèle, taille du prompt), jamais le texte des messages ;
+  - README : brancher Continue (VS Code) ;
+  - tests : `e2e/server.test.mjs`, et les tests unitaires de la conversion des messages et des clés.
+
 ## [0.5.0] - 2026-11-16
 
 ### Ajouté

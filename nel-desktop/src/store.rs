@@ -383,6 +383,9 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["repetitionPenalty"] = ((num(&s["repetitionPenalty"], 1.15).clamp(1.0, 2.0) * 100.0).round() / 100.0).into();
     // Le contexte d'un modèle GGUF (ses 32 768 tokens prendraient trop de mémoire et de temps sur un PC ordinaire).
     s["contextLimit"] = ((num(&s["contextLimit"], 8192.0).clamp(512.0, 131072.0) as u64) / 256 * 256).into();
+    // Le serveur local : désactivé par défaut, port de 1024 à 65535.
+    s["serverEnabled"] = s["serverEnabled"].as_bool().unwrap_or(false).into();
+    s["serverPort"] = (num(&s["serverPort"], 8765.0).clamp(1024.0, 65535.0) as u64).into();
     s
 }
 

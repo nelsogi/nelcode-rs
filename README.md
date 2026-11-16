@@ -15,7 +15,7 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 
 ## Installation
 
-1. Télécharge `Nel Code_0.5.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.6.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -133,6 +133,59 @@ des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haut
 
 ![La palette Ctrl+K](docs/palette.png)
 
+### Serveur local (API OpenAI) et Continue
+
+Nel Code peut servir ses modèles à d'autres programmes, comme [Continue](https://continue.dev) dans VS Code, par un
+serveur compatible avec l'API OpenAI. Il est **désactivé par défaut**.
+
+1. **Réglages → Serveur local** : coche « Activer le serveur », choisis le port (8765 par défaut), **Enregistrer**.
+   La barre d'état affiche `API :8765` tant qu'il tourne (`API · répond…` pendant une réponse).
+2. Copie la **clé d'accès** (bouton Copier). **Nouvelle clé** la remplace : l'ancienne est refusée tout de suite.
+
+Le serveur n'écoute que sur `127.0.0.1` (jamais sur le réseau), et refuse toute requête sans la clé
+(`Authorization: Bearer <clé>`). Il propose :
+
+| Route | Effet |
+|---|---|
+| `GET /v1/models` | Les modèles installés (`id` = nom du modèle) |
+| `POST /v1/chat/completions` | Une réponse, avec `stream: true` (SSE, `data: … [DONE]`) ou sans |
+
+`model` choisit un modèle installé (chargé à côté au besoin) ; un nom inconnu prend le modèle chargé dans Nel Code.
+`temperature` (0 = glouton), `top_p` et `max_tokens` sont pris en compte ; le reste vient des réglages. Les messages
+`system` sont placés en tête du dernier message. Une seule réponse à la fois, avec Nel Code : pendant une réponse, une
+autre requête reçoit `503`.
+
+```powershell
+curl.exe http://127.0.0.1:8765/v1/chat/completions -H "Authorization: Bearer nc-..." -H "Content-Type: application/json" `
+  -d '{\"model\":\"Qwen2.5-Coder-1.5B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"Bonjour\"}]}'
+```
+
+#### Brancher Continue (VS Code)
+
+1. Dans Nel Code : active le serveur, installe un modèle de code (catalogue : Qwen2.5-Coder-1.5B-Instruct) et copie la clé.
+2. Dans VS Code, avec l'extension Continue : ouvre la configuration (roue dentée du panneau Continue, ou le fichier
+   `%USERPROFILE%\.continue\config.yaml`) et ajoute le modèle :
+
+   ```yaml
+   name: Nel Code
+   version: 1.0.0
+   schema: v1
+   models:
+     - name: Qwen2.5-Coder (Nel Code)
+       provider: openai
+       model: Qwen2.5-Coder-1.5B-Instruct   # un id de GET /v1/models
+       apiBase: http://127.0.0.1:8765/v1    # le port des réglages
+       apiKey: nc-...                       # la clé des réglages de Nel Code
+       roles:
+         - chat
+         - edit
+   ```
+
+3. Choisis « Qwen2.5-Coder (Nel Code) » dans la liste des modèles du panneau Continue, et discute.
+
+Nel Code ne fait que le chat (`/v1/chat/completions`) : pas d'autocomplétion (`/v1/completions`) ni d'embeddings,
+d'où les rôles `chat` et `edit` seulement. Nel Code doit rester ouvert pendant que Continue s'en sert.
+
 ### Mises à jour
 
 À partir de la 0.3.0, Nel Code se met à jour tout seul. Au démarrage (au plus une fois par jour), il regarde s'il y a
@@ -225,7 +278,9 @@ node --test --test-reporter=spec "e2e/*.test.mjs"
 
 `e2e/nelcode.test.mjs` couvre le démarrage, l'import, une réponse, Stop, Régénérer et les versions, Modifier, le
 changement de modèle, la recherche, renommer et supprimer, les réglages, la transparence, la comparaison et le vote, le
-test de vitesse, le rapport de bug, les blocs de code et les fichiers `@`. `e2e/gguf.test.mjs` couvre le catalogue
+test de vitesse, le rapport de bug, les blocs de code et les fichiers `@`. `e2e/server.test.mjs` couvre le serveur
+local : désactivé par défaut, activé dans les réglages, clé obligatoire puis renouvelée, `/v1/models`, chat avec et sans
+streaming, erreurs, écoute sur 127.0.0.1 seulement, indicateur de la barre d'état. `e2e/gguf.test.mjs` couvre le catalogue
 (servi en local : licence, empreinte refusée, téléchargement), une réponse de Qwen2.5-Coder, le contexte réglable et
 l'import d'un `.gguf` par glisser-déposer ; il est ignoré sans le `.gguf` de test. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans
 CUDA ou sans pack. `E2E_VERBOSE=1` affiche la sortie de l'application.
@@ -267,7 +322,7 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | Dossier | Contenu |
 |---|---|
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
 

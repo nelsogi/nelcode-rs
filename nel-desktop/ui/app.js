@@ -14,6 +14,7 @@ const S = {
   model: { name: null, loading: null, blockSize: null },
   gen: null,           // la réponse en cours : { session, kind, index, el, text }
   context: null,       // { tokens, blockSize, keptTurns }
+  server: { port: null, busy: false },   // le serveur local (API OpenAI)
 };
 
 // --- Petits outils ---------------------------------------------------------------------------------------
@@ -890,6 +891,8 @@ function renderStatus() {
   else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
   else if (S.model.name) st.append(`${S.model.name} · ${S.model.device ?? 'CPU'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else st.append('aucun modèle chargé');
+  if (S.server.port) st.append(h('span', { class: 'server-on', title: `Serveur local (API OpenAI) : http://127.0.0.1:${S.server.port}/v1` },
+    S.server.busy ? h('span', { class: 'spinner' }) : h('span', { class: 'dot' }), S.server.busy ? `API · répond…` : `API :${S.server.port}`));
 }
 
 let contextTimer = 0;
@@ -1042,6 +1045,8 @@ async function openSettings() {
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
   const calc = await calcSection(s);
   body.push(calc.el);
+  const srv = await serverSection(s);
+  body.push(srv.el);
   const auto = h('input', { type: 'checkbox', checked: s.autoUpdate !== false });
   body.push(h('div', { class: 'field updates' }, h('label', { class: 'check' }, auto, 'Rechercher les mises à jour au démarrage (une fois par jour)'),
     h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
@@ -1051,16 +1056,45 @@ async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, accent: 'red', autoUpdate: true, device: 'auto' }
-      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value };
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
+      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
+        serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value) };
     const before = s.device ?? 'auto', limit = s.contextLimit;
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
+    try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }
+    renderStatus();
     // Un autre périphérique, ou un autre contexte pour un modèle GGUF : le modèle est rechargé.
     const gguf = S.models.find((m) => m.name === S.model.name)?.weights === 'gguf';
     if (S.model.name && ((S.settings.device ?? 'auto') !== before || (gguf && S.settings.contextLimit !== limit))) loadModel(S.model.name);
   }
   applyTheme();
 }
+
+// --- Serveur local (API OpenAI) ------------------------------------------------------------------------
+
+// La section Serveur local des réglages : rend { el, enabled, port } (enregistrés avec les autres réglages).
+async function serverSection(s) {
+  let st = await invoke('server_status');
+  if (!st.key) { await invoke('regenerate_server_key'); st = await invoke('server_status'); }   // une clé dès la première ouverture
+  const enabled = h('input', { type: 'checkbox', checked: !!s.serverEnabled });
+  const port = h('input', { class: 'text-input port', type: 'number', min: 1024, max: 65535, step: 1, value: s.serverPort });
+  const key = h('input', { class: 'text-input key', readonly: true, spellcheck: 'false', value: st.key, 'aria-label': 'Clé d\'accès' });
+  const url = h('span', { class: 'url' });
+  const showUrl = () => (url.textContent = `http://127.0.0.1:${port.value}/v1`);
+  port.addEventListener('input', showUrl);
+  showUrl();
+  const el = h('div', { class: 'field server' }, h('div', { class: 'row' }, h('span', {}, 'Serveur local (API OpenAI)'), h('span', { class: 'state' + (st.port ? ' on' : '') }, st.port ? `actif sur le port ${st.port}` : 'arrêté')),
+    h('label', { class: 'check' }, enabled, 'Activer le serveur (pour Continue dans VS Code, ou tout client de l\'API OpenAI)'),
+    h('label', { class: 'inline' }, 'Port', port, h('span', { class: 'hint' }, 'Adresse : '), url),
+    h('div', { class: 'row-btns' }, key,
+      h('button', { class: 'btn', title: 'Copier la clé', onclick: async () => { await navigator.clipboard.writeText(key.value); toast('Clé copiée.', 'success', 2000); } }, icon('copy'), 'Copier'),
+      h('button', { class: 'btn', title: 'Nouvelle clé : l\'ancienne ne marche plus', onclick: async () => { key.value = await invoke('regenerate_server_key'); toast('Nouvelle clé : l\'ancienne ne marche plus.', 'success'); } }, icon('refresh-cw'), 'Nouvelle clé')),
+    h('div', { class: 'hint' }, 'Seulement sur ce PC (127.0.0.1), et seulement avec cette clé (Authorization: Bearer). Une seule réponse à la fois, avec Nel Code. Brancher Continue : voir le README.'));
+  return { el, enabled, port };
+}
+
+listen('server-changed', (e) => { S.server.port = e.payload.port; renderStatus(); });
+listen('server-busy', (e) => { S.server.busy = e.payload; renderStatus(); });
 
 // --- Calcul : GPU, pack GPU, test de vitesse ------------------------------------------------------------
 
@@ -1402,6 +1436,7 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
   S.current = newSession();
   const st = await invoke('model_status');
   Object.assign(S.model, { name: st.name, loading: st.loading, blockSize: st.blockSize, device: st.device });
+  S.server.port = (await invoke('server_status')).port;
   renderAll();
   $('input').focus();
   if (!S.model.name && !S.model.loading && S.models.length) {

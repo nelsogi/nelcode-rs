@@ -6,6 +6,7 @@ mod catalog;
 mod delayload;
 mod gpu;
 mod log;
+mod server;
 mod store;
 
 use std::path::PathBuf;
@@ -45,6 +46,8 @@ struct AppState {
     gpu_cancel: AtomicBool,
     catalog_installing: AtomicBool,
     catalog_cancel: AtomicBool,
+    /// Le serveur local (API OpenAI), quand il est activé.
+    server: Mutex<Option<server::Running>>,
 }
 
 /// Le GPU, initialisé au premier appel depuis le pack (%APPDATA%\NelCode\gpu).
@@ -323,24 +326,38 @@ impl GenOptions {
     }
 }
 
+/// Une graine pour le tirage (l'heure en nanosecondes).
+fn seed() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64
+}
+
+/// Génère après `prompt` en rendant le texte morceau par morceau : chaque token donne ce qu'il ajoute au texte décodé
+/// jusque-là (un caractère sur plusieurs tokens d'octets n'est donné qu'une fois complet, le texte est vide avant).
+/// `on_text` reçoit aussi les choix de la transparence ; false arrête. Rend les tokens écrits.
+fn text_stream(model: &dyn ChatModel, prompt: &[u32], max: usize, sampling: &Sampling, transparency: bool, mut on_text: impl FnMut(&str, &[(u32, f32)]) -> bool) -> nel_engine::Result<Vec<u32>> {
+    let (mut ids, mut shown) = (Vec::new(), 0);
+    let out = model.stream(prompt, max, sampling, &mut Rng(seed()), true, transparency, &mut |id, choices| {
+        ids.push(id);
+        let full = model.decode(&ids);
+        if full.ends_with('\u{FFFD}') {
+            return on_text("", choices);
+        }
+        let text = full.get(shown..).unwrap_or_default().to_string();
+        shown = full.len();
+        on_text(&text, choices)
+    })?;
+    Ok(out.into_iter().map(|(id, _)| id).collect())
+}
+
 /// Écrit une réponse. Chaque token part dans « gen-token » : { text, side, choices? } (choices : [[texte, p] ×5]
 /// en mode transparence). Rend le résumé pour « gen-done ».
+#[allow(clippy::too_many_arguments)]
 fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(String, String)], message: &str, options: &GenOptions, stop: &AtomicBool, side: &str) -> Value {
     let clock = Instant::now();
     let (prompt, _) = model.chat(history, message);
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
     let max = model.max_reply(options.max_reply_tokens);
-    // Le texte de chaque token : ce qu'il ajoute au texte décodé jusque-là (un caractère peut tenir sur plusieurs
-    // tokens d'octets : rien n'est envoyé tant qu'il n'est pas complet).
-    let (mut ids, mut shown) = (Vec::new(), 0);
-    let result = model.stream(&prompt, max, &options.sampling(), &mut Rng(seed), true, options.transparency, &mut |id, choices| {
-        ids.push(id);
-        let full = model.decode(&ids);
-        let complete = !full.ends_with('\u{FFFD}');
-        let mut token = json!({ "text": if complete { full.get(shown..).unwrap_or_default() } else { "" }, "side": side });
-        if complete {
-            shown = full.len();
-        }
+    let result = text_stream(model, &prompt, max, &options.sampling(), options.transparency, |text, choices| {
+        let mut token = json!({ "text": text, "side": side });
         if options.transparency {
             token["choices"] = choices.iter().map(|&(c, p)| json!([model.decode(&[c]), p])).collect();
         }
@@ -349,7 +366,7 @@ fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(S
     });
     match result {
         Ok(out) => json!({
-            "text": model.decode(&out.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            "text": model.decode(&out),
             "model": name,
             "tokens": out.len(),
             "promptTokens": prompt.len(),
@@ -680,6 +697,33 @@ fn read_file(dir: String, path: String) -> Result<String> {
     String::from_utf8(bytes).map_err(|_| format!("« {path} » n'est pas du texte UTF-8"))
 }
 
+// --- Serveur local (API OpenAI) ----------------------------------------------------------------------------
+
+/// Le port du serveur s'il est actif, l'adresse à donner aux clients, et la clé.
+#[tauri::command]
+fn server_status(state: State<AppState>) -> Value {
+    let port = state.server.lock().unwrap().as_ref().map(|s| s.port);
+    let s = store::load_settings();
+    json!({ "port": port, "url": format!("http://127.0.0.1:{}/v1", s["serverPort"]), "key": s["serverKey"] })
+}
+
+/// Après un changement des réglages : démarre, redémarre ou arrête le serveur.
+#[tauri::command]
+fn server_apply(app: AppHandle) -> Result<Option<u16>> {
+    server::apply(&app)
+}
+
+/// Une nouvelle clé d'accès (l'ancienne ne marche plus tout de suite).
+#[tauri::command]
+fn regenerate_server_key() -> Result<String> {
+    let key = server::new_key();
+    let mut change = serde_json::Map::new();
+    change.insert("serverKey".into(), key.clone().into());
+    store::save_settings(&change)?;
+    log::info("serveur local : nouvelle clé d'accès");
+    Ok(key)
+}
+
 /// Stop / Échap : le thread de génération s'arrête après le token en cours.
 #[tauri::command]
 fn stop_generation(state: State<AppState>) {
@@ -705,6 +749,8 @@ fn main() {
                 window = window.additional_browser_args(&format!("--remote-debugging-port={port}"));
             }
             window.build()?;
+            // Le serveur local, s'il a été activé dans les réglages (une erreur, port pris, est dans le journal).
+            let _ = server::apply(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -744,6 +790,9 @@ fn main() {
             cancel_catalog,
             list_files,
             read_file,
+            server_status,
+            server_apply,
+            regenerate_server_key,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");
