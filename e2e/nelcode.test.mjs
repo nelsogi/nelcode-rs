@@ -10,9 +10,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { launch } from './harness.mjs';
+import { ROOT, launch } from './harness.mjs';
 
 const QUESTION = 'Bonjour, qui es-tu ?';
 let HOME, ev, waitFor, ask, importAs, readJson, close;
@@ -200,4 +201,100 @@ test('rapport de bug et journal (jamais le texte des conversations)', async () =
   for (const secret of [QUESTION, 'Salut !', 'capitale', 'longue histoire']) assert.ok(!report.includes(secret), `« ${secret} » dans le rapport`);
   const logs = fs.readdirSync(path.join(HOME, 'logs')).map((f) => fs.readFileSync(path.join(HOME, 'logs', f), 'utf8')).join('');
   for (const secret of [QUESTION, 'Salut !', 'capitale', 'longue histoire']) assert.ok(!logs.includes(secret), `« ${secret} » dans le journal`);
+});
+
+test('blocs de code : coloration (C#, Rust, Python, JS, HTML, CSS, JSON) et Copier, sans innerHTML', async () => {
+  // [code, mots-clés, chaînes, commentaires] attendus.
+  const samples = {
+    csharp: ['public class A { string s = "x"; } // c', ['public', 'class', 'string'], ['"x"'], ['// c']],
+    rust: ['fn main() { let n = 42; } // c', ['fn', 'let'], [], ['// c']],
+    python: ['def f():\n    return "a"  # c', ['def', 'return'], ['"a"'], ['# c']],
+    js: ['const x = `t`; if (x) return null;', ['const', 'if', 'return', 'null'], ['`t`'], []],
+    html: ['<div class="a">hi<!-- c --></div>', ['<div', '>', '</div'], ['"a"'], ['<!-- c -->']],
+    css: ['.a { color: #fff; } /* c */', [], [], ['/* c */']],
+    json: ['{"a": [1, true, "b"]}', ['true'], ['"b"'], []],
+  };
+  const fence = '`'.repeat(3);
+  const content = 'Voici :\n' + Object.entries(samples).map(([lang, [code]]) => `${fence}${lang}\n${code}\n${fence}`).join('\n') + '\nFin.';
+  await ev(`(() => { S.current.messages.push({ role: 'user', content: 'Du code ?' }, { role: 'assistant', content: ${JSON.stringify(content)} }); renderMessages(); return true; })()`);
+  const msg = `[...document.querySelectorAll('#messages .msg.assistant')].pop()`;
+  assert.equal(await ev(`${msg}.querySelectorAll('.code-block').length`), 7);
+  for (const [k, [code, kw, str, com]] of Object.values(samples).entries()) {
+    const block = `${msg}.querySelectorAll('.code-block')[${k}]`;
+    assert.equal(await ev(`${block}.querySelector('code').textContent`), code, 'le texte du code est intact');
+    const spans = await ev(`Object.fromEntries(['kw', 'str', 'com'].map((c) => [c, [...${block}.querySelectorAll('.hl-' + c)].map((s) => s.textContent)]))`);
+    for (const w of kw) assert.ok(spans.kw.includes(w), `${code} : mot-clé ${w}`);
+    for (const w of str) assert.ok(spans.str.includes(w), `${code} : chaîne ${w}`);
+    for (const w of com) assert.ok(spans.com.includes(w), `${code} : commentaire ${w}`);
+  }
+  assert.deepEqual(await ev(`[...${msg}.querySelectorAll('.code-head span')].map((s) => s.textContent)`), ['C#', 'Rust', 'Python', 'JavaScript', 'HTML', 'CSS', 'JSON']);
+  assert.match(await ev(`${msg}.querySelector('.body').textContent`), /^Voici :/);
+  await ev(`navigator.clipboard.writeText = async (t) => { window.__copied = t; }; ${msg}.querySelectorAll('.code-block .copy')[1].click(); true`);
+  await waitFor(`window.__copied === ${JSON.stringify(samples.rust[0])}`, 5_000, 'code copié');
+  assert.match(await ev(`${msg}.querySelectorAll('.code-block .copy')[1].textContent`), /Copié/);
+  // Rendu sans innerHTML ; la CSP de la fenêtre n'a pas changé.
+  assert.ok(!/\.innerHTML\s*=|insertAdjacentHTML|outerHTML\s*=/.test(fs.readFileSync(path.join(ROOT, 'nel-desktop', 'ui', 'app.js'), 'utf8')));
+  const conf = JSON.parse(fs.readFileSync(path.join(ROOT, 'nel-desktop', 'tauri.conf.json'), 'utf8'));
+  assert.equal(conf.app.security.csp, "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost");
+  await ev(`S.current.messages.splice(-2); renderMessages(); true`);
+});
+
+test('@ : fichiers du dossier de travail ajoutés au message, en lecture seule', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nelcode-files-'));
+  const outside = dir + '-dehors.txt';
+  const files = {
+    'src/main.rs': 'fn main() {\n    println!("bonjour");\n}\n',
+    'gros.txt': 'x'.repeat(150_000),
+    'long.py': 'print("une ligne de code")\n'.repeat(40),
+    'node_modules/ignore.js': 'x',
+    '.git/HEAD': 'x',
+  };
+  for (const [f, c] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f), c);
+  }
+  fs.writeFileSync(outside, 'secret');
+  const snapshot = () => Object.keys(files).map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8'), fs.statSync(path.join(dir, f)).mtimeMs]);
+  const before = snapshot();
+  const fence = '`'.repeat(3);
+  try {
+    await ev(`T.key('n', { ctrlKey: true }, document)`);
+    await ev(`S.current.workingDirectory = ${JSON.stringify(dir)}; renderHeader(); true`);
+    // Suggestions : les fichiers du dossier (sans node_modules ni dossiers cachés).
+    await ev(`T.type('Explique @mai')`);
+    await waitFor(`[...document.querySelectorAll('#suggest .cmd')].some((c) => c.textContent === '@src/main.rs')`, 10_000, 'suggestion @src/main.rs');
+    assert.deepEqual(await ev(`F.list`), ['gros.txt', 'long.py', 'src/main.rs']);
+    await waitFor(`!document.getElementById('suggest').hidden`, 5_000, 'suggestions ouvertes');
+    await ev(`T.key('Tab', {}, document.getElementById('input'))`);
+    assert.equal(await ev(`document.getElementById('input').value`), 'Explique @src/main.rs ');
+    await waitFor(`S.context && S.context.tokens > 20`, 10_000, 'la barre de contexte compte le fichier');
+    await ev(`T.key('Enter', {}, document.getElementById('input'))`);
+    await waitFor('!!S.gen', 10_000);
+    await waitFor('!S.gen', 120_000);
+    const sent = await ev(`S.current.messages[0].content`);
+    assert.ok(sent.startsWith('Explique @src/main.rs'));
+    assert.ok(sent.includes(`src/main.rs :\n${fence}rust\nfn main() {\n    println!("bonjour");\n}\n${fence}`), sent);
+    assert.equal(await ev(`document.querySelector('#messages .msg.user .code-block')?.dataset.lang`), 'rust');
+
+    // Trop gros, hors du dossier, absent : refusé, rien n'est envoyé, le message reste dans la saisie.
+    for (const [line, error] of [['Lis @gros.txt', 'trop gros'], [`Lis @../${path.basename(outside)}`, "n'est pas un fichier du dossier de travail"], ['Lis @absent.txt', 'introuvable']]) {
+      await ev(`T.submit(${JSON.stringify(line)})`);
+      await waitFor(`T.toasts().includes(${JSON.stringify(error)})`, 10_000, error);
+      assert.equal(await ev(`S.current.messages.length`), 2);
+      assert.equal(await ev(`document.getElementById('input').value`), line);
+    }
+    // Plus long que le contexte du modèle (256 tokens) : barre pleine, avertissement avant l'envoi.
+    await ev(`T.type('Regarde @long.py')`);
+    await waitFor(`document.getElementById('context-fill').className === 'full'`, 10_000, 'barre de contexte pleine');
+    await ev(`T.key('Enter', {}, document.getElementById('input'))`);
+    await waitFor(`T.dialog()?.textContent.includes('dépasse le contexte')`, 10_000, 'avertissement');
+    await ev(`T.button('Envoyer quand même', T.dialog())`);
+    await waitFor('!!S.gen', 10_000);
+    await waitFor('!S.gen', 120_000);
+    assert.ok((await ev(`S.current.messages[2].content`)).includes(`long.py :\n${fence}python\n`));
+    assert.deepEqual(snapshot(), before, 'aucun fichier modifié');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(outside, { force: true });
+  }
 });

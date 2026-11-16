@@ -1,6 +1,8 @@
-//! nel-engine : charge un `.nelmodel` (version 2, voir NELMODEL-FORMAT.md) et le fait parler avec Candle, sur CPU,
-//! ou sur GPU NVIDIA avec la feature `cuda` (voir `gpu`).
+//! nel-engine : charge un `.nelmodel` (version 2, voir NELMODEL-FORMAT.md) ou un modèle ouvert `.gguf` (voir `gguf`)
+//! et le fait parler avec Candle, sur CPU, ou sur GPU NVIDIA avec la feature `cuda` (voir `gpu`). Les deux passent
+//! par `ChatModel`, avec la même génération (`generate_loop`).
 
+pub mod gguf;
 pub mod gpu;
 mod model;
 mod tokenizer;
@@ -9,6 +11,7 @@ use std::io::Read;
 use std::path::Path;
 
 pub use candle_core::Device;
+pub use gguf::GgufModel;
 pub use model::{Config, KvCache, MiniGpt};
 pub use tokenizer::Tokenizer;
 
@@ -139,6 +142,75 @@ pub fn top_choices(logits: &[f32], temperature: f32) -> Vec<(u32, f32)> {
     order.into_iter().take(TOP_CHOICES).map(|i| (i as u32, probs[i])).collect()
 }
 
+/// Ce que Nel Code demande à un modèle, .nelmodel ou .gguf.
+pub trait ChatModel: Send + Sync {
+    /// Le contexte utilisé, en tokens.
+    fn context_size(&self) -> usize;
+    fn parameters(&self) -> Option<u64>;
+    /// La longueur maximale d'une réponse ; `setting` : le réglage « Longueur max » de Nel Code.
+    fn max_reply(&self, setting: usize) -> usize;
+    /// Le prompt de chat du modèle, et combien de tours précédents (les plus récents) y tiennent.
+    fn chat(&self, history: &[(String, String)], message: &str) -> (Vec<u32>, usize);
+    fn decode(&self, ids: &[u32]) -> String;
+    /// Comme `NelModel::generate_with_choices`.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn stream(
+        &self,
+        prompt: &[u32],
+        max_new: usize,
+        sampling: &Sampling,
+        rng: &mut Rng,
+        stop_on_special: bool,
+        transparency: bool,
+        on_token: &mut dyn FnMut(u32, &[(u32, f32)]) -> bool,
+    ) -> Result<Vec<(u32, Vec<(u32, f32)>)>>;
+}
+
+/// La génération, commune à tous les modèles. `forward(ids, pos)` fait passer `ids` à partir de la position `pos`
+/// (0 : cache KV vidé) et rend les logits de la dernière position. Contexte plein (`context`) : comme MiniChat, on
+/// repart des 3/4 × contexte derniers tokens, positions depuis 0. `stop(id)` : le token arrête tout, sans être
+/// donné ni rendu.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn generate_loop(
+    prompt: &[u32],
+    max_new: usize,
+    context: usize,
+    sampling: &Sampling,
+    rng: &mut Rng,
+    transparency: bool,
+    stop: impl Fn(u32) -> bool,
+    mut forward: impl FnMut(&[u32], usize) -> Result<Vec<f32>>,
+    on_token: &mut dyn FnMut(u32, &[(u32, f32)]) -> bool,
+) -> Result<Vec<(u32, Vec<(u32, f32)>)>> {
+    let mut ids = prompt.to_vec();
+    let mut pos = 0;
+    let mut pending = ids.len();
+    let mut written = Vec::new();
+    for _ in 0..max_new {
+        if pos + pending > context {
+            pos = 0;
+            pending = ids.len().min((context * 3 / 4).max(1));
+        }
+        let mut logits = forward(&ids[ids.len() - pending..], pos)?;
+        pos += pending;
+        // La pénalité vient avant tout le reste : température, top-k/top-p, et les choix de la transparence.
+        apply_repetition_penalty(&mut logits, &ids[ids.len().saturating_sub(REPETITION_WINDOW)..], sampling.repetition_penalty);
+        let next = sample(&logits, sampling, rng);
+        if stop(next) {
+            break;
+        }
+        let choices = if transparency { top_choices(&logits, sampling.temperature) } else { Vec::new() };
+        ids.push(next);
+        pending = 1;
+        let go_on = on_token(next, &choices);
+        written.push((next, choices));
+        if !go_on {
+            break;
+        }
+    }
+    Ok(written)
+}
+
 pub struct NelModel {
     pub model: MiniGpt,
     pub tokenizer: Tokenizer,
@@ -199,39 +271,39 @@ impl NelModel {
         transparency: bool,
         mut on_token: impl FnMut(u32, &[(u32, f32)]) -> bool,
     ) -> Result<Vec<(u32, Vec<(u32, f32)>)>> {
-        let block = self.model.config.block_size;
-        let mut ids = prompt.to_vec();
         let mut cache = self.model.new_cache();
-        let mut pending = ids.len();
-        let mut written = Vec::new();
-        for _ in 0..max_new {
-            // Contexte plein : comme MiniChat, on repart des 3/4 × BlockSize derniers tokens, positions depuis 0.
-            if cache.len + pending > block {
+        let forward = |ids: &[u32], pos: usize| -> Result<Vec<f32>> {
+            if pos == 0 {
                 cache.reset();
-                pending = ids.len().min((block * 3 / 4).max(1));
             }
-            let mut logits: Vec<f32> = self.model.forward(&ids[ids.len() - pending..], &mut cache)?.to_vec1()?;
-            // La pénalité vient avant tout le reste : température, top-k/top-p, et les choix de la transparence.
-            apply_repetition_penalty(&mut logits, &ids[ids.len().saturating_sub(REPETITION_WINDOW)..], sampling.repetition_penalty);
-            let next = sample(&logits, sampling, rng);
-            if stop_on_special && self.tokenizer.is_special(next) {
-                break;
-            }
-            let choices = if transparency { top_choices(&logits, sampling.temperature) } else { Vec::new() };
-            ids.push(next);
-            pending = 1;
-            let go_on = on_token(next, &choices);
-            written.push((next, choices));
-            if !go_on {
-                break;
-            }
-        }
-        Ok(written)
+            Ok(self.model.forward(ids, &mut cache)?.to_vec1()?)
+        };
+        let stop = |id| stop_on_special && self.tokenizer.is_special(id);
+        generate_loop(prompt, max_new, self.model.config.block_size, sampling, rng, transparency, stop, forward, &mut on_token)
     }
 
     /// Le prompt de chat (NELMODEL-FORMAT.md, « Le prompt de chat ») : `<|doc|>`, les tours précédents qui
     /// tiennent (du plus récent au plus ancien, jamais coupés), puis le message.
     pub fn chat_prompt(&self, history: &[(String, String)], message: &str) -> Vec<u32> {
+        self.chat(history, message).0
+    }
+}
+
+impl ChatModel for NelModel {
+    fn context_size(&self) -> usize {
+        self.model.config.block_size
+    }
+
+    fn parameters(&self) -> Option<u64> {
+        self.info["parameters"].as_u64()
+    }
+
+    fn max_reply(&self, setting: usize) -> usize {
+        setting.clamp(16, 128)
+    }
+
+    /// Toujours `MAX_ANSWER_TOKENS` gardés pour la réponse, comme MiniChat.
+    fn chat(&self, history: &[(String, String)], message: &str) -> (Vec<u32>, usize) {
         let t = &self.tokenizer;
         let doc = t.encode("<|doc|>");
         let msg = t.encode(&format!("<|user|>{}<|end|><|assistant|>", message.trim()));
@@ -246,6 +318,24 @@ impl NelModel {
             used += ids.len();
             turns.push(ids);
         }
-        doc.into_iter().chain(turns.into_iter().rev().flatten()).chain(msg).collect()
+        let kept = turns.len();
+        (doc.into_iter().chain(turns.into_iter().rev().flatten()).chain(msg).collect(), kept)
+    }
+
+    fn decode(&self, ids: &[u32]) -> String {
+        self.tokenizer.decode(ids)
+    }
+
+    fn stream(
+        &self,
+        prompt: &[u32],
+        max_new: usize,
+        sampling: &Sampling,
+        rng: &mut Rng,
+        stop_on_special: bool,
+        transparency: bool,
+        on_token: &mut dyn FnMut(u32, &[(u32, f32)]) -> bool,
+    ) -> Result<Vec<(u32, Vec<(u32, f32)>)>> {
+        self.generate_with_choices(prompt, max_new, sampling, rng, stop_on_special, transparency, on_token)
     }
 }

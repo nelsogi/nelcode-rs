@@ -39,6 +39,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release download models --pattern "minichat-v3b.nelmodel" --dir test-models
 
+      # Les tests GGUF (moteur et interface) : le petit Qwen2.5-Coder du catalogue, et son tokenizer.json officiel.
+      - name: Modèle GGUF de test
+        shell: bash
+        run: |
+          curl -fsSL -o test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/ebb2015119c907b064c512bf053e945850b5875f/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+          curl -fsSL -o test-models/qwen-tokenizer.json https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct/resolve/ea3f2471cf1b1f0db85067f1ef93848e38e88c25/tokenizer.json
+          echo "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32  test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" | sha256sum -c
+
       - name: Tests
         run: cargo test --workspace
 

@@ -18,7 +18,10 @@
     <ul id="sessions" class="list sessions"></ul>
     <div class="section-title models-title">
       <span>Modèles</span>
-      <button id="import-btn" class="icon-btn" title="Importer un .nelmodel (ou glisse-le dans la fenêtre)" aria-label="Importer un modèle"><span data-icon="plus"></span></button>
+      <span class="title-btns">
+        <button id="catalog-btn" class="icon-btn" title="Catalogue de modèles ouverts" aria-label="Catalogue de modèles"><span data-icon="download"></span></button>
+        <button id="import-btn" class="icon-btn" title="Importer un .nelmodel ou un .gguf (ou glisse-le dans la fenêtre)" aria-label="Importer un modèle"><span data-icon="plus"></span></button>
+      </span>
     </div>
     <ul id="models" class="list models"></ul>
     <div class="sidebar-foot">
@@ -54,7 +57,7 @@
       <div id="suggest" class="suggest" hidden></div>
       <div class="input-box">
         <span class="prompt-char"><span data-icon="chevron-right"></span></span>
-        <textarea id="input" rows="1" placeholder="Écris un message…  (/ pour les commandes)" spellcheck="false"></textarea>
+        <textarea id="input" rows="1" placeholder="Écris un message…  (/ pour les commandes, @ pour un fichier)" spellcheck="false"></textarea>
         <button id="send" class="send" title="Envoyer (Entrée)" aria-label="Envoyer"><span data-icon="arrow-up"></span></button>
       </div>
       <div id="statusbar">
@@ -68,7 +71,7 @@
   </section>
 </div>
 
-<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> pour l'importer</div></div>
+<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer</div></div>
 <div id="overlay" class="overlay" hidden></div>
 <div id="menu" class="menu" hidden></div>
 <div id="toasts" class="toasts"></div>

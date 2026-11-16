@@ -1,9 +1,10 @@
 # Nel Code
 
-Discuter avec les petits modèles de langage entraînés par [MiniChat](https://github.com/nelsogi/MiniChat), **sur ton PC, sans connexion**.
+Discuter avec les petits modèles de langage entraînés par [MiniChat](https://github.com/nelsogi/MiniChat), ou avec des
+modèles ouverts (Qwen2.5-Coder…), **sur ton PC, sans connexion**.
 
-Nel Code est une application Windows (Tauri v2) qui fait tourner les modèles `.nelmodel` sur le processeur, avec un moteur écrit
-en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust de [Nel Code](https://github.com/nelsogi/NelCode)
+Nel Code est une application Windows (Tauri v2) qui fait tourner les modèles `.nelmodel` et les modèles GGUF (Qwen2, Llama)
+sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust de [Nel Code](https://github.com/nelsogi/NelCode)
 (C#, TorchSharp), dont elle reprend les conversations et les réglages.
 
 ![Une conversation dans Nel Code](docs/conversation.png)
@@ -14,7 +15,7 @@ en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust
 
 ## Installation
 
-1. Télécharge `Nel Code_0.4.1_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.5.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -43,14 +44,45 @@ qu'une fois le nouveau vérifié.
 
 Le format est décrit dans [NELMODEL-FORMAT.md](NELMODEL-FORMAT.md).
 
+### Modèles ouverts : catalogue et fichiers .gguf
+
+Le **catalogue** (bouton ⤓ à côté de « Modèles », `/catalogue`, palette Ctrl+K) propose des modèles ouverts vérifiés :
+
+| Modèle | Paramètres | Taille | Licence |
+|---|---|---|---|
+| [Qwen2.5-Coder-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF) (Q4_K_M) | 0,5 milliard | 491 Mo | Apache 2.0 |
+| [Qwen2.5-Coder-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF) (Q4_K_M) | 1,5 milliard | 1,1 Go | Apache 2.0 |
+
+La licence est affichée (et acceptée) avant le téléchargement. Le fichier vient de Hugging Face, à une révision fixe, avec
+une barre de progression et Annuler ; son empreinte SHA-256, écrite dans le code (`nel-desktop/src/catalog.rs`), est
+vérifiée avant l'installation : un fichier faux est effacé. Voir la [carte des modèles](MODEL-CARD.md).
+
+Un autre fichier **`.gguf`** s'importe comme un `.nelmodel` (glisser-déposer, ＋, `/import`) : architectures **Qwen2**
+et **Llama**, format de chat **ChatML** ou **Llama 3** (lu dans le modèle). Nel Code affiche l'architecture, les
+paramètres, le contexte, le format de chat et la licence déclarée dans le fichier ; vérifie celle-ci avant de t'en servir.
+Le tokenizer est reconstruit depuis le fichier (BPE de Qwen2 ou de Llama 3) ; pour un autre, pose son `tokenizer.json`
+à côté du `.gguf`.
+
 ### Discuter
 
 Écris un message et appuie sur Entrée. La réponse s'affiche au fil des tokens ; **Stop** (ou Échap) l'arrête.
 Sous chaque message : **Copier**, **Modifier** (la conversation repart de ce message), **Régénérer** (la nouvelle réponse
 s'ajoute comme une version : ‹ 1/2 › pour passer de l'une à l'autre).
 
-Le modèle ne voit que ses 256 derniers tokens : la barre sous la saisie montre combien le prochain message en utilisera,
-et les échanges qu'il ne voit plus sont grisés.
+Le modèle ne voit qu'une partie de la conversation (256 tokens pour un `.nelmodel` ; pour un modèle GGUF, son contexte,
+limité à **8 192 tokens** par défaut, réglable dans les Réglages) : la barre sous la saisie montre combien le prochain message
+en utilisera, et les échanges qu'il ne voit plus sont grisés.
+
+Dans les réponses, les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript, HTML, CSS, JSON) et ont
+un bouton **Copier**.
+
+### Fichiers du dossier de travail (@)
+
+Tape `@` dans la saisie : les fichiers du dossier de travail s'affichent (sans les dossiers cachés, `node_modules`,
+`target`…). Le fichier choisi (`@src/main.rs`) est lu et ajouté au message dans un bloc de code ; la barre de contexte le
+compte. Un fichier de plus de 100 Ko, binaire, ou hors du dossier est refusé ; si le message dépasse le contexte du modèle,
+Nel Code prévient avant de l'envoyer. **Lecture seule** : Nel Code ne modifie, ne crée et ne supprime jamais un fichier du
+dossier de travail.
 
 Chaque conversation a son **dossier de travail** (en haut à droite) : l'export s'y ouvre, et `/import <fichier>` y cherche
 les chemins relatifs.
@@ -66,11 +98,12 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/new` | Nouvelle conversation |
 | `/model <nom>` | Charger un modèle installé |
 | `/models` | Lister les modèles installés |
-| `/import [fichier]` | Importer un `.nelmodel` |
+| `/import [fichier]` | Importer un `.nelmodel` ou un `.gguf` |
+| `/catalogue` | Télécharger un modèle ouvert |
 | `/temp <0.1 à 2>` | Température : bas = sage, haut = créatif |
 | `/topk <n>` | Tirage parmi les K tokens les plus probables (0 = sans limite) |
 | `/topp <0.05 à 1>` | Tirage parmi les tokens qui font cette part des chances |
-| `/max <16 à 128>` | Longueur maximale d'une réponse, en tokens |
+| `/max <16 à 128>` | Longueur maximale d'une réponse d'un `.nelmodel`, en tokens (un modèle GGUF va jusqu'à 1024) |
 | `/rename [titre]` | Renommer la conversation |
 | `/export [md\|txt]` | Exporter la conversation |
 | `/dir` | Changer le dossier de travail |
@@ -90,6 +123,7 @@ des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haut
 | Touche | Effet |
 |---|---|
 | `Entrée` / `Maj+Entrée` | Envoyer / nouvelle ligne |
+| `@` | Joindre un fichier du dossier de travail |
 | `Échap` | Arrêter la réponse, fermer une fenêtre |
 | `Ctrl+K` | Palette : actions, conversations, modèles |
 | `Ctrl+N` | Nouvelle conversation |
@@ -160,6 +194,9 @@ cd nelcode-rs
 
 # Les tests comparent le moteur aux sorties de référence du modèle de test (pas dans le dépôt : 222 Mo)
 gh release download models --pattern "minichat-v3b.nelmodel" --dir test-models
+# Les tests GGUF (ignorés sans lui) : Qwen2.5-Coder-0.5B, et son tokenizer.json officiel comme référence
+curl -L -o test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/ebb2015119c907b064c512bf053e945850b5875f/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+curl -L -o test-models/qwen-tokenizer.json https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct/resolve/ea3f2471cf1b1f0db85067f1ef93848e38e88c25/tokenizer.json
 cargo test --workspace
 
 # L'application, en développement
@@ -174,7 +211,7 @@ cargo tauri build
 construire l'installateur sans les fichiers de mise à jour :
 `cargo tauri build --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'`.
 
-Le dossier `test-models` peut être remplacé par la variable `NELMODEL` (chemin du `.nelmodel` de test).
+Le dossier `test-models` peut être remplacé par les variables `NELMODEL` (chemin du `.nelmodel` de test) et `GGUF`.
 
 ### Tests de l'interface
 
@@ -188,7 +225,9 @@ node --test --test-reporter=spec "e2e/*.test.mjs"
 
 `e2e/nelcode.test.mjs` couvre le démarrage, l'import, une réponse, Stop, Régénérer et les versions, Modifier, le
 changement de modèle, la recherche, renommer et supprimer, les réglages, la transparence, la comparaison et le vote, le
-test de vitesse et le rapport de bug. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans
+test de vitesse, le rapport de bug, les blocs de code et les fichiers `@`. `e2e/gguf.test.mjs` couvre le catalogue
+(servi en local : licence, empreinte refusée, téléchargement), une réponse de Qwen2.5-Coder, le contexte réglable et
+l'import d'un `.gguf` par glisser-déposer ; il est ignoré sans le `.gguf` de test. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans
 CUDA ou sans pack. `E2E_VERBOSE=1` affiche la sortie de l'application.
 
 ### Avec CUDA
@@ -227,8 +266,8 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 
 | Dossier | Contenu |
 |---|---|
-| `nel-engine/` | La bibliothèque : tokenizer BPE, réseau MiniGpt, cache KV, génération, GPU (`gpu.rs`) ; tests contre `reference.json` ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
+| `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
 
@@ -240,8 +279,8 @@ de CUDA, et son empreinte est écrite dans le code de l'application.
 
 ## Licence
 
-Le code est sous licence [MIT](LICENSE). Les modèles ont leur propre licence : celle de `minichat-v3b` est dans sa
-[carte](MODEL-CARD.md) (usage non commercial).
+Le code est sous licence [MIT](LICENSE). Les modèles ont leur propre licence : celle de `minichat-v3b` (usage non
+commercial) et celles des modèles du catalogue (Apache 2.0) sont dans la [carte des modèles](MODEL-CARD.md).
 
 Le pack GPU contient des bibliothèques du NVIDIA CUDA Toolkit, redistribuées sans modification selon le
 [CUDA EULA](https://docs.nvidia.com/cuda/eula/index.html) ; l'avis de licence de NVIDIA est dans le pack

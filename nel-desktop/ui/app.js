@@ -197,7 +197,7 @@ async function deleteModel(name) {
 
 // Import : vérifie le paquet, montre ses infos, demande le nom (et quoi faire s'il est pris), puis importe.
 async function importFlow(path) {
-  if (!path) path = await invoke('pick_nelmodel');
+  if (!path) path = await invoke('pick_nelmodel');   // .nelmodel ou .gguf
   if (!path) return;
   if (!/^[a-zA-Z]:[\\/]|^\\\\/.test(path) && S.current?.workingDirectory) path = S.current.workingDirectory.replace(/[\\/]$/, '') + '\\' + path;
   let pkg;
@@ -205,7 +205,11 @@ async function importFlow(path) {
   const i = pkg.info;
   const nameInput = h('input', { class: 'text-input', value: pkg.name, spellcheck: 'false' });
   const warn = h('div', { class: 'warn-text' });
-  const rows = [
+  const rows = pkg.gguf ? [
+    ['Modèle', i.name], ['Architecture', i.architecture], ['Paramètres', i.parameters?.toLocaleString('fr-CH')],
+    ['Contexte', `${i.contextLength?.toLocaleString('fr-CH')} tokens (Nel Code en utilise au plus ${S.settings.contextLimit})`],
+    ['Format de chat', i.chatFormat], ['Tokenizer', i.tokenizer], ['Licence', i.license ?? 'non indiquée dans le fichier : vérifie-la avant de t\'en servir'],
+  ].filter(([, v]) => v !== undefined && v !== null && v !== '') : [
     ['Nom proposé', i.name], ['Architecture', i.architecture], ['Paramètres', i.parameters?.toLocaleString('fr-CH')],
     ['Loss', i.valLoss?.toFixed?.(3)], ['Pas', i.trainingSteps], ['Créé le', i.createdAt && new Date(i.createdAt).toLocaleString('fr-CH')],
     ['Description', i.description], ['Format', 'version ' + i.formatVersion],
@@ -233,6 +237,107 @@ async function importFlow(path) {
   try { await invoke('import_model', { path, name, replace: choice === 'replace' }); } catch (e) { toast(errText(e), 'error'); }
 }
 
+// --- Catalogue de modèles ouverts ------------------------------------------------------------------------
+
+const C = { name: null, received: 0, total: 0, extracting: false };   // le téléchargement en cours
+
+async function openCatalog() {
+  const list = await invoke('catalog');
+  const rows = h('div', { class: 'catalog' });
+  const draw = (list) => rows.replaceChildren(...list.map((e) => {
+    const busy = C.name === e.name;
+    return h('div', { class: 'entry', 'data-name': e.name },
+      h('div', { class: 'head' }, h('b', {}, e.name), h('span', { class: 'meta' }, `${e.parameters} de paramètres · ${sizeText(e.bytes)}`)),
+      h('div', { class: 'hint' }, e.description),
+      h('div', { class: 'license' }, 'Licence : ', h('b', {}, e.license), ' · ', h('span', { class: 'url' }, e.licenseUrl)),
+      busy ? h('div', { class: 'progress' }, h('div', { class: 'bar' }, h('div', { class: 'fill' })), h('span', { class: 'text' }, 'Téléchargement…'),
+        h('button', { class: 'btn', onclick: () => invoke('cancel_catalog') }, 'Annuler'))
+        : e.installed ? h('div', { class: 'hint ok' }, icon('check'), 'Installé')
+          : h('button', { class: 'btn', disabled: !!C.name, onclick: () => downloadModel(e) }, icon('download'), 'Télécharger'));
+  }));
+  const redraw = async () => { if (rows.isConnected) { draw(await invoke('catalog')); catalogProgress(); } };
+  draw(list);
+  catalogProgress();
+  dialog('Catalogue de modèles', [rows, h('div', { class: 'hint', style: 'margin-top:10px' },
+    'Téléchargés depuis Hugging Face, empreinte SHA-256 vérifiée. Tu peux aussi glisser un fichier .gguf (Qwen2 ou Llama) dans la fenêtre.')],
+  [{ label: 'Fermer', value: null, primary: true }]);
+}
+
+function catalogProgress() {
+  const box = document.querySelector(`.catalog .entry[data-name="${CSS.escape(C.name ?? '')}"] .progress`);
+  if (!box) return;
+  box.querySelector('.fill').style.width = C.total ? (100 * C.received / C.total).toFixed(1) + '%' : '0';
+  box.querySelector('.text').textContent = C.extracting ? 'Vérification et installation…' : `${sizeText(C.received)} / ${sizeText(C.total)}`;
+}
+
+// La licence est montrée (et acceptée) avant le téléchargement.
+async function downloadModel(e) {
+  const ok = await dialog(`Télécharger ${e.name} ?`, [
+    h('p', {}, `${sizeText(e.bytes)} depuis Hugging Face, dans ton dossier de modèles.`),
+    h('dl', { class: 'info-grid' }, h('dt', {}, 'Licence'), h('dd', {}, e.license), h('dt', {}, 'Texte'), h('dd', {}, e.licenseUrl), h('dt', {}, 'Page'), h('dd', {}, e.page), h('dt', {}, 'SHA-256'), h('dd', {}, e.sha256)),
+    h('div', { class: 'hint' }, 'Le modèle est publié par ses auteurs sous cette licence ; Nel Code ne le modifie pas.'),
+  ], [{ label: 'Annuler', value: false }, { label: `Accepter (${e.license}) et télécharger`, value: true, primary: true }]);
+  if (!ok) return openCatalog();
+  Object.assign(C, { name: e.name, received: 0, total: e.bytes, extracting: false });
+  openCatalog();
+  try {
+    const r = await invoke('install_catalog_model', { name: e.name });
+    toast(`Modèle « ${r.name} » installé.`, 'success');
+    await refreshModels();
+    if (!S.model.name) loadModel(r.name);
+  } catch (err) {
+    const t = errText(err);
+    toast(t === 'annulé' ? 'Téléchargement annulé.' : `${e.name} : ${t}`, t === 'annulé' ? 'warning' : 'error', 8000);
+  }
+  C.name = null;
+  if (document.querySelector('.catalog')) openCatalog();   // la liste à jour (installé, boutons)
+}
+
+listen('catalog-progress', (e) => { if (e.payload.tag === C.name) { Object.assign(C, e.payload); catalogProgress(); } });
+
+// --- Fichiers du dossier de travail (@) ------------------------------------------------------------------
+// « @chemin » dans la saisie : le fichier (lu, jamais modifié) est ajouté au message dans un bloc de code.
+
+const F = { dir: null, list: [], at: 0, loading: null };
+const EXT_LANG = { rs: 'rust', cs: 'csharp', py: 'python', js: 'javascript', mjs: 'javascript', ts: 'typescript', tsx: 'tsx', jsx: 'jsx', html: 'html', htm: 'html', css: 'css', json: 'json', xml: 'xml', md: 'markdown', toml: 'toml', yml: 'yaml', yaml: 'yaml', sh: 'bash', ps1: 'powershell' };
+
+// La liste des fichiers du dossier de travail, gardée 10 s.
+function workFiles() {
+  const dir = S.current?.workingDirectory;
+  if (!dir) return [];
+  if ((F.dir !== dir || Date.now() - F.at > 10_000) && !F.loading) {
+    F.loading = invoke('list_files', { dir }).then((list) => { Object.assign(F, { dir, list, at: Date.now() }); }, () => Object.assign(F, { dir, list: [], at: Date.now() }))
+      .finally(() => { F.loading = null; updateSuggest(); });
+  }
+  return F.dir === dir ? F.list : [];
+}
+
+const MENTION = /(^|\s)@([^\s@]+)/g;
+
+// Le message avec le contenu des fichiers cités. `quiet` : un fichier illisible est ignoré (barre de contexte) ;
+// sinon l'erreur est affichée et rien n'est rendu.
+async function expandMentions(text, quiet = false) {
+  const dir = S.current?.workingDirectory;
+  const paths = [...new Set([...text.matchAll(MENTION)].map((m) => m[2]))];
+  if (!dir || !paths.length) return text;
+  let out = text;
+  for (const path of paths) {
+    try {
+      const content = await invoke('read_file', { dir, path });
+      const lang = EXT_LANG[path.split('.').pop().toLowerCase()] ?? '';
+      const fence = content.includes('```') ? '````' : '```';
+      out += `\n\n${path} :\n${fence}${lang}\n${content.replace(/\n$/, '')}\n${fence}`;
+    } catch (e) {
+      if (quiet) continue;
+      // Un @ qui ne ressemble pas à un fichier (adresse, décorateur…) reste du texte.
+      if (!/[./\\]/.test(path)) continue;
+      toast(errText(e), 'error', 6000);
+      return null;
+    }
+  }
+  return out;
+}
+
 // --- Génération ------------------------------------------------------------------------------------------
 
 function genOptions() {
@@ -245,7 +350,7 @@ function canGenerate() {
   if (S.bench) { toast('Test de vitesse en cours…', 'warning'); return false; }
   if (U.state === 'installing') { toast('Installation de la mise à jour en cours…', 'warning'); return false; }
   if (!S.model.name && !S.current?.compare) {
-    toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, ou importe un .nelmodel.', 'warning');
+    toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, importe un .nelmodel ou un .gguf, ou ouvre le catalogue.', 'warning');
     return false;
   }
   return true;
@@ -301,7 +406,7 @@ function onToken(p) {
   if (el && S.current === g.session) {
     el.classList.remove('thinking');
     el.classList.add('streaming');
-    el.querySelector('.body').textContent = out.text.trimStart();
+    el.querySelector('.body').replaceChildren(...richText(out.text.trimStart()));
     followEnd();
   }
 }
@@ -358,13 +463,85 @@ async function toggleTransparency() {
   renderHeader(); renderMessages();
 }
 
+// --- Blocs de code ---------------------------------------------------------------------------------------
+// Les blocs ``` d'un message : coloration par expressions régulières, un <span> par morceau (textContent, jamais
+// innerHTML), et un bouton Copier. Un bloc pas encore fermé (réponse en cours) est déjà affiché comme du code.
+
+const KEYWORDS = {
+  rust: 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while',
+  cs: 'abstract as async await base bool break byte case catch char class const continue decimal default delegate do double else enum event false finally float for foreach get if in init int interface internal is lock long namespace new null object out override params private protected public readonly record ref return sealed set static string struct switch this throw true try typeof uint ulong using var virtual void while yield',
+  py: 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return self True try while with yield',
+  js: 'async await break case catch class const continue default delete do else export extends false finally for from function if import in instanceof let new null of return static super switch this throw true try typeof undefined var void while yield',
+};
+const LANG_ALIAS = { 'c#': 'cs', csharp: 'cs', rs: 'rust', python: 'py', javascript: 'js', ts: 'js', typescript: 'js', jsx: 'js', tsx: 'js', mjs: 'js', xml: 'html', htm: 'html', svg: 'html' };
+const LANG_NAMES = { rust: 'Rust', cs: 'C#', py: 'Python', js: 'JavaScript', html: 'HTML', css: 'CSS', json: 'JSON' };
+const RE_STR = String.raw`"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'`;
+const RE_NUM = String.raw`\b0x[\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?[a-zA-Z\d]*\b`;
+const words = (l) => String.raw`\b(?:${KEYWORDS[l].split(' ').join('|')})\b`;
+const C_COMMENT = String.raw`//.*|/\*[\s\S]*?(?:\*/|$)`;
+// Par langage : [classe, expression], essayées dans l'ordre (la première qui commence le plus tôt gagne).
+const HL_RULES = {
+  rust: [['com', C_COMMENT], ['str', String.raw`b?"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\\n])'`], ['kw', words('rust')], ['type', String.raw`\b[A-Z]\w*`], ['num', RE_NUM]],
+  cs: [['com', C_COMMENT], ['str', String.raw`[$@]*"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])'`], ['kw', words('cs')], ['type', String.raw`\b[A-Z]\w*`], ['num', RE_NUM]],
+  js: [['com', C_COMMENT], ['str', RE_STR + '|`(?:\\\\.|[^`\\\\])*`'], ['kw', words('js')], ['num', RE_NUM]],
+  py: [['com', '#.*'], ['str', String.raw`"{3}[\s\S]*?(?:"{3}|$)|'{3}[\s\S]*?(?:'{3}|$)|[fbr]?(?:${RE_STR})`], ['kw', words('py')], ['num', RE_NUM]],
+  html: [['com', String.raw`<!--[\s\S]*?(?:-->|$)`], ['kw', String.raw`</?[\w-]+|/?>`], ['attr', String.raw`[\w-]+(?==)`], ['str', RE_STR]],
+  css: [['com', String.raw`/\*[\s\S]*?(?:\*/|$)`], ['str', RE_STR], ['kw', String.raw`@[\w-]+|!important`], ['attr', String.raw`[\w-]+(?=\s*:[^:{]*[;}])`], ['num', String.raw`#[\da-fA-F]{3,8}\b|-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg|fr)?`]],
+  json: [['attr', String.raw`"(?:\\.|[^"\\])*"(?=\s*:)`], ['str', String.raw`"(?:\\.|[^"\\])*"`], ['kw', String.raw`\b(?:true|false|null)\b`], ['num', String.raw`-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b`]],
+};
+const HL_RE = Object.fromEntries(Object.entries(HL_RULES).map(([l, rules]) => [l, new RegExp(rules.map(([, r]) => `(${r})`).join('|'), 'g')]));
+
+const langOf = (info) => { const l = (info || '').trim().split(/\s+/)[0].toLowerCase(); return LANG_ALIAS[l] ?? l; };
+
+// Le code colorié : des nœuds texte et des <span class="hl-…">.
+function highlight(code, lang) {
+  const re = HL_RE[lang];
+  if (!re) return [code];
+  const out = [];
+  let last = 0;
+  for (const m of code.matchAll(re)) {
+    if (!m[0]) continue;
+    if (m.index > last) out.push(code.slice(last, m.index));
+    const k = m.findIndex((g, i) => i > 0 && g !== undefined);
+    out.push(h('span', { class: 'hl-' + HL_RULES[lang][k - 1][0] }, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < code.length) out.push(code.slice(last));
+  return out;
+}
+
+function codeBlock(code, info) {
+  const lang = langOf(info);
+  const copy = h('button', { class: 'copy', title: 'Copier le code', onclick: async () => {
+    await navigator.clipboard.writeText(code);
+    copy.replaceChildren(icon('check'), 'Copié'); setTimeout(() => copy.replaceChildren(icon('copy'), 'Copier'), 1200);
+  } }, icon('copy'), 'Copier');
+  return h('div', { class: 'code-block', 'data-lang': lang },
+    h('div', { class: 'code-head' }, h('span', {}, LANG_NAMES[lang] ?? (lang || 'code')), copy),
+    h('pre', {}, h('code', {}, highlight(code, lang))));
+}
+
+// Le texte d'un message, avec ses blocs ``` (langage facultatif après les ```).
+function richText(text) {
+  const out = [];
+  const re = /^(`{3,})([^\n`]*)\n([\s\S]*?)(?:\n\1[ \t]*(?:\n|$)|$(?![\s\S]))/gm;
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > last) out.push(text.slice(last, m.index).replace(/\n$/, ''));
+    out.push(codeBlock(m[3], m[2]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
 // Probabilité du token écrit parmi ses 5 choix (0 s'il n'y est pas : tiré plus loin par top-k/top-p).
 const chosenProb = ([text, choices]) => choices.find(([t]) => t === text)?.[1] ?? 0;
 
 // Le texte d'une réponse ; en mode transparence, un <span> par token, teinté selon la confiance.
 function bodyEl(content, tokens) {
   const body = h('div', { class: 'body' });
-  if (!S.settings.transparency || !tokens || tokens.map(([t]) => t).join('').trim() !== content) { body.textContent = content; return body; }
+  if (!S.settings.transparency || !tokens || tokens.map(([t]) => t).join('').trim() !== content) { body.append(...richText(content)); return body; }
   let lead = true;
   tokens.forEach((tok, k) => {
     const text = lead ? tok[0].trimStart() : tok[0];
@@ -436,7 +613,7 @@ function compareEl(m, i) {
 
 function compareStreamingEl() {
   const g = S.gen, s = g.session.compare;
-  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), h('div', { class: 'body' }, g[k].text ? g[k].text.trimStart() : waiting('en attente…')));
+  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), h('div', { class: 'body' }, g[k].text ? richText(g[k].text.trimStart()) : waiting('en attente…')));
   return h('div', { class: 'msg compare' }, h('div', { class: 'pair' }, side('a', s.a), side('b', s.b)));
 }
 
@@ -596,14 +773,14 @@ function renderModels() {
   ul.replaceChildren();
   for (const m of S.models) {
     const active = m.name === S.model.name, loading = m.name === S.model.loading;
-    const tip = [m.name, sizeText(m.bytes), m.parameters && `${m.parameters.toLocaleString('fr-CH')} paramètres`, m.blockSize && `contexte ${m.blockSize} tokens`, m.weights === 'weights.dat' ? 'poids TorchSharp (weights.dat)' : 'poids safetensors'].filter(Boolean).join('\n');
+    const tip = [m.name, sizeText(m.bytes), m.parameters && `${m.parameters.toLocaleString('fr-CH')} paramètres`, m.blockSize && `contexte ${m.blockSize} tokens`, { 'weights.dat': 'poids TorchSharp (weights.dat)', gguf: 'modèle GGUF' }[m.weights] ?? 'poids safetensors', m.license && `licence ${m.license}`].filter(Boolean).join('\n');
     ul.append(h('li', {
       class: (active ? 'active ' : '') + (loading ? 'loading' : ''), title: tip,
       onclick: () => !active && loadModel(m.name), oncontextmenu: (e) => { e.preventDefault(); modelMenu(m, e); },
     }, h('span', { class: 'dot' }), h('span', { class: 'label' }, m.name), h('span', { class: 'meta' }, loading ? 'chargement…' : paramsText(m.parameters)),
     h('button', { class: 'more', title: 'Plus…', 'aria-label': 'Plus', onclick: (e) => { e.stopPropagation(); modelMenu(m, e); } }, icon('ellipsis'))));
   }
-  if (!S.models.length) ul.append(h('li', { class: 'none', onclick: () => importFlow() }, 'Aucun modèle. Glisse un .nelmodel ici, ou ', icon('plus'), '.'));
+  if (!S.models.length) ul.append(h('li', { class: 'none', onclick: () => openCatalog() }, 'Aucun modèle. Glisse un .nelmodel ou un .gguf ici, ou ouvre le catalogue ', icon('download'), '.'));
 }
 
 function renderHeader() {
@@ -650,7 +827,7 @@ function renderMessages() {
 const waiting = (text) => h('span', { class: 'waiting' }, icon('asterisk'), text);
 
 function streamingEl() {
-  return h('div', { class: 'msg assistant ' + (S.gen.text ? 'streaming' : 'thinking') }, h('div', { class: 'body' }, S.gen.text ? S.gen.text.trimStart() : waiting('réfléchit…')));
+  return h('div', { class: 'msg assistant ' + (S.gen.text ? 'streaming' : 'thinking') }, h('div', { class: 'body' }, S.gen.text ? richText(S.gen.text.trimStart()) : waiting('réfléchit…')));
 }
 
 function messageEl(m, i, faded) {
@@ -671,7 +848,7 @@ function messageEl(m, i, faded) {
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); autoGrow(ta); }, 0);
     return el;
   }
-  el.append(user ? h('div', { class: 'body' }, m.content) : bodyEl(m.content, m.tokens));
+  el.append(user ? h('div', { class: 'body' }, richText(m.content)) : bodyEl(m.content, m.tokens));
   const busy = !!S.gen;
   const acts = h('div', { class: 'actions' });
   acts.append(actionButton([icon('copy'), 'Copier'], 'Copier le message', async (e) => {
@@ -722,14 +899,14 @@ function refreshContext() {
     const fill = $('context-fill');
     if (!S.model.name) { S.context = null; $('context-text').textContent = '— / — tokens'; fill.style.width = '0'; return; }
     try {
-      const c = await invoke('context_info', { history: turnsOf(S.current.messages), message: $('input').value });
+      const c = await invoke('context_info', { history: turnsOf(S.current.messages), message: await expandMentions($('input').value, true) });
       const changed = S.context?.keptTurns !== c.keptTurns;
       S.context = c;
-      const ratio = c.tokens / c.blockSize;
-      fill.style.width = Math.min(100, ratio * 100) + '%';
-      fill.className = ratio > 0.9 ? 'full' : ratio > 0.7 ? 'warn' : '';
+      const ratio = (c.tokens + c.reserve) / c.blockSize;
+      fill.style.width = Math.min(100, 100 * c.tokens / c.blockSize) + '%';
+      fill.className = ratio > 1 ? 'full' : ratio > 0.8 ? 'warn' : '';
       $('context-text').textContent = `${c.tokens} / ${c.blockSize} tokens`;
-      $('context').title = `Le modèle verra ${c.tokens} tokens au prochain message (contexte max ${c.blockSize}, dont 80 gardés pour la réponse).\n${c.keptTurns} échange(s) précédent(s) en mémoire.`;
+      $('context').title = `Le modèle verra ${c.tokens} tokens au prochain message (contexte max ${c.blockSize}, dont ${c.reserve} gardés pour la réponse).\n${c.keptTurns} échange(s) précédent(s) en mémoire.${ratio > 1 ? '\nTrop long : le modèle n\'en lira que la fin.' : ''}`;
       if (changed && !S.gen && editing === null) renderMessages();
     } catch { /* modèle en cours de changement */ }
   }, 150);
@@ -744,11 +921,12 @@ const COMMANDS = [
   { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
   { name: 'model', args: '<nom>', desc: 'Charger un modèle installé', run: (a) => a ? loadModel(a) : toast('Usage : /model <nom>', 'warning') },
   { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.length ? S.models.map((m) => h('div', { class: 'line' }, m.name === S.model.name ? icon('check') : h('span', { class: 'pad' }), `${m.name} — ${sizeText(m.bytes)}`)) : 'Aucun modèle.', '', 8000) },
-  { name: 'import', args: '[fichier]', desc: 'Importer un .nelmodel (chemin relatif au dossier de travail)', run: (a) => importFlow(a || null) },
+  { name: 'import', args: '[fichier]', desc: 'Importer un .nelmodel ou un .gguf (chemin relatif au dossier de travail)', run: (a) => importFlow(a || null) },
+  { name: 'catalogue', desc: 'Télécharger un modèle ouvert (Qwen2.5-Coder…)', run: () => openCatalog() },
   { name: 'temp', args: '<0.1 à 2>', desc: 'Température : bas = sage, haut = créatif', run: (a) => setSetting('temperature', a) },
   { name: 'topk', args: '<n>', desc: 'Tirage parmi les K tokens les plus probables (0 = sans limite)', run: (a) => setSetting('topK', a) },
   { name: 'topp', args: '<0.05 à 1>', desc: 'Tirage parmi les tokens qui font cette part des chances', run: (a) => setSetting('topP', a) },
-  { name: 'max', args: '<16 à 128>', desc: 'Longueur maximale d\'une réponse, en tokens', run: (a) => setSetting('maxReplyTokens', a) },
+  { name: 'max', args: '<16 à 128>', desc: 'Longueur maximale d\'une réponse d\'un .nelmodel, en tokens', run: (a) => setSetting('maxReplyTokens', a) },
   { name: 'rename', args: '[titre]', desc: 'Renommer la conversation', run: async (a) => { if (!a) return renameSession(S.current); S.current.title = a; await saveSession(S.current); renderHeader(); } },
   { name: 'export', args: '[md|txt]', desc: 'Exporter la conversation', run: (a) => exportSession(S.current, a !== 'txt') },
   { name: 'dir', desc: 'Changer le dossier de travail de la conversation', run: () => chooseFolder() },
@@ -780,6 +958,16 @@ function updateSuggest() {
   const m = v.match(/^\/(\S*)(\s+(.*))?$/s);
   if (m && !m[2]) items = COMMANDS.filter((c) => c.name.startsWith(m[1].toLowerCase())).map((c) => ({ label: '/' + c.name + (c.args ? ' ' + c.args : ''), desc: c.desc, fill: '/' + c.name + (c.args ? ' ' : '') }));
   else if (m && m[1] === 'model') items = S.models.filter((x) => fold(x.name).startsWith(fold(m[3] ?? ''))).map((x) => ({ label: x.name, desc: x.name === S.model.name ? 'chargé' : paramsText(x.parameters), fill: '/model ' + x.name }));
+  else {
+    const input = $('input'), before = v.slice(0, input.selectionStart ?? v.length);
+    const at = before.match(/(^|\s)@([^\s@]*)$/);
+    if (at) {
+      const q = fold(at[2]), start = before.length - at[2].length - 1;
+      const score = (f) => { const base = fold(f.split('/').pop()); return base.startsWith(q) ? 0 : fold(f).startsWith(q) ? 1 : 2; };
+      items = workFiles().filter((f) => fold(f).includes(q)).sort((a, b) => score(a) - score(b) || a.length - b.length).slice(0, 30)
+        .map((f) => ({ label: '@' + f, desc: 'fichier du dossier de travail', fill: v.slice(0, start) + '@' + f + ' ' + v.slice(before.length).replace(/^\S*\s?/, '') }));
+    }
+  }
   sugg = { items, sel: Math.min(sugg.sel, Math.max(0, items.length - 1)) };
   box.hidden = !items.length;
   box.replaceChildren(...items.map((it, i) => h('div', { class: 'item' + (i === sugg.sel ? ' sel' : ''), onmousedown: (e) => { e.preventDefault(); pickSuggest(i); } },
@@ -837,8 +1025,9 @@ async function openSettings() {
     { key: 'temperature', label: 'Température', min: 0.1, max: 2, step: 0.05, hint: 'Bas : réponses sages et répétitives. Haut : plus créatives, plus de fautes.' },
     { key: 'topK', label: 'Top-k', min: 0, max: 100, step: 1, hint: 'Tirage parmi les K tokens les plus probables (0 = pas de limite).' },
     { key: 'topP', label: 'Top-p', min: 0.05, max: 1, step: 0.01, hint: 'Tirage parmi les tokens qui font cette part des chances (1 = pas de limite).' },
-    { key: 'maxReplyTokens', label: 'Longueur max', min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse, en tokens (environ 3 caractères chacun).' },
+    { key: 'maxReplyTokens', label: 'Longueur max', min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse d\'un .nelmodel, en tokens (environ 3 caractères chacun). Un modèle GGUF écrit jusqu\'à 1024 tokens et s\'arrête de lui-même.' },
     { key: 'repetitionPenalty', label: 'Pénalité de répétition', min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
+    { key: 'contextLimit', label: 'Contexte des modèles GGUF', min: 512, max: 32768, step: 512, hint: 'Au plus ce nombre de tokens de conversation (le modèle peut en gérer plus, mais la mémoire et le temps de réponse montent vite). Les .nelmodel gardent leur taille.' },
   ];
   const inputs = {};
   const body = fields.map((f) => {
@@ -862,12 +1051,13 @@ async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, accent: 'red', autoUpdate: true, device: 'auto' }
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, accent: 'red', autoUpdate: true, device: 'auto' }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value };
-    const before = s.device ?? 'auto';
+    const before = s.device ?? 'auto', limit = s.contextLimit;
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
-    // Un autre périphérique : le modèle est rechargé dessus.
-    if ((S.settings.device ?? 'auto') !== before && S.model.name) loadModel(S.model.name);
+    // Un autre périphérique, ou un autre contexte pour un modèle GGUF : le modèle est rechargé.
+    const gguf = S.models.find((m) => m.name === S.model.name)?.weights === 'gguf';
+    if (S.model.name && ((S.settings.device ?? 'auto') !== before || (gguf && S.settings.contextLimit !== limit))) loadModel(S.model.name);
   }
   applyTheme();
 }
@@ -982,7 +1172,7 @@ async function showBenchmarks(all) {
 
 function showHelp() {
   const rows = COMMANDS.flatMap((c) => [h('dt', {}, '/' + c.name + (c.args ? ' ' + c.args : '')), h('dd', {}, c.desc)]);
-  const keys = [['Entrée', 'envoyer'], ['Maj+Entrée', 'nouvelle ligne'], ['Échap', 'arrêter la réponse'], ['Ctrl+K', 'palette'], ['Ctrl+N', 'nouvelle conversation'], ['Ctrl+Maj+N', 'conversation comparée'], ['Ctrl+,', 'réglages'], ['F2', 'renommer'], ['Ctrl+I', 'importer un modèle']]
+  const keys = [['Entrée', 'envoyer'], ['Maj+Entrée', 'nouvelle ligne'], ['@', 'joindre un fichier du dossier de travail'], ['Échap', 'arrêter la réponse'], ['Ctrl+K', 'palette'], ['Ctrl+N', 'nouvelle conversation'], ['Ctrl+Maj+N', 'conversation comparée'], ['Ctrl+,', 'réglages'], ['F2', 'renommer'], ['Ctrl+I', 'importer un modèle']]
     .flatMap(([k, d]) => [h('dt', {}, k), h('dd', {}, d)]);
   dialog('Aide', [h('dl', { class: 'info-grid' }, rows), h('h2', { style: 'margin-top:16px' }, 'Raccourcis'), h('dl', { class: 'info-grid' }, keys)], [{ label: 'Fermer', value: null, primary: true }]);
 }
@@ -1004,7 +1194,7 @@ function openPalette() {
   if (closeOverlay) return;
   const actions = [
     ['Nouvelle conversation', 'Ctrl+N', startNew], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard],
-    ['Mode transparence', '', toggleTransparency], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Réglages', 'Ctrl+,', openSettings],
+    ['Mode transparence', '', toggleTransparency], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', openSettings],
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
     ['Ouvrir le dossier de travail', '', () => openFolder()], ['Supprimer la conversation', '', () => S.current.messages.length && deleteSession(S.current)],
@@ -1091,8 +1281,16 @@ async function submitInput() {
     return runCommand(line);
   }
   if (!canGenerate()) return;
-  input.value = ''; autoGrow(input);
-  if (!(await send(line))) input.value = line;
+  const text = await expandMentions(line);
+  if (text === null) return;
+  if (text !== line && S.model.name && !S.current.compare) {
+    try {
+      const c = await invoke('context_info', { history: turnsOf(S.current.messages), message: text });
+      if (c.tokens + c.reserve > c.blockSize && !(await confirmDialog('Le message dépasse le contexte', `Avec ses fichiers, le message fait ${c.tokens.toLocaleString('fr-CH')} tokens, et le modèle n'en voit que ${c.blockSize.toLocaleString('fr-CH')} (dont ${c.reserve} pour la réponse) : il n'en lira que la fin.`, 'Envoyer quand même'))) return;
+    } catch { /* modèle en cours de changement */ }
+  }
+  input.value = ''; autoGrow(input); refreshContext();
+  if (!(await send(text))) input.value = line;
 }
 
 $('input').addEventListener('input', (e) => { autoGrow(e.target); updateSuggest(); refreshContext(); });
@@ -1120,6 +1318,7 @@ $('send').onclick = () => (S.gen ? stop() : submitInput());
 $('new-chat').onclick = startNew;
 $('search').oninput = renderSessions;
 $('import-btn').onclick = () => importFlow();
+$('catalog-btn').onclick = () => openCatalog();
 $('settings-btn').onclick = openSettings;
 $('arena-btn').onclick = openLeaderboard;
 $('transp-btn').onclick = toggleTransparency;
@@ -1183,16 +1382,16 @@ listen('import-error', (e) => {
   toast('Import impossible : ' + err, 'error', 10000);
 });
 
-// Glisser-déposer d'un .nelmodel sur la fenêtre.
+// Glisser-déposer d'un .nelmodel ou d'un .gguf sur la fenêtre.
 listen('tauri://drag-enter', () => ($('drop').hidden = false));
 listen('tauri://drag-leave', () => ($('drop').hidden = true));
-listen('tauri://drag-drop', (e) => {
+function onDrop(paths) {
   $('drop').hidden = true;
-  const paths = e.payload.paths ?? [];
-  const pkg = paths.find((p) => p.toLowerCase().endsWith('.nelmodel'));
+  const pkg = paths.find((p) => /\.(nelmodel|gguf)$/i.test(p));
   if (pkg) importFlow(pkg);
-  else if (paths.length) toast('Seuls les fichiers .nelmodel peuvent être importés.', 'warning');
-});
+  else if (paths.length) toast('Seuls les fichiers .nelmodel et .gguf peuvent être importés.', 'warning');
+}
+listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 
 // --- Démarrage -------------------------------------------------------------------------------------------
 

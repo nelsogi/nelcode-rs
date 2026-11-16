@@ -1,6 +1,7 @@
 // Pas de console derrière la fenêtre en version publiée.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod catalog;
 #[cfg(feature = "cuda")]
 mod delayload;
 mod gpu;
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use nel_engine::{Device, MAX_ANSWER_TOKENS, NelModel, Rng, Sampling};
+use nel_engine::{ChatModel, Device, Rng, Sampling};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -22,7 +23,7 @@ use store::Result;
 
 struct Loaded {
     name: String,
-    model: Arc<NelModel>,
+    model: Arc<dyn ChatModel>,
     /// « CPU » ou « GPU · NVIDIA T400 4GB ».
     device: String,
 }
@@ -42,6 +43,8 @@ struct AppState {
     gpu: OnceLock<std::result::Result<(Device, String), String>>,
     gpu_installing: AtomicBool,
     gpu_cancel: AtomicBool,
+    catalog_installing: AtomicBool,
+    catalog_cancel: AtomicBool,
 }
 
 /// Le GPU, initialisé au premier appel depuis le pack (%APPDATA%\NelCode\gpu).
@@ -71,7 +74,7 @@ fn pick_device(state: &AppState) -> (Device, String) {
     (Device::Cpu, "CPU".into())
 }
 
-fn current(state: &AppState) -> Result<(String, Arc<NelModel>)> {
+fn current(state: &AppState) -> Result<(String, Arc<dyn ChatModel>)> {
     let guard = state.model.lock().unwrap();
     let loaded = guard.as_ref().ok_or("aucun modèle chargé")?;
     Ok((loaded.name.clone(), loaded.model.clone()))
@@ -79,8 +82,8 @@ fn current(state: &AppState) -> Result<(String, Arc<NelModel>)> {
 
 #[tauri::command]
 fn app_info() -> Value {
-    // Un .nelmodel ouvert depuis l'Explorateur (association de fichier) arrive en argument.
-    let startup_file = std::env::args().nth(1).filter(|a| a.to_lowercase().ends_with(".nelmodel"));
+    // Un .nelmodel ou un .gguf ouvert depuis l'Explorateur (association de fichier) arrive en argument.
+    let startup_file = std::env::args().nth(1).filter(|a| a.to_lowercase().ends_with(".nelmodel") || a.to_lowercase().ends_with(".gguf"));
     json!({
         "root": store::root(),
         "home": std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(store::root),
@@ -112,8 +115,8 @@ fn model_status(state: State<AppState>) -> ModelStatus {
     ModelStatus {
         name: model.as_ref().map(|m| m.name.clone()),
         loading: state.loading.lock().unwrap().clone(),
-        block_size: model.as_ref().map(|m| m.model.model.config.block_size),
-        parameters: model.as_ref().and_then(|m| m.model.info["parameters"].as_u64()),
+        block_size: model.as_ref().map(|m| m.model.context_size()),
+        parameters: model.as_ref().and_then(|m| m.model.parameters()),
         device: model.as_ref().map(|m| m.device.clone()),
     }
 }
@@ -139,9 +142,9 @@ fn load_model(app: AppHandle, state: State<AppState>, name: String) -> Result<()
         let result = store::load_folder(&store::models_dir().join(&name), &device);
         match result {
             Ok(model) => {
-                let block_size = model.model.config.block_size;
+                let block_size = model.context_size();
                 log::info(&format!("modèle « {name} » chargé en {:.2} s sur {label} (contexte {block_size})", clock.elapsed().as_secs_f64()));
-                *state.model.lock().unwrap() = Some(Loaded { name: name.clone(), model: Arc::new(model), device: label.clone() });
+                *state.model.lock().unwrap() = Some(Loaded { name: name.clone(), model, device: label.clone() });
                 // La réserve de la comparaison suit le périphérique choisi : elle est rechargée au besoin.
                 state.compare.lock().unwrap().clear();
                 *state.loading.lock().unwrap() = None;
@@ -173,14 +176,19 @@ fn delete_model(state: State<AppState>, name: String) -> Result<()> {
     store::delete_model(&name)
 }
 
-/// Les infos d'un .nelmodel avant de l'importer (format vérifié) : nom proposé, et s'il est déjà pris.
+/// Les infos d'un .nelmodel ou d'un .gguf avant de l'importer (format vérifié) : nom proposé, et s'il est déjà pris.
 #[tauri::command]
 fn inspect_package(path: String) -> Result<Value> {
     let path = PathBuf::from(path);
-    let info = store::read_package_info(&path)?;
-    let name = store::suggested_name(&path, &info);
+    let gguf = store::is_gguf(&path);
+    let info = if gguf { store::read_gguf_info(&path)? } else { store::read_package_info(&path)? };
+    let name = if gguf {
+        path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+    } else {
+        store::suggested_name(&path, &info)
+    };
     let exists = store::valid_name(&name) && store::models_dir().join(&name).exists();
-    Ok(json!({ "info": info, "name": name, "exists": exists }))
+    Ok(json!({ "info": info, "name": name, "exists": exists, "gguf": gguf }))
 }
 
 /// Importe dans un thread à part (extraction et chargement d'essai) : « import-done » ou « import-error ».
@@ -209,7 +217,7 @@ fn import_model(app: AppHandle, state: State<AppState>, path: String, name: Stri
 
 #[tauri::command]
 async fn pick_nelmodel(app: AppHandle) -> Option<String> {
-    let file = app.dialog().file().set_title("Importer un modèle").add_filter("Modèle Nel Code", &["nelmodel"]).blocking_pick_file()?;
+    let file = app.dialog().file().set_title("Importer un modèle").add_filter("Modèle (.nelmodel, .gguf)", &["nelmodel", "gguf"]).blocking_pick_file()?;
     Some(file.into_path().ok()?.to_string_lossy().into_owned())
 }
 
@@ -275,24 +283,14 @@ fn save_settings(changes: serde_json::Map<String, Value>) -> Result<Value> {
 
 // --- Génération --------------------------------------------------------------------------------------------
 
-/// Ce que le modèle verra au prochain message : tokens du prompt, et combien de tours (les plus récents) y tiennent.
+/// Ce que le modèle verra au prochain message : tokens du prompt, combien de tours (les plus récents) y tiennent,
+/// et la place gardée pour la réponse.
 #[tauri::command]
 fn context_info(state: State<AppState>, history: Vec<(String, String)>, message: String) -> Result<Value> {
     let (_, m) = current(&state)?;
-    let t = &m.tokenizer;
-    let block = m.model.config.block_size;
-    let budget = block.saturating_sub(MAX_ANSWER_TOKENS);
-    let mut used = t.encode("<|doc|>").len() + t.encode(&format!("<|user|>{}<|end|><|assistant|>", message.trim())).len();
-    let mut kept = 0;
-    for (q, a) in history.iter().rev() {
-        let n = t.encode(&format!("<|user|>{}<|end|><|assistant|>{}<|end|>", q.trim(), a.trim())).len();
-        if used + n > budget {
-            break;
-        }
-        used += n;
-        kept += 1;
-    }
-    Ok(json!({ "tokens": m.chat_prompt(&history, &message).len(), "blockSize": block, "keptTurns": kept }))
+    let (prompt, kept) = m.chat(&history, &message);
+    let reserve = m.max_reply(store::load_settings()["maxReplyTokens"].as_u64().unwrap_or(80) as usize);
+    Ok(json!({ "tokens": prompt.len(), "blockSize": m.context_size(), "keptTurns": kept, "reserve": reserve }))
 }
 
 #[derive(Deserialize)]
@@ -327,23 +325,31 @@ impl GenOptions {
 
 /// Écrit une réponse. Chaque token part dans « gen-token » : { text, side, choices? } (choices : [[texte, p] ×5]
 /// en mode transparence). Rend le résumé pour « gen-done ».
-fn write_reply(app: &AppHandle, model: &NelModel, name: &str, history: &[(String, String)], message: &str, options: &GenOptions, stop: &AtomicBool, side: &str) -> Value {
+fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(String, String)], message: &str, options: &GenOptions, stop: &AtomicBool, side: &str) -> Value {
     let clock = Instant::now();
-    let prompt = model.chat_prompt(history, message);
+    let (prompt, _) = model.chat(history, message);
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
-    let t = &model.tokenizer;
-    let max = options.max_reply_tokens.clamp(16, 128);
-    let result = model.generate_with_choices(&prompt, max, &options.sampling(), &mut Rng(seed), true, options.transparency, |id, choices| {
-        let mut token = json!({ "text": t.decode(&[id]), "side": side });
+    let max = model.max_reply(options.max_reply_tokens);
+    // Le texte de chaque token : ce qu'il ajoute au texte décodé jusque-là (un caractère peut tenir sur plusieurs
+    // tokens d'octets : rien n'est envoyé tant qu'il n'est pas complet).
+    let (mut ids, mut shown) = (Vec::new(), 0);
+    let result = model.stream(&prompt, max, &options.sampling(), &mut Rng(seed), true, options.transparency, &mut |id, choices| {
+        ids.push(id);
+        let full = model.decode(&ids);
+        let complete = !full.ends_with('\u{FFFD}');
+        let mut token = json!({ "text": if complete { full.get(shown..).unwrap_or_default() } else { "" }, "side": side });
+        if complete {
+            shown = full.len();
+        }
         if options.transparency {
-            token["choices"] = choices.iter().map(|&(c, p)| json!([t.decode(&[c]), p])).collect();
+            token["choices"] = choices.iter().map(|&(c, p)| json!([model.decode(&[c]), p])).collect();
         }
         let _ = app.emit("gen-token", token);
         !stop.load(Ordering::SeqCst)
     });
     match result {
         Ok(out) => json!({
-            "text": t.decode(&out.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            "text": model.decode(&out.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
             "model": name,
             "tokens": out.len(),
             "promptTokens": prompt.len(),
@@ -368,7 +374,7 @@ fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String
     state.stop.store(false, Ordering::SeqCst);
     let (generating, stop) = (state.generating.clone(), state.stop.clone());
     std::thread::spawn(move || {
-        let done = write_reply(&app, &model, &name, &history, &message, &options, &stop, "");
+        let done = write_reply(&app, &*model, &name, &history, &message, &options, &stop, "");
         generating.store(false, Ordering::SeqCst);
         let _ = app.emit("gen-done", done);
     });
@@ -376,7 +382,7 @@ fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String
 }
 
 /// Le modèle `name` pour la comparaison : celui chargé s'il a ce nom, sinon un de la réserve, sinon chargé dans la réserve.
-fn compare_model(state: &AppState, name: &str) -> Result<Arc<NelModel>> {
+fn compare_model(state: &AppState, name: &str) -> Result<Arc<dyn ChatModel>> {
     if let Some(l) = state.model.lock().unwrap().as_ref().filter(|l| l.name == name) {
         return Ok(l.model.clone());
     }
@@ -386,7 +392,7 @@ fn compare_model(state: &AppState, name: &str) -> Result<Arc<NelModel>> {
     }
     let (device, label) = pick_device(state);
     let clock = Instant::now();
-    let model = Arc::new(store::load_folder(&store::models_dir().join(name), &device).inspect_err(|e| log::error(&format!("comparaison : « {name} » ne se charge pas : {e}")))?);
+    let model = store::load_folder(&store::models_dir().join(name), &device).inspect_err(|e| log::error(&format!("comparaison : « {name} » ne se charge pas : {e}")))?;
     log::info(&format!("comparaison : « {name} » chargé en {:.2} s sur {label}", clock.elapsed().as_secs_f64()));
     cache.push(Loaded { name: name.to_string(), model: model.clone(), device: label });
     Ok(model)
@@ -415,7 +421,7 @@ fn compare_generate(app: AppHandle, state: State<AppState>, a: String, b: String
             }
             let _ = app.emit("gen-side", side);
             match compare_model(&state, name) {
-                Ok(model) => write_reply(&app, &model, name, history, &message, &options, &stop, side),
+                Ok(model) => write_reply(&app, &*model, name, history, &message, &options, &stop, side),
                 Err(e) => json!({ "error": format!("{name} : {e}") }),
             }
         };
@@ -517,13 +523,13 @@ const BENCH_PROMPT: &str = "Bonjour, peux-tu te présenter en quelques phrases ?
 fn bench_one(folder: &std::path::Path, device: &Device, label: &str) -> Result<Value> {
     let clock = Instant::now();
     let m = store::load_folder(folder, device)?;
-    m.logits(&m.tokenizer.encode("<|doc|>")).map_err(|e| e.to_string())?; // premier passage : noyaux GPU prêts
+    let (prompt, _) = m.chat(&[], BENCH_PROMPT);
+    m.stream(&prompt[..1], 1, &Sampling::GREEDY, &mut Rng(0), false, false, &mut |_, _| true).map_err(|e| e.to_string())?; // premier passage : noyaux GPU prêts
     let load = clock.elapsed().as_secs_f64();
-    let prompt = m.chat_prompt(&[], BENCH_PROMPT);
     let start = Instant::now();
     let mut first = None;
     let out = m
-        .generate(&prompt, BENCH_TOKENS, &Sampling::GREEDY, &mut Rng(0), false, |_| {
+        .stream(&prompt, BENCH_TOKENS, &Sampling::GREEDY, &mut Rng(0), false, false, &mut |_, _| {
             first.get_or_insert_with(|| start.elapsed().as_secs_f64());
             true
         })
@@ -588,6 +594,92 @@ fn benchmarks() -> Value {
     store::load_benchmarks()
 }
 
+// --- Catalogue ----------------------------------------------------------------------------------------------
+
+#[tauri::command]
+fn catalog() -> Value {
+    catalog::list()
+}
+
+/// Télécharge, vérifie et installe un modèle du catalogue (« catalog-progress »). Rend quand c'est fini, annulé ou en erreur.
+#[tauri::command]
+async fn install_catalog_model(app: AppHandle, name: String) -> Result<store::ImportReport> {
+    let state = app.state::<AppState>();
+    if state.catalog_installing.swap(true, Ordering::SeqCst) {
+        return Err("un téléchargement est déjà en cours".into());
+    }
+    state.catalog_cancel.store(false, Ordering::SeqCst);
+    let result = catalog::install(&app, &name, &state.catalog_cancel).await;
+    state.catalog_installing.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
+fn cancel_catalog(state: State<AppState>) {
+    state.catalog_cancel.store(true, Ordering::SeqCst);
+}
+
+// --- Fichiers du dossier de travail (lecture seule : Nel Code n'y écrit jamais) ----------------------------
+
+/// La taille maximale d'un fichier joint à un message.
+const MAX_FILE_BYTES: u64 = 100_000;
+const MAX_LISTED: usize = 5000;
+const SKIPPED_DIRS: [&str; 8] = ["node_modules", "target", "bin", "obj", "dist", "build", "__pycache__", "venv"];
+
+/// Les fichiers du dossier de travail (chemins relatifs, avec des /), sans les dossiers cachés ni ceux de compilation.
+#[tauri::command]
+fn list_files(dir: String) -> Result<Vec<String>> {
+    let root = PathBuf::from(&dir);
+    if !root.is_dir() {
+        return Err(format!("dossier introuvable : {dir}"));
+    }
+    let mut out = Vec::new();
+    let mut stack = vec![(root.clone(), 0)];
+    while let Some((folder, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(kind) = e.file_type() else { continue };
+            if name.starts_with('.') || kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                if depth < 8 && !SKIPPED_DIRS.contains(&name.to_lowercase().as_str()) {
+                    stack.push((e.path(), depth + 1));
+                }
+            } else if let Ok(rel) = e.path().strip_prefix(&root) {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+                if out.len() >= MAX_LISTED {
+                    out.sort();
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Lit un fichier texte du dossier de travail, sans pouvoir en sortir (« .. », lien, chemin absolu). Au plus
+/// MAX_FILE_BYTES octets, en UTF-8.
+#[tauri::command]
+fn read_file(dir: String, path: String) -> Result<String> {
+    let root = std::fs::canonicalize(&dir).map_err(|e| format!("dossier introuvable : {e}"))?;
+    let file = std::fs::canonicalize(root.join(&path)).map_err(|_| format!("fichier introuvable : {path}"))?;
+    if !file.starts_with(&root) || !file.is_file() {
+        return Err(format!("« {path} » n'est pas un fichier du dossier de travail"));
+    }
+    let size = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
+    if size > MAX_FILE_BYTES {
+        return Err(format!("« {path} » est trop gros ({} Ko, au plus {} Ko)", size.div_ceil(1000), MAX_FILE_BYTES / 1000));
+    }
+    let bytes = std::fs::read(&file).map_err(|e| format!("{path} : {e}"))?;
+    if bytes.contains(&0) {
+        return Err(format!("« {path} » n'est pas un fichier texte"));
+    }
+    String::from_utf8(bytes).map_err(|_| format!("« {path} » n'est pas du texte UTF-8"))
+}
+
 /// Stop / Échap : le thread de génération s'arrête après le token en cours.
 #[tauri::command]
 fn stop_generation(state: State<AppState>) {
@@ -647,6 +739,11 @@ fn main() {
             benchmark,
             benchmarks,
             open_driver_page,
+            catalog,
+            install_catalog_model,
+            cancel_catalog,
+            list_files,
+            read_file,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");

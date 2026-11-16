@@ -1,9 +1,14 @@
-# Carte du modèle : minichat-v3b
+# Carte des modèles
+
+- [minichat-v3b](#minichat-v3b) : le petit modèle MiniChat (`.nelmodel`) ;
+- [Modèles du catalogue](#modèles-du-catalogue) : Qwen2.5-Coder 0.5B et 1.5B (GGUF).
+
+## minichat-v3b
 
 Petit modèle de langage en français, entraîné de zéro avec [MiniChat](https://github.com/nelsogi/MiniChat),
 pour discuter dans Nel Code. Fichier : `minichat-v3b.nelmodel` (format 2, voir [NELMODEL-FORMAT.md](NELMODEL-FORMAT.md)).
 
-## En bref
+### En bref
 
 | | |
 |---|---|
@@ -16,11 +21,11 @@ pour discuter dans Nel Code. Fichier : `minichat-v3b.nelmodel` (format 2, voir [
 | Langue | français uniquement |
 | Licence des poids | **CC BY-NC-SA 4.0 proposée, usage non commercial** (voir plus bas) |
 
-## Données d'entraînement
+### Données d'entraînement
 
 Vérifiées le 11.11.2026 sur les cartes Hugging Face. Ce n'est pas un avis juridique.
 
-### Pré-entraînement (`texte.txt`, 1,47 Go)
+#### Pré-entraînement (`texte.txt`, 1,47 Go)
 
 | Source | Ce qui a été pris | Licence |
 |---|---|---|
@@ -28,7 +33,7 @@ Vérifiées le 11.11.2026 sur les cartes Hugging Face. Ce n'est pas un avis juri
 | [HuggingFaceFW/fineweb-2](https://huggingface.co/datasets/HuggingFaceFW/fineweb-2) | `fra_Latn`, un fichier de 63 Mo (même schéma, mais pas de version publiée de cette taille retrouvée) | ODC-By 1.0, plus les conditions d'utilisation de Common Crawl |
 | [iproskurina/TinyStories-French](https://huggingface.co/datasets/iproskurina/TinyStories-French) | les 1000 histoires | **aucune licence déclarée** ; traduction de [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) (CDLA-Sharing-1.0) |
 
-### Fine-tuning (dialogues, ~135 000 conversations)
+#### Fine-tuning (dialogues, ~135 000 conversations)
 
 D'après le README et le commit `171f09d` de MiniChat. Le fichier de dialogues lui-même n'est pas sur ce PC : **à confirmer**.
 
@@ -56,7 +61,7 @@ Restent, avec leur licence :
 
 Le filtre « style human » ne dit pas si toutes les conversations WikiHow ont été écartées : par prudence, elles sont comptées.
 
-### Ce qui en découle
+#### Ce qui en découle
 
 - **Usage non commercial** : Stanford Alpaca, WikiHow et LIMA sont sous licence NC. Les poids sont donc proposés
   sous **CC BY-NC-SA 4.0** (non commercial, attribution, partage dans les mêmes conditions, ce qui couvre aussi
@@ -65,7 +70,7 @@ Le filtre « style human » ne dit pas si toutes les conversations WikiHow ont �
 - Une partie des dialogues a été générée ou traduite par ChatGPT ; les conditions d'OpenAI visent ceux qui ont produit ces textes.
 - La licence MIT du dépôt couvre le **code** seulement, pas ce modèle.
 
-## Limites
+### Limites
 
 - **Très petit modèle** (28 M de paramètres, 256 tokens de contexte) : il oublie vite la conversation et se répète.
 - **Il invente des faits**, avec assurance. Exemple réel : « Et celle de l'Italie ? » → « La capitale de la France est Paris. »
@@ -74,7 +79,39 @@ Le filtre « style human » ne dit pas si toutes les conversations WikiHow ont �
 - Il reprend les tournures et biais de ses données (Wikipédia, web, réponses de type ChatGPT : « En tant qu'IA… »).
 - Pas d'alignement de sécurité : il peut produire du texte faux, inapproprié ou blessant.
 
-## Usage prévu
+### Usage prévu
 
 Apprentissage et démonstration : voir comment marche un petit modèle génératif, en local, sur CPU. Pas pour la production,
 le conseil (médical, juridique…) ni un usage commercial.
+
+## Modèles du catalogue
+
+Proposés dans Nel Code (« Catalogue de modèles »), téléchargés depuis Hugging Face à une révision fixe, empreinte SHA-256
+vérifiée. Ce sont les fichiers GGUF publiés par l'équipe Qwen (Alibaba Cloud), **non modifiés** : Nel Code ne les a pas
+entraînés. Licences vérifiées le 16.11.2026 sur les pages Hugging Face (dépôts GGUF et modèles d'origine).
+
+| | Qwen2.5-Coder-0.5B-Instruct | Qwen2.5-Coder-1.5B-Instruct |
+|---|---|---|
+| Page | [Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF) | [Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF) |
+| Fichier | `qwen2.5-coder-0.5b-instruct-q4_k_m.gguf` (491 400 064 octets) | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` (1 117 320 768 octets) |
+| Révision | `ebb2015119c907b064c512bf053e945850b5875f` | `f86cb2c1fa58255f8052cc32aeede1b7482d4361` |
+| SHA-256 | `1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32` | `cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046` |
+| Architecture | Qwen2, quantifié Q4_K_M | Qwen2, quantifié Q4_K_M |
+| Contexte | 32 768 tokens (Nel Code : 8 192 par défaut) | 32 768 tokens (Nel Code : 8 192 par défaut) |
+| Licence | **Apache 2.0** ([texte](https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/blob/main/LICENSE)) | **Apache 2.0** ([texte](https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/blob/main/LICENSE)) |
+
+Attention : les autres tailles de Qwen2.5-Coder n'ont pas toutes la même licence (le 3B est sous licence Qwen Research,
+non commerciale) ; elles ne sont pas dans le catalogue.
+
+Dans Nel Code : le format de chat ChatML du modèle, avec son message système par défaut (« You are Qwen, created by
+Alibaba Cloud… »), et son tokenizer, reconstruit depuis le fichier (identique au `tokenizer.json` officiel, vérifié par
+`nel-engine/tests/gguf.rs`).
+
+### Limites
+
+- Ce sont des **petits** modèles de code : ils se trompent, inventent des fonctions ou des API, et leur code doit être
+  relu et testé. Le 0.5B est rapide mais faible ; le 1.5B est meilleur, plus lent.
+- Meilleurs en anglais qu'en français.
+- Ils ne lisent que ce que tu leur donnes (message, fichiers `@`) et ne modifient rien : Nel Code est en lecture seule.
+- Les données d'entraînement et leurs biais sont décrits par Qwen dans le
+  [rapport technique de Qwen2.5-Coder](https://arxiv.org/abs/2409.12186).

@@ -15,7 +15,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Petits gestes dans la page : taper dans la saisie, touches, clics sur un bouton par son texte.
 const HELPERS = `window.T = {
-  type(text) { const i = document.getElementById('input'); i.value = text; i.dispatchEvent(new Event('input', { bubbles: true })); },
+  type(text) { const i = document.getElementById('input'); i.focus(); i.value = text; i.dispatchEvent(new Event('input', { bubbles: true })); },
   key(key, opts = {}, el = document.activeElement || document.body) { el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...opts })); },
   submit(text) { T.type(text); T.key('Enter', {}, document.getElementById('input')); },
   button(text, root = document) {

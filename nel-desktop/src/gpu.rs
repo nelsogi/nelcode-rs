@@ -9,8 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use nel_engine::gpu::{MIN_DRIVER_CUDA, MIN_DRIVER_TEXT, PACK_DLLS, probe};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::store::{Result, root};
 
@@ -86,14 +85,6 @@ pub fn status(active: Option<&std::result::Result<String, String>>) -> Value {
     })
 }
 
-fn free_bytes(path: &std::path::Path) -> Option<u64> {
-    use std::os::windows::ffi::OsStrExt;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
-    let mut free = 0u64;
-    let ok = unsafe { windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) };
-    (ok != 0).then_some(free)
-}
-
 /// Efface le téléchargement et l'extraction en cours si l'installation n'arrive pas au bout.
 struct Cleanup(bool);
 
@@ -127,43 +118,14 @@ async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
     }
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
     let need = PACK_BYTES + PACK_UNPACKED_BYTES + 50_000_000;
-    if let Some(free) = free_bytes(&root())
+    if let Some(free) = crate::catalog::free_bytes(&root())
         && free < need
     {
         return Err(format!("espace disque insuffisant : {} Mo libres, {} Mo nécessaires", free / 1_000_000, need / 1_000_000));
     }
     let mut cleanup = Cleanup(false);
 
-    // Téléchargement, empreinte calculée au fil de l'eau.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = reqwest::Client::builder().user_agent("NelCode").build().map_err(|e| e.to_string())?;
-    let mut resp = client.get(pack_url()).send().await.and_then(|r| r.error_for_status()).map_err(|e| format!("téléchargement impossible : {e}"))?;
-    let total = resp.content_length().unwrap_or(PACK_BYTES);
-    let mut file = fs::File::create(download()).map_err(|e| e.to_string())?;
-    let mut hash = Sha256::new();
-    let mut received = 0u64;
-    let mut last = 0u64;
-    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("téléchargement interrompu : {e}"))? {
-        if cancel.load(Ordering::SeqCst) {
-            return Err("annulé".into());
-        }
-        received += chunk.len() as u64;
-        if received > PACK_BYTES + 1_000_000 {
-            return Err("le fichier téléchargé est plus gros que le pack attendu".into());
-        }
-        hash.update(&chunk);
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("écriture impossible : {e}"))?;
-        if received - last > 1_000_000 || received == total {
-            last = received;
-            let _ = app.emit("gpu-pack-progress", json!({ "received": received, "total": total }));
-        }
-    }
-    drop(file);
-    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if digest != PACK_SHA256 {
-        return Err(format!("empreinte SHA-256 incorrecte : le pack est refusé ({digest})"));
-    }
-    let _ = app.emit("gpu-pack-progress", json!({ "received": received, "total": total, "extracting": true }));
+    crate::catalog::download(app, &pack_url(), &download(), PACK_SHA256, PACK_BYTES, cancel, "gpu-pack-progress", serde_json::Value::Null).await?;
 
     // Extraction : seulement les fichiers attendus, à plat, dans gpu.partial ; puis gpu.partial devient gpu.
     let _ = fs::remove_dir_all(partial());

@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::sync::Arc;
+
 use candle_core::{Device, Tensor};
-use nel_engine::{Config, MiniGpt, NelModel, Tokenizer};
+use nel_engine::{ChatModel, Config, GgufModel, MiniGpt, NelModel, Tokenizer};
 use serde::Serialize;
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -48,10 +50,17 @@ pub struct ModelEntry {
     pub modified: u64, // secondes depuis 1970
     pub parameters: Option<u64>,
     pub block_size: Option<usize>,
-    pub weights: &'static str, // "safetensors" ou "weights.dat"
+    pub weights: &'static str, // "safetensors", "weights.dat" ou "gguf"
+    pub license: Option<String>,
 }
 
+/// Un modèle ouvert : model.gguf (et son tokenizer.json s'il en a un), avec un model-info.json écrit par Nel Code.
+pub const GGUF_FILE: &str = "model.gguf";
+
 fn weights_file(folder: &Path) -> Option<(PathBuf, &'static str)> {
+    if folder.join(GGUF_FILE).is_file() {
+        return Some((folder.join(GGUF_FILE), "gguf"));
+    }
     let st = folder.join("model.safetensors");
     let dat = folder.join("weights.dat");
     if st.is_file() {
@@ -64,7 +73,7 @@ fn weights_file(folder: &Path) -> Option<(PathBuf, &'static str)> {
 }
 
 fn is_model_folder(folder: &Path) -> bool {
-    folder.join("config.json").is_file() && folder.join("tokenizer.json").is_file() && weights_file(folder).is_some()
+    folder.join(GGUF_FILE).is_file() || (folder.join("config.json").is_file() && folder.join("tokenizer.json").is_file() && weights_file(folder).is_some())
 }
 
 /// Les modèles installés, du plus récent au plus ancien.
@@ -86,7 +95,11 @@ pub fn list_models() -> Vec<ModelEntry> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0, |d| d.as_secs()),
                 parameters: json("model-info.json").and_then(|v| v["parameters"].as_u64()),
-                block_size: json("config.json").and_then(|v| v["BlockSize"].as_u64()).map(|b| b as usize),
+                block_size: json("config.json")
+                    .and_then(|v| v["BlockSize"].as_u64())
+                    .or_else(|| json("model-info.json").and_then(|v| v["contextLength"].as_u64()))
+                    .map(|b| b as usize),
+                license: json("model-info.json").and_then(|v| v["license"].as_str().map(str::to_string)),
                 weights: kind,
             }
         })
@@ -95,9 +108,14 @@ pub fn list_models() -> Vec<ModelEntry> {
     list
 }
 
-/// Charge un dossier de modèle (config.json, tokenizer.json, model.safetensors ou weights.dat).
-pub fn load_folder(folder: &Path, device: &Device) -> Result<NelModel> {
-    load_counted(folder, device).map(|(m, _)| m)
+/// Charge un dossier de modèle : model.gguf, ou config.json, tokenizer.json, model.safetensors ou weights.dat.
+/// Un modèle GGUF utilise au plus `contextLimit` tokens de contexte (réglages).
+pub fn load_folder(folder: &Path, device: &Device) -> Result<Arc<dyn ChatModel>> {
+    if folder.join(GGUF_FILE).is_file() {
+        let limit = load_settings()["contextLimit"].as_u64().unwrap_or(8192) as usize;
+        return Ok(Arc::new(GgufModel::load(&folder.join(GGUF_FILE), device, limit).map_err(|e| e.to_string())?));
+    }
+    load_counted(folder, device).map(|(m, _)| Arc::new(m) as Arc<dyn ChatModel>)
 }
 
 /// Comme load_folder, avec le vrai nombre de paramètres.
@@ -182,7 +200,7 @@ fn read_zip_entry(zip: &mut zip::ZipArchive<fs::File>, name: &str, limit: u64) -
     Ok(bytes)
 }
 
-fn temp_folder() -> PathBuf {
+pub fn temp_folder() -> PathBuf {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
     root().join("import-tmp").join(format!("{nanos:x}-{}", std::process::id()))
 }
@@ -201,6 +219,9 @@ pub fn suggested_name(path: &Path, info: &serde_json::Value) -> String {
 pub fn import(path: &Path, name: &str, replace: bool) -> Result<ImportReport> {
     if !valid_name(name) {
         return Err(format!("« {name} » n'est pas un nom de modèle valide"));
+    }
+    if is_gguf(path) {
+        return import_gguf(path, name, replace, serde_json::json!({ "source": file_name(path) }));
     }
     let info = read_package_info(path)?;
     let target = models_dir().join(name);
@@ -223,6 +244,56 @@ pub fn import(path: &Path, name: &str, replace: bool) -> Result<ImportReport> {
             .filter(|&p| p != parameters)
             .map(|p| format!("model-info.json annonce {p} paramètres, le modèle en a {parameters}"));
         Ok(ImportReport { name: name.to_string(), parameters, warning })
+    })();
+    if staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+pub fn is_gguf(path: &Path) -> bool {
+    path.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
+}
+
+/// Les infos d'un .gguf, pour la fenêtre d'import (en-tête, tokenizer et format de chat vérifiés).
+pub fn read_gguf_info(path: &Path) -> Result<serde_json::Value> {
+    let info = nel_engine::gguf::inspect(path).map_err(|e| e.to_string())?;
+    Ok(serde_json::to_value(info).unwrap())
+}
+
+/// Installe un .gguf sous `name` : copié (avec le tokenizer.json posé à côté, s'il y en a un) dans un dossier
+/// temporaire, model-info.json écrit (infos de l'en-tête, plus `extra`), chargé pour vérifier, puis mis en place.
+/// `path` peut déjà être dans le dossier temporaire (catalogue) : il y est alors déplacé, pas copié.
+pub fn import_gguf(path: &Path, name: &str, replace: bool, extra: serde_json::Value) -> Result<ImportReport> {
+    if !valid_name(name) {
+        return Err(format!("« {name} » n'est pas un nom de modèle valide"));
+    }
+    let target = models_dir().join(name);
+    if target.exists() && !replace {
+        return Err("exists".into());
+    }
+    let staging = temp_folder();
+    let result = (|| {
+        let info = nel_engine::gguf::inspect(path).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+        if path.starts_with(root()) {
+            fs::rename(path, staging.join(GGUF_FILE)).map_err(|e| e.to_string())?;
+        } else {
+            fs::copy(path, staging.join(GGUF_FILE)).map_err(|e| format!("copie impossible : {e}"))?;
+        }
+        if let Some(tok) = path.parent().map(|d| d.join("tokenizer.json")).filter(|t| t.is_file()) {
+            fs::copy(tok, staging.join("tokenizer.json")).map_err(|e| e.to_string())?;
+        }
+        let mut meta = serde_json::to_value(&info).unwrap();
+        meta["format"] = "gguf".into();
+        meta["name"] = name.into();
+        for (k, v) in extra.as_object().into_iter().flatten() {
+            meta[k] = v.clone();
+        }
+        fs::write(staging.join("model-info.json"), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
+        GgufModel::load(&staging.join(GGUF_FILE), &Device::Cpu, 512).map_err(|e| format!("le modèle ne se charge pas : {e}"))?;
+        install(&staging, &target)?;
+        Ok(ImportReport { name: name.to_string(), parameters: info.parameters, warning: None })
     })();
     if staging.exists() {
         let _ = fs::remove_dir_all(&staging);
@@ -310,6 +381,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["maxReplyTokens"] = (num(&s["maxReplyTokens"], 80.0).clamp(16.0, 128.0) as u64).into();
     // Arrondi au centième : le curseur des réglages avance de 0,01.
     s["repetitionPenalty"] = ((num(&s["repetitionPenalty"], 1.15).clamp(1.0, 2.0) * 100.0).round() / 100.0).into();
+    // Le contexte d'un modèle GGUF (ses 32 768 tokens prendraient trop de mémoire et de temps sur un PC ordinaire).
+    s["contextLimit"] = ((num(&s["contextLimit"], 8192.0).clamp(512.0, 131072.0) as u64) / 256 * 256).into();
     s
 }
 
@@ -524,6 +597,20 @@ mod tests {
         assert_eq!(arena["votes"].as_array().unwrap().len(), 1);
         assert_eq!(load_arena()["votes"][0]["winner"], "tie");
         assert!(arena_vote(serde_json::json!({ "id": "s#2", "a": "v3", "b": "v4", "winner": "x" })).is_err());
+
+        // Un .gguf : refusé s'il est faux ; sinon copié avec son model-info.json, dans la liste, contexte limité à 8192.
+        let fake = home.join("faux.gguf");
+        fs::write(&fake, b"GGUF pas vraiment").unwrap();
+        assert!(import(&fake, "faux", false).unwrap_err().contains("gguf"));
+        let gguf = test_model().with_file_name("qwen2.5-coder-0.5b-instruct-q4_k_m.gguf");
+        if gguf.is_file() {
+            import(&gguf, "qwen", false).unwrap();
+            let e = list_models().into_iter().find(|m| m.name == "qwen").unwrap();
+            assert_eq!((e.weights, e.block_size), ("gguf", Some(32768)));
+            assert_eq!(load_folder(&models_dir().join("qwen"), &Device::Cpu).unwrap().context_size(), 8192);
+            assert_eq!(import(&gguf, "qwen", false).unwrap_err(), "exists");
+        }
+        assert_eq!(fs::read_dir(home.join("import-tmp")).unwrap().count(), 0, "dossier temporaire nettoyé");
         fs::remove_dir_all(&home).unwrap();
     }
 

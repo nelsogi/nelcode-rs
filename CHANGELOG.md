@@ -2,6 +2,40 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.5.0] - 2026-11-16
+
+### Ajouté
+
+- **nel-engine** :
+  - `ChatModel`, l'interface commune des modèles (contexte, prompt de chat, décodage, génération), et `generate_loop`, la
+    même génération pour tous (température, top-k, top-p, pénalité de répétition, arrêt au token spécial, transparence,
+    contexte plein). Les `.nelmodel` (`NelModel`) donnent exactement les mêmes résultats qu'avant ;
+  - modèles **GGUF** (`gguf::GgufModel`, Candle quantifié) : architectures Qwen2 et Llama, tokenizer Hugging Face
+    reconstruit depuis le fichier (ou `tokenizer.json` à côté), format de chat du modèle (ChatML, Llama 3), prompt passé
+    par morceaux, CPU ou GPU. Tests contre Qwen2.5-Coder-0.5B et son `tokenizer.json` officiel.
+- **Nel Code** :
+  - **catalogue de modèles** : Qwen2.5-Coder-0.5B-Instruct et 1.5B-Instruct (GGUF Q4_K_M, Apache 2.0) ; taille et
+    licence affichées, licence acceptée avant le téléchargement ; progression, Annuler, espace disque et SHA-256 (écrit
+    dans le code) vérifiés, comme le pack GPU ;
+  - import d'un **`.gguf`** par glisser-déposer, ＋ ou `/import` : architecture, paramètres, contexte, format de chat,
+    licence déclarée affichés avant l'import ;
+  - réglage **« Contexte des modèles GGUF »** (8 192 tokens par défaut) ; la barre de contexte utilise la vraie taille du
+    modèle et la place gardée pour la réponse ;
+  - **blocs de code** coloriés dans les messages (C#, Rust, Python, JavaScript, HTML, CSS, JSON), avec un bouton Copier ;
+    rendus sans `innerHTML`, CSP inchangée ;
+  - **`@` fichiers du dossier de travail** : suggestions dans la saisie, fichier ajouté au message dans un bloc de code
+    (100 Ko au plus, texte, dans le dossier seulement), avertissement si le message dépasse le contexte. En lecture
+    seule : aucun fichier n'est jamais modifié ;
+  - tests de l'interface : catalogue, réponse d'un modèle GGUF, contexte réglable, import d'un `.gguf`
+    (`e2e/gguf.test.mjs`), blocs de code et fichiers `@` (`e2e/nelcode.test.mjs`).
+
+### Modifié
+
+- Un modèle GGUF écrit jusqu'à 1024 tokens par réponse (le réglage « Longueur max », 16 à 128, reste celui des `.nelmodel`).
+- Le texte de chaque token suit le texte décodé jusque-là : un caractère sur plusieurs tokens d'octets n'est envoyé
+  qu'une fois complet.
+- Le workflow de release télécharge Qwen2.5-Coder-0.5B (empreinte vérifiée) pour les tests GGUF.
+
 ## [0.4.1] - 2026-11-12
 
 Première publication de la 0.4 : la 0.4.0 n'a pas été publiée (sa compilation échouait sur GitHub Actions).
