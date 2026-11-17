@@ -468,6 +468,8 @@ async function onDone(p) {
       s.messages[g.index] = { ...g.old, content: text, versions, tokens: g.tokens.length ? g.tokens : g.old.tokens, ...thought };
     }
   }
+  // Le plan de l'agent : le dernier, gardé avec la conversation.
+  if (Array.isArray(p.plan) && p.plan.length) s.plan = { request: p.agent?.request, tasks: p.plan, date: localIso() };
   if (text) { touch(s); await saveSession(s); }
   if (!p.error && p.tokens) {
     S.lastSpeed = `${p.tokens} tokens · ${(p.tokens / p.seconds).toFixed(1)} tokens/s${p.stopped ? ' · arrêtée' : ''}`;
@@ -498,6 +500,33 @@ function stop() { if (S.gen) invoke('stop_generation'); }
 
 const AGENT_LOCAL = 'Le mode Agent demande un modèle distant qui gère les outils (llama.cpp lancé avec --jinja, Ollama avec Qwen3…) : les .nelmodel et les modèles GGUF de ce PC n\'y ont pas accès.';
 
+// La puce NELCODE.md de l'en-tête (mode Agent) : pris en compte, ou bouton pour en créer un modèle.
+let nelcodeAsk = 0;
+async function refreshNelcode() {
+  const chip = $('nelcode-chip'), s = S.current, ask = ++nelcodeAsk;
+  if (!s?.agent || !s.workingDirectory) { chip.hidden = true; return; }
+  let info;
+  try { info = await invoke('nelcode_md_info', { dir: s.workingDirectory }); } catch { chip.hidden = true; return; }
+  if (ask !== nelcodeAsk) return;   // une réponse plus récente est déjà là
+  chip.hidden = false;
+  chip.classList.toggle('on', info.exists);
+  chip.dataset.exists = info.exists ? '1' : '';
+  chip.replaceChildren(icon(info.exists ? 'file-text' : 'plus'), h('span', {}, 'NELCODE.md'));
+  chip.title = info.exists
+    ? `NELCODE.md pris en compte : ajouté au message système de chaque demande (${info.bytes.toLocaleString('fr-CH')} octets${info.truncated ? `, coupé aux ${info.max.toLocaleString('fr-CH')} premiers` : ''}).`
+    : 'Créer un NELCODE.md modèle à la racine du dossier de travail : ses instructions seront ajoutées à chaque demande Agent.';
+}
+
+async function nelcodeChip() {
+  const s = S.current;
+  if ($('nelcode-chip').dataset.exists) return toast($('nelcode-chip').title, '', 6000);
+  try {
+    await invoke('create_nelcode_md', { dir: s.workingDirectory });
+    toast('NELCODE.md créé : complète-le, il sera ajouté à chaque demande Agent.', 'success', 6000);
+  } catch (e) { toast(errText(e), 'error'); }
+  refreshNelcode();
+}
+
 function toggleAgent() {
   const s = S.current;
   if (!s.agent && !S.model.remote) return toast(AGENT_LOCAL, 'warning', 8000);
@@ -509,8 +538,8 @@ function toggleAgent() {
   toast(s.agent ? `Mode Agent : ${S.model.name} peut lire les fichiers de « ${s.workingDirectory || '(aucun dossier)'} », et les modifier avec ton accord.` : 'Mode Agent désactivé.', '', 4000);
 }
 
-const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert' };
-const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur' };
+const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks' };
+const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur', running: 'en cours', stopped: 'arrêtée' };
 
 function diffEl(lines) {
   return h('div', { class: 'diff' }, lines.map(([c, l]) => h('div', { class: { '+': 'add', '-': 'del', '…': 'skip' }[c] ?? 'ctx' }, h('span', { class: 'sign' }, c === '…' ? '' : c), l)));
@@ -531,13 +560,17 @@ function stepsEl(steps, m) {
     if (st.status === 'pending' && !m && st.protected) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn danger', onclick: () => decide('accept') }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : 'Autoriser la lecture'),
       h('button', { class: 'btn primary', onclick: () => decide('reject') }, 'Refuser')));
-    if (st.status === 'pending' && !m && !st.protected) body.append(h('div', { class: 'row-btns' },
+    // Une commande : Lancer ou Refuser, à chaque fois (jamais « Accepter tout »).
+    if (st.status === 'pending' && !m && st.kind === 'command') body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('terminal'), 'Lancer'),
+      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser')));
+    if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command') body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Accepter'),
       h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser'),
       h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));
     if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
-    box.append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: st.status === 'pending' && !m },
+    box.append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
       h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title), status), body));
   }
   const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');
@@ -573,6 +606,31 @@ listen('agent-step', (e) => {
   followEnd();
 });
 // Le texte qui accompagnait les outils est devenu une étape : la réponse finale repart de zéro.
+// Le plan donné par le modèle, en direct.
+listen('agent-plan', (e) => {
+  if (!S.gen) return;
+  S.gen.plan = e.payload.tasks;
+  renderPlan();
+});
+
+const PLAN_ICONS = { todo: 'circle', in_progress: 'circle-dot', done: 'check' };
+const PLAN_STATUS = { todo: 'à faire', in_progress: 'en cours', done: 'fait' };
+let planCollapsed = false;
+
+// Le panneau Plan, à droite de la conversation : le plan en cours, sinon le dernier gardé avec la conversation.
+function renderPlan() {
+  const s = S.current, box = $('plan');
+  const tasks = (S.gen?.session === s && S.gen.plan) || s?.plan?.tasks;
+  box.hidden = !tasks?.length;
+  if (box.hidden) return;
+  const done = tasks.filter((t) => t.status === 'done').length;
+  box.classList.toggle('collapsed', planCollapsed);
+  box.replaceChildren(
+    h('button', { class: 'plan-head', title: planCollapsed ? 'Déplier le plan' : 'Replier le plan', 'aria-expanded': String(!planCollapsed), onclick: () => { planCollapsed = !planCollapsed; renderPlan(); } },
+      icon('list-checks'), h('span', { class: 'plan-title' }, 'Plan'), h('span', { class: 'plan-count' }, `${done}/${tasks.length}`), icon(planCollapsed ? 'chevron-left' : 'chevron-right')),
+    planCollapsed ? '' : h('ol', { class: 'plan-tasks' }, tasks.map((t) => h('li', { 'data-status': t.status, title: PLAN_STATUS[t.status] }, icon(PLAN_ICONS[t.status] ?? 'circle'), h('span', {}, t.title)))));
+}
+
 listen('agent-clear', () => {
   const g = S.gen;
   if (!g) return;
@@ -898,7 +956,7 @@ async function submitEdit(index, text) {
 // --- Affichage -------------------------------------------------------------------------------------------
 
 function renderAll() {
-  renderSessions(); renderModels(); renderHeader(); renderMessages(); renderComposer(); renderStatus(); refreshContext();
+  renderSessions(); renderModels(); renderHeader(); renderMessages(); renderComposer(); renderStatus(); refreshContext(); renderPlan();
 }
 
 function renderSessions() {
@@ -955,6 +1013,8 @@ function renderHeader() {
   if (s.compare) $('compare-chip').replaceChildren(`A ${s.compare.a}`, icon('arrow-left-right'), h('span', {}, `B ${s.compare.b}`));
   $('transp-btn').classList.toggle('on', !!S.settings.transparency);
   $('agent-btn').classList.toggle('on', !!s.agent);
+  refreshNelcode();
+  renderPlan();
 }
 
 function followEnd() {
@@ -1210,6 +1270,7 @@ async function openSettings() {
     { key: 'maxReplyTokens', label: 'Longueur max', min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse d\'un .nelmodel, en tokens (environ 3 caractères chacun). Un modèle GGUF écrit jusqu\'à 1024 tokens et s\'arrête de lui-même.' },
     { key: 'repetitionPenalty', label: 'Pénalité de répétition', min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
     { key: 'agentMaxTurns', label: 'Mode Agent : tours au plus', min: 1, max: 50, step: 1, hint: 'Combien de fois le modèle peut demander des outils (lire, chercher, écrire) avant de devoir répondre.' },
+    { key: 'commandTimeout', label: 'Mode Agent : durée max d\'une commande (s)', min: 5, max: 600, step: 5, hint: 'Au-delà, la commande et tous ses processus sont arrêtés (120 s par défaut).' },
     { key: 'contextLimit', label: 'Contexte des modèles GGUF', min: 512, max: 32768, step: 512, hint: 'Au plus ce nombre de tokens de conversation (le modèle peut en gérer plus, mais la mémoire et le temps de réponse montent vite). Les .nelmodel gardent leur taille.' },
   ];
   const inputs = {};
@@ -1227,6 +1288,10 @@ async function openSettings() {
   body.push(calc.el);
   const srv = await serverSection(s);
   body.push(srv.el, await providersSection());
+  const allowedCommands = h('textarea', { class: 'text-input commands', rows: 2, spellcheck: 'false', placeholder: 'dotnet build\ndotnet test' });
+  allowedCommands.value = (s.allowedCommands ?? []).join('\n');
+  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Commandes autorisées sans confirmation')), allowedCommands,
+    h('div', { class: 'hint' }, 'Une par ligne, par exemple « dotnet build » (autorise aussi « dotnet build src/App.csproj »). Vide par défaut : chaque commande de l\'agent demande Lancer / Refuser. Jamais de shell (cmd, PowerShell…).')));
   const protectedFiles = h('textarea', { class: 'text-input protected', rows: 3, spellcheck: 'false', placeholder: '*.secret\nprivé/\nconfig/prod.yml' });
   protectedFiles.value = (s.protectedFiles ?? []).join('\n');
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Fichiers protégés')), protectedFiles,
@@ -1240,9 +1305,10 @@ async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, commandTimeout: 120, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
-        serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean) };
+        serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
+        allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean) };
     const before = s.device ?? 'auto', limit = s.contextLimit;
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
     try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }
@@ -1616,6 +1682,7 @@ $('settings-btn').onclick = openSettings;
 $('arena-btn').onclick = openLeaderboard;
 $('transp-btn').onclick = toggleTransparency;
 $('agent-btn').onclick = toggleAgent;
+$('nelcode-chip').onclick = nelcodeChip;
 $('palette-btn').onclick = openPalette;
 $('title').ondblclick = () => renameSession(S.current);
 $('folder-chip').onclick = () => chooseFolder();

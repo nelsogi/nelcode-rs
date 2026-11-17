@@ -170,6 +170,8 @@ test('mode comparaison et vote', async () => {
   const m = await ev(`S.current.messages.at(-1)`);
   assert.equal(m.model, 'mini-a');
   assert.equal(m.compare.model, 'mini-b');
+  // Les boutons de vote sont réactivés juste après la fin de la réponse (une fois la conversation enregistrée).
+  await waitFor(`[...document.querySelectorAll('#messages .msg.compare button')].some((b) => b.textContent.includes('A est meilleur') && !b.disabled)`, 10_000, 'boutons de vote');
   await ev(`T.button('A est meilleur', document.querySelector('#messages .msg.compare'))`);
   await waitFor(`S.current.messages.at(-1).vote === 'a'`);
   const votes = readJson('arena.json').votes;

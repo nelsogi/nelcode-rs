@@ -120,11 +120,31 @@ la conversation. Les `.nelmodel` et les modèles GGUF de ce PC n'y ont pas accè
 | `search` | Cherche un texte dans les fichiers (« chemin:ligne: texte ») |
 | `write_file` | Crée un nouveau fichier — **avec ton accord** |
 | `edit_file` | Remplace un passage d'un fichier — **avec ton accord** |
+| `update_plan` | Donne ou met à jour le plan de la demande (à faire, en cours, fait) |
+| `run_command` | Lance un programme, **sans shell** — **avec ton accord** (sauf liste autorisée) |
 
 Le modèle demande un outil, Nel Code l'exécute et lui renvoie le résultat, jusqu'à sa réponse finale (10 tours au plus,
 réglable dans les Réglages). Tout s'affiche en direct dans la conversation : la **Réflexion** repliable, puis une ligne
 par étape (« Lecture de src/Program.cs », « Recherche de "Player" — 4 résultats »), à déplier pour voir le détail.
 **Stop** (ou Échap) arrête tout, à tout moment.
+
+**NELCODE.md** : s'il existe à la racine du dossier de travail, son contenu (20 000 premiers octets) est ajouté au
+message système de chaque demande Agent : le projet, ses règles, ses commandes. L'icône **NELCODE.md** de l'en-tête
+(en vert) montre qu'il est pris en compte ; sans fichier, le même bouton crée un NELCODE.md modèle (jamais par-dessus un
+fichier existant).
+
+**Plan** : pour une demande en plusieurs étapes, le modèle donne un plan (`update_plan`). Il s'affiche dans le panneau
+**Plan** à droite de la conversation (repliable), mis à jour en direct (à faire, en cours, fait), et il est gardé avec
+la conversation.
+
+**Commandes** : `run_command` lance un programme et ses arguments (`dotnet` avec `build`), **sans shell** : `cmd`,
+PowerShell, bash, les scripts `.bat` / `.cmd` / `.ps1` et les opérateurs `|`, `>`, `&&` sont refusés. La commande
+tourne dans le dossier de travail, sans fenêtre ; sa sortie s'affiche en direct dans l'étape (limitée : le milieu d'une
+très longue sortie est coupé). Chaque commande demande **Lancer** / **Refuser**, sauf celles de **Réglages → Commandes
+autorisées sans confirmation** (vide par défaut ; par exemple `dotnet build` et `dotnet test`, qui autorisent aussi
+`dotnet build src/App.csproj`). Au-delà de la durée maximale (2 min par défaut, réglable), ou sur **Stop**, la commande
+et **tous ses processus enfants** sont tués (Job Object Windows). Les variables d'environnement dont le nom contient
+`KEY`, `TOKEN` ou `SECRET` ne lui sont pas transmises.
 
 **Écritures** : avant chaque écriture, Nel Code montre le diff (lignes ajoutées en vert, retirées en rouge) avec
 **Accepter**, **Refuser** et **Accepter tout pour cette demande**. Aucun fichier n'est modifié sans accord. Chaque
@@ -142,7 +162,6 @@ refusée, pour ne rien perdre.
   `.git/`, `*.pem`, `*.key`, `*.pfx`, `id_rsa`, `*.kdbx`, `appsettings.*.json`, `secrets.json` ; d'autres s'ajoutent
   dans **Réglages → Fichiers protégés** (un motif par ligne : `*.secret`, `privé/` pour un dossier, `config/prod.yml`
   pour un chemin) ;
-- pas d'exécution de commandes ;
 - ce qui est lu dans un fichier n'est **jamais une instruction pour Nel Code** : c'est renvoyé au modèle comme donnée
   (avec la consigne de ne pas y obéir), et seul le modèle peut demander un outil. Une écriture attend toujours ton accord,
   quoi que dise un fichier.
@@ -171,7 +190,7 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/model <nom>` | Charger un modèle installé |
 | `/models` | Lister les modèles installés |
 | `/import [fichier]` | Importer un `.nelmodel` ou un `.gguf` |
-| `/agent` | Mode Agent (modèle distant qui gère les outils) |
+| `/agent` | Mode Agent (modèle distant qui gère les outils : fichiers, plan, commandes) |
 | `/catalogue` | Télécharger un modèle ouvert |
 | `/temp <0.1 à 2>` | Température : bas = sage, haut = créatif |
 | `/topk <n>` | Tirage parmi les K tokens les plus probables (0 = sans limite) |
@@ -359,7 +378,8 @@ badge « réseau », streaming, réflexion (trois formats), Stop, délai maximal
 `e2e/agent.test.mjs` couvre le mode Agent avec un faux modèle qui appelle les outils : chaque outil, chaque refus (bac à
 sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Accepter / Refuser / Accepter tout, chaque
 annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart, fichiers protégés (lecture et
-recherche, motifs des réglages) et noms réservés de Windows. Les fichiers de test se lancent
+recherche, motifs des réglages), noms réservés de Windows, NELCODE.md, plan et commandes (shells refusés, sortie en
+direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants). Les fichiers de test se lancent
 l'un après l'autre (`--test-concurrency=1`) : une seule fenêtre de Nel Code à la fois. `e2e/gguf.test.mjs` couvre le catalogue
 (servi en local : licence, empreinte refusée, téléchargement), une réponse de Qwen2.5-Coder, le contexte réglable et
 l'import d'un `.gguf` par glisser-déposer ; il est ignoré sans le `.gguf` de test. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans

@@ -441,4 +441,26 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .diff .add { background: var(--sure-bg); color: var(--success); }
 .diff .del { background: var(--unsure-bg); color: var(--error); }
 .diff .skip { color: var(--faint); font-style: italic; }
-.field textarea.protected { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); }
+.field textarea.protected, .field textarea.commands { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); }
+
+/* --- Mode Agent : commandes, plan, NELCODE.md --- */
+.step.command .detail { background: #0f0f0e; color: #d9d6cf; }
+:root[data-theme="light"] .step.command .detail { background: #1f1e1c; color: #ebe8e2; }
+.step .status.running { color: var(--accent-text); border-color: var(--accent-border); }
+.step .status.stopped { color: var(--warning); border-color: var(--warning); }
+#nelcode-chip.on { color: var(--success); border-color: var(--success); }
+.plan { width: 260px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--sidebar); display: flex; flex-direction: column; overflow-y: auto; }
+.plan.collapsed { width: 44px; }
+.plan-head { display: flex; align-items: center; gap: 8px; padding: 14px 12px; background: none; border: none; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 600; text-align: left; }
+.plan-head:hover { background: var(--hover); }
+.plan-head .plan-title { flex: 1; }
+.plan-head .plan-count { font: 12px var(--mono); color: var(--faint); font-weight: 400; }
+.plan.collapsed .plan-head { flex-direction: column; padding: 12px 0; }
+.plan.collapsed .plan-title { display: none; }
+.plan-tasks { list-style: none; margin: 0; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.plan-tasks li { display: flex; gap: 8px; align-items: flex-start; padding: 5px 6px; border-radius: 6px; font-size: 13px; color: var(--text-2); }
+.plan-tasks li .icon { margin-top: 2px; color: var(--decor); }
+.plan-tasks li[data-status="in_progress"] { background: var(--accent-soft); color: var(--text); }
+.plan-tasks li[data-status="in_progress"] .icon { color: var(--accent-text); }
+.plan-tasks li[data-status="done"] { color: var(--faint); text-decoration: line-through; }
+.plan-tasks li[data-status="done"] .icon { color: var(--success); }

@@ -13,6 +13,20 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   contexte ne les lit pas.
 - Tests : chaque motif par défaut et des réglages (tests unitaires), confirmation refusée ou acceptée, « Accepter tout »
   sans effet, recherche refusée puis acceptée, Stop, et les `@` (e2e).
+- Mode Agent, **NELCODE.md** : à la racine du dossier de travail, son contenu (20 000 premiers octets) est ajouté au
+  message système de chaque demande ; une icône de l'en-tête montre qu'il est pris en compte, et le même bouton crée
+  un NELCODE.md modèle (jamais par-dessus un fichier existant).
+- Mode Agent, **plan** : outil `update_plan` (tâches à faire, en cours, faites), panneau Plan repliable à droite de la
+  conversation, mis à jour en direct et gardé avec la conversation ; le message système encourage un plan pour les
+  demandes en plusieurs étapes.
+- Mode Agent, **commandes** : outil `run_command` (programme et arguments), lancé sans shell (cmd, PowerShell, bash,
+  `.bat`/`.cmd`/`.ps1`, `|`, `>`, `&&` refusés), dans le dossier de travail, sortie limitée et affichée en direct.
+  Lancer / Refuser à chaque commande, sauf la liste « Commandes autorisées sans confirmation » des réglages (vide par
+  défaut) ; « Accepter tout » ne vaut pas pour elles. Durée maximale réglable (2 min par défaut) ; le délai et Stop
+  tuent la commande et tous ses processus enfants (Job Object). Les variables d'environnement contenant KEY, TOKEN ou
+  SECRET ne sont pas transmises. Le journal ne note que le nom du programme.
+- Tests unitaires (NELCODE.md et sa limite, plans, validation sans shell, liste autorisée, variables cachées, sortie
+  limitée, délai et Stop qui tuent les enfants) et de l'interface pour chacun de ces points.
 
 ### Sécurité
 

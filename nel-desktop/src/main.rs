@@ -3,6 +3,7 @@
 
 mod agent;
 mod catalog;
+mod command;
 #[cfg(feature = "cuda")]
 mod delayload;
 mod gpu;
@@ -791,6 +792,28 @@ fn agent_decide(state: State<AppState>, request: String, step: String, decision:
     tx.send(decision).map_err(|_| "la demande est finie".to_string())
 }
 
+/// NELCODE.md du dossier de travail : s'il existe, sa taille, et s'il est coupé dans le message système.
+#[tauri::command]
+fn nelcode_md_info(dir: String) -> Value {
+    match agent::nelcode_md(std::path::Path::new(&dir)) {
+        Some((_, bytes, cut)) => json!({ "exists": true, "bytes": bytes, "truncated": cut, "max": agent::MAX_NELCODE }),
+        None => json!({ "exists": false, "max": agent::MAX_NELCODE }),
+    }
+}
+
+/// Crée un NELCODE.md modèle à la racine du dossier de travail (jamais par-dessus un fichier existant).
+#[tauri::command]
+fn create_nelcode_md(dir: String) -> Result<()> {
+    let sb = agent::Sandbox::new(&dir)?;
+    let path = sb.resolve(agent::NELCODE_MD)?;
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists { "NELCODE.md existe déjà : il n'est pas remplacé".to_string() } else { format!("NELCODE.md : {e}") }
+    })?;
+    std::io::Write::write_all(&mut f, agent::NELCODE_TEMPLATE.as_bytes()).map_err(|e| e.to_string())?;
+    log::info("NELCODE.md modèle créé");
+    Ok(())
+}
+
 #[tauri::command]
 fn agent_undo(request: String, step: String) -> Result<()> {
     agent::undo(&request, &step)
@@ -883,6 +906,8 @@ fn main() {
             agent_decide,
             agent_undo,
             agent_undo_all,
+            nelcode_md_info,
+            create_nelcode_md,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");

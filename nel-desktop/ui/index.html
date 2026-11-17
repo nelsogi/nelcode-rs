@@ -36,6 +36,7 @@
       <div id="title" class="title" title="Double-clic pour renommer (F2)">Nouvelle conversation</div>
       <div class="chips">
         <span id="compare-chip" class="chip" hidden title="Conversation comparée : chaque message part aux deux modèles"></span>
+        <button id="nelcode-chip" class="chip" hidden></button>
         <button id="agent-btn" class="chip" title="Mode Agent : le modèle lit et modifie les fichiers du dossier de travail (avec ton accord). Modèles distants qui gèrent les outils seulement."><span data-icon="bot"></span><span>Agent</span></button>
         <button id="transp-btn" class="chip" title="Mode transparence : au survol d'un mot, les 5 choix du modèle"><span data-icon="eye"></span><span>Transparence</span></button>
         <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span data-icon="folder"></span><span id="folder-name"></span></button>
@@ -70,6 +71,8 @@
       </div>
     </div>
   </section>
+
+  <aside id="plan" class="plan" hidden></aside>
 </div>
 
 <div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer</div></div>

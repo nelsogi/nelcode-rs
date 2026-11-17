@@ -31,7 +31,7 @@ const SCRIPTS = {
   injection: (n) => [['', [call('read_file', { path: 'LISEZMOI.md' })]], ['', [call('write_file', { path: '../pirate.txt', content: 'p' }), call('write_file', { path: 'ok.txt', content: 'ok' })]]][n] ?? ['Fini.', []],
   erreurs: (n) => n ? ['Rien fait.', []] : ['', [
     call('edit_file', { path: 'src/Program.cs', old_text: 'absent', new_text: 'x' }), call('edit_file', { path: 'src/Player.cs', old_text: 'Player', new_text: 'x' }),
-    call('write_file', { path: 'src/Program.cs', content: 'écrasé' }), call('run_command', { cmd: 'del *' }), { name: 'read_file', raw: '{"path": ' },
+    call('write_file', { path: 'src/Program.cs', content: 'écrasé' }), call('delete_file', { path: 'src/Program.cs' }), { name: 'read_file', raw: '{"path": ' },
   ]],
   boucle: () => ['', [call('list_files', {})]],
   // Fichiers protégés et noms réservés
@@ -39,6 +39,31 @@ const SCRIPTS = {
   'recherche-protegee': (n) => n ? ['Recherche faite.', []] : ['', [call('search', { query: 'motdepasse' })]],
   'tout-puis-protege': (n) => n ? ['Fini.', []] : ['', [call('write_file', { path: 'p1.txt', content: 'p1' }), call('read_file', { path: 'config/appsettings.Production.json' })]],
   'protege-stop': () => ['', [call('read_file', { path: 'k/private.key' })]],
+  // NELCODE.md, plan, commandes
+  simple: () => ['OK.', []],
+  planificateur: (n) => [
+    ['', [call('update_plan', { tasks: [{ title: 'Lire le code', status: 'in_progress' }, { title: 'Corriger', status: 'todo' }, { title: 'Tester', status: 'todo' }] })]],
+    ['', [call('update_plan', { tasks: [{ title: 'Lire le code', status: 'done' }, { title: 'Corriger', status: 'in_progress' }, { title: 'Tester', status: 'todo' }] })], 1500],
+    ['', [call('update_plan', { tasks: [{ title: 'Lire le code', status: 'done' }, { title: 'Corriger', status: 'done' }, { title: 'Tester', status: 'done' }] })], 1500],
+  ][n] ?? ['Plan terminé.', []],
+  'plan-invalide': (n) => n ? ['Tant pis.', []] : ['', [call('update_plan', { tasks: [{ title: 'x', status: 'bientôt' }] })]],
+  'cmd-shell': (n) => n ? ['Aucune.', []] : ['', [
+    call('run_command', { program: 'cmd', args: ['/c', 'echo x'] }), call('run_command', { program: 'powershell', args: ['-c', 'ls'] }),
+    call('run_command', { program: 'node', args: ['-v', '|', 'more'] }), call('run_command', { program: 'node -v' }), call('run_command', { program: 'outils\\build.bat' }),
+  ]],
+  'cmd-ok': (n) => [
+    ['', [call('run_command', { program: 'node', args: ['-e', 'for (let i = 0; i < 5; i++) setTimeout(() => console.log("ligne" + i), i * 400)'] })]],
+    ['', [call('run_command', { program: 'node', args: ['-e', 'require("fs").writeFileSync("marqueur.txt", process.cwd())'] })]],
+  ][n] ?? ['Commandes faites.', []],
+  'cmd-refus': (n) => n ? ['Pas lancée.', []] : ['', [call('run_command', { program: 'node', args: ['-e', 'require("fs").writeFileSync("refus.txt", "x")'] })]],
+  'cmd-divers': (n) => n ? ['Vu.', []] : ['', [
+    call('run_command', { program: 'node', args: ['-p', 'Object.keys(process.env).filter((k) => k.startsWith("NELCODE_E2E")).join(",")'] }),
+    call('run_command', { program: 'node', args: ['-e', 'process.stdout.write("x".repeat(200000))'] }),
+    call('run_command', { program: 'node', args: ['-e', 'process.exit(3)'] }),
+  ]],
+  'cmd-long': () => ['', [call('run_command', { program: 'node', args: ['-e', 'require("child_process").spawn(process.execPath, ["-e", "setTimeout(() => require(\\"fs\\").writeFileSync(\\"enfant.txt\\", \\"x\\"), 3000)"], { stdio: "ignore" }); setInterval(() => console.log("tic"), 200)'] })]],
+  'cmd-auto': (n) => n ? ['Deux.', []] : ['', [call('run_command', { program: 'node', args: ['-p', '1+1'] })]],
+  'tout-commande': (n) => n ? ['Fini.', []] : ['', [call('write_file', { path: 'avant.txt', content: 'a' }), call('run_command', { program: 'node', args: ['-v'] })]],
   reserves: (n) => n ? ['Aucun nom accepté.', []] : ['', [
     call('read_file', { path: 'NUL' }), call('read_file', { path: 'con.txt' }), call('write_file', { path: 'COM1.log', content: 'x' }),
     call('write_file', { path: 'notes./x.txt', content: 'x' }), call('write_file', { path: 'fin ', content: 'x' }), call('read_file', { path: 'src/Program.cs.' }),
@@ -52,7 +77,13 @@ function chat(req, res, body) {
     return res.end(JSON.stringify({ error: { message: `registry.ollama.ai/library/${body.model}:latest does not support tools` } }));
   }
   const n = body.messages.filter((m) => m.role === 'tool').length;
-  const [content, calls] = SCRIPTS[body.model](n);
+  const [content, calls, delay] = SCRIPTS[body.model](n);
+  // Un troisième élément : le modèle « réfléchit » ce nombre de ms avant de répondre (suivi en direct).
+  if (delay) return setTimeout(() => answer(res, n, content, calls), delay);
+  answer(res, n, content, calls);
+}
+
+function answer(res, n, content, calls) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const send = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
   if (n === 0) send({ reasoning_content: 'Je réfléchis à la demande.' });
@@ -92,7 +123,8 @@ before(async () => {
   fs.mkdirSync(path.join(OUT, 'cible'));
   fs.writeFileSync(path.join(OUT, 'cible', 'secret.txt'), 'CONTENU-SECRET');
   execFileSync('cmd', ['/c', 'mklink', '/J', path.join(DIR, 'lien'), path.join(OUT, 'cible')], { stdio: 'ignore' });   // une jonction qui sort du dossier
-  A = await launch();
+  // Des variables que les commandes ne doivent pas recevoir (KEY, TOKEN, SECRET), et une qu'elles reçoivent.
+  A = await launch({ env: { NELCODE_E2E_API_KEY: 'k', NELCODE_E2E_TOKEN: 't', NELCODE_E2E_CLIENT_SECRET: 's', NELCODE_E2E_VISIBLE: 'v' } });
   const p = await A.ev(`window.__TAURI__.core.invoke('save_provider', { id: null, name: 'Agent factice', url: 'http://127.0.0.1:${server.address().port}/v1', key: null })`);
   PROVIDER = p.id;
   await A.ev(`window.__TAURI__.core.invoke('test_provider', { id: ${JSON.stringify(PROVIDER)} }).then(() => refreshProviders()).then(() => true)`);
@@ -165,7 +197,7 @@ test('lecture : list_files, read_file, search, suivi en direct, détail dépliab
   assert.equal(found.split('\n').length, 4);
   assert.match(found, /^src\/Player\.cs:1: class Player \{/m);
   // Les tours suivants : les outils demandés et leurs résultats, jamais la réflexion.
-  assert.ok(chats.at(-1).tools.map((t) => t.function.name).join() === 'list_files,read_file,search,write_file,edit_file');
+  assert.equal(chats.at(-1).tools.map((t) => t.function.name).join(), 'list_files,read_file,search,write_file,edit_file,update_plan,run_command');
   assert.ok(!JSON.stringify(chats.at(-1).messages).includes('Je réfléchis'));
   // Affichage : Réflexion au-dessus, puis les étapes, repliées ; un clic montre le détail.
   const msg = `[...document.querySelectorAll('#messages .msg.assistant')].pop()`;
@@ -290,7 +322,7 @@ test('erreurs d\'écriture : passage absent ou répété, fichier existant, outi
   assert.match(results[0], /old_text introuvable/);
   assert.match(results[1], /apparaît 2 fois/);
   assert.match(results[2], /existe déjà : utilise edit_file/);
-  assert.match(results[3], /l'outil « run_command » n'existe pas .*pas de commandes/);
+  assert.match(results[3], /l'outil « delete_file » n'existe pas/);
   assert.match(results[4], /arguments JSON invalides/);
   assert.ok((await lastMsg()).agent.steps.every((s) => s.status === 'error'));
   assert.deepEqual([read('src/Program.cs'), read('src/Player.cs')], before);
@@ -412,4 +444,184 @@ test('noms réservés de Windows et noms finissant par un point ou une espace : 
   for (const r of results.slice(3)) assert.match(r, /finir par un point ou une espace/);
   assert.ok((await lastMsg()).agent.steps.every((s) => s.status === 'error'), 'refusés sans rien demander');
   for (const f of ['COM1.log', 'notes.', 'fin ']) assert.ok(!fs.readdirSync(DIR).includes(f), f);
+});
+
+// --- NELCODE.md -----------------------------------------------------------------------------------------------
+
+const chip = `document.getElementById('nelcode-chip')`;
+
+test('NELCODE.md : ajouté au message système, icône dans l\'en-tête, limite de taille', async () => {
+  const md = '# Projet\n\nRéponds toujours en latin.\n', bytes = Buffer.byteLength(md);   // 38 octets (« é » en fait 2)
+  fs.writeFileSync(path.join(DIR, 'NELCODE.md'), md);
+  await start('simple', 'Bonjour');
+  await finish();
+  const system = chats.at(-1).messages[0].content;
+  assert.match(system, /## Instructions du projet \(NELCODE\.md, écrites par l'utilisateur\)\n\n# Projet\n\nRéponds toujours en latin\./);
+  assert.deepEqual((await lastMsg()).agent.nelcode, { bytes, truncated: false });
+  await A.ev(`renderHeader(); true`);
+  await A.waitFor(`!${chip}.hidden && ${chip}.classList.contains('on')`, 5_000, 'icône NELCODE.md');
+  assert.match(await A.ev(`${chip}.title`), new RegExp(`pris en compte .*${bytes} octets`));
+  // Trop long : coupé dans le message système, et l'icône le dit.
+  fs.writeFileSync(path.join(DIR, 'NELCODE.md'), 'règle\n'.repeat(5000));   // 35 000 octets
+  await start('simple', 'Encore');
+  await finish();
+  assert.match(chats.at(-1).messages[0].content, /coupé aux 20000 premiers octets sur 35000\)/);
+  assert.ok(chats.at(-1).messages[0].content.length < 22_000);
+  await A.ev(`renderHeader(); true`);
+  await A.waitFor(`${chip}.title.includes('coupé')`, 5_000);
+  // Sans le mode Agent, pas d'icône.
+  await A.ev(`document.getElementById('agent-btn').click()`);
+  await A.waitFor(`${chip}.hidden`, 5_000);
+  await A.ev(`document.getElementById('agent-btn').click()`);
+  await A.waitFor(`!${chip}.hidden`, 5_000);
+});
+
+test('NELCODE.md : le bouton crée un modèle, jamais par-dessus un fichier existant', async () => {
+  fs.rmSync(path.join(DIR, 'NELCODE.md'));
+  await A.ev(`renderHeader(); true`);
+  await A.waitFor(`!${chip}.hidden && !${chip}.classList.contains('on')`, 5_000, 'bouton de création');
+  assert.match(await A.ev(`${chip}.title`), /Créer un NELCODE\.md modèle/);
+  await A.ev(`${chip}.click()`);
+  await A.waitFor(`${chip}.classList.contains('on')`, 5_000, 'créé');
+  const created = fs.readFileSync(path.join(DIR, 'NELCODE.md'), 'utf8');
+  assert.match(created, /^# Instructions pour l'agent de Nel Code/);
+  fs.writeFileSync(path.join(DIR, 'NELCODE.md'), 'à moi');
+  assert.match(await A.ev(`window.__TAURI__.core.invoke('create_nelcode_md', { dir: S.current.workingDirectory }).catch((e) => String(e))`), /existe déjà/);
+  assert.equal(fs.readFileSync(path.join(DIR, 'NELCODE.md'), 'utf8'), 'à moi');
+  fs.rmSync(path.join(DIR, 'NELCODE.md'));
+  await A.ev(`renderHeader(); true`);
+});
+
+// --- Plan --------------------------------------------------------------------------------------------------
+
+const planItems = `[...document.querySelectorAll('#plan .plan-tasks li')].map((li) => li.dataset.status + ':' + li.textContent).join('|')`;
+
+test('plan : update_plan, panneau à droite mis à jour en direct, gardé avec la conversation, repliable', async () => {
+  await start('planificateur', 'Corrige et teste');
+  // En direct : le premier plan, puis le deuxième, pendant que la demande tourne.
+  await A.waitFor(`${planItems} === 'in_progress:Lire le code|todo:Corriger|todo:Tester'`, 10_000, 'premier plan');
+  assert.equal(await A.ev(`!!S.gen`), true);
+  assert.equal(await A.ev(`document.querySelector('#plan .plan-count').textContent`), '0/3');
+  await A.waitFor(`${planItems} === 'done:Lire le code|in_progress:Corriger|todo:Tester'`, 10_000, 'plan mis à jour');
+  await finish();
+  assert.equal(await A.ev(planItems), 'done:Lire le code|done:Corriger|done:Tester');
+  assert.equal(await A.ev(`document.querySelector('#plan .plan-count').textContent`), '3/3');
+  // Le message système encourage le plan.
+  assert.match(chats.at(-1).messages[0].content, /commence par un plan avec update_plan/);
+  // Gardé avec la conversation : enregistré, et de retour quand on la rouvre.
+  const id = await A.ev(`S.current.id`);
+  assert.deepEqual(A.readJson(path.join('sessions', id + '.json')).plan.tasks.map((t) => t.status), ['done', 'done', 'done']);
+  await A.ev(`T.key('n', { ctrlKey: true }, document)`);
+  await A.waitFor(`document.getElementById('plan').hidden`, 5_000, 'nouvelle conversation sans plan');
+  await A.ev(`openSession(S.sessions.find((s) => s.id === ${JSON.stringify(id)})); true`);
+  await A.waitFor(`!document.getElementById('plan').hidden && ${planItems}.startsWith('done:Lire le code')`, 5_000, 'plan de la conversation rouverte');
+  // Repliable.
+  await A.ev(`document.querySelector('#plan .plan-head').click()`);
+  assert.equal(await A.ev(`document.getElementById('plan').classList.contains('collapsed') && !document.querySelector('#plan .plan-tasks')`), true);
+  await A.ev(`document.querySelector('#plan .plan-head').click()`);
+  assert.equal(await A.ev(`document.querySelectorAll('#plan .plan-tasks li').length`), 3);
+});
+
+test('plan invalide : erreur renvoyée au modèle, pas de plan affiché', async () => {
+  await A.ev(`T.key('n', { ctrlKey: true }, document); S.current.workingDirectory = ${JSON.stringify(DIR)}; renderHeader(); true`);
+  await start('plan-invalide', 'Planifie');
+  await finish();
+  assert.match(toolResults()[0], /état inconnu « bientôt »/);
+  assert.equal(await A.ev(`document.getElementById('plan').hidden`), true);
+});
+
+// --- Commandes ---------------------------------------------------------------------------------------------
+
+test('run_command : shells, opérateurs et scripts refusés sans rien lancer', async () => {
+  await start('cmd-shell', 'Lance des choses');
+  await finish();
+  const r = toolResults();
+  assert.match(r[0], /« cmd » est un shell/);
+  assert.match(r[1], /« powershell » est un shell/);
+  assert.match(r[2], /« \| » : pas d'opérateur de shell/);
+  assert.match(r[3], /un seul nom de programme ; les arguments vont dans args/);
+  assert.match(r[4], /script qui passerait par un shell/);
+  assert.ok((await lastMsg()).agent.steps.every((s) => s.kind === 'command' && s.status === 'error'));
+});
+
+test('run_command : Lancer, sortie en direct, dossier de travail ; Refuser ne lance rien', async () => {
+  await start('cmd-ok', 'Compte');
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000, 'commande à valider');
+  assert.deepEqual(await A.ev(`[...${stepEl(0)}.querySelectorAll('button')].map((b) => b.textContent)`), ['Lancer', 'Refuser']);
+  assert.match(await A.ev(`${stepEl(0)}.querySelector('.title').textContent`), /^Commande : node -e "for/);
+  await A.ev(`T.button('Lancer', ${stepEl(0)})`);
+  // En direct : les premières lignes s'affichent pendant que la commande tourne.
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'running' && ${stepEl(0)}.querySelector('.detail')?.textContent.includes('ligne1')`, 10_000, 'sortie en direct');
+  await decide(1, 'Lancer');
+  await finish();
+  const m = await lastMsg();
+  assert.deepEqual(m.agent.steps.map((s) => s.status), ['done', 'done']);
+  assert.match(m.agent.steps[0].title, /— code de sortie 0$/);
+  assert.match(toolResults()[0], /code de sortie 0\n--- sortie ---\nligne0\nligne1\nligne2\nligne3\nligne4/);
+  assert.equal(fs.realpathSync(fs.readFileSync(path.join(DIR, 'marqueur.txt'), 'utf8')), fs.realpathSync(DIR), 'lancée dans le dossier de travail');
+  fs.rmSync(path.join(DIR, 'marqueur.txt'));
+  // Refuser : rien n'est lancé.
+  await start('cmd-refus', 'Écris un fichier');
+  await decide(0, 'Refuser');
+  await finish();
+  assert.ok(!fs.existsSync(path.join(DIR, 'refus.txt')));
+  assert.match(toolResults()[0], /refusé par l'utilisateur : la commande « node -e .* » n'a pas été lancée/);
+});
+
+test('run_command : variables KEY/TOKEN/SECRET non transmises, sortie limitée, code de sortie', async () => {
+  await start('cmd-divers', 'Divers');
+  for (const k of [0, 1, 2]) await decide(k, 'Lancer');
+  await finish();
+  const [env, big, exit] = toolResults();
+  assert.match(env, /--- sortie ---\nNELCODE_E2E_VISIBLE\n?$/);
+  assert.match(big, /… \(\d+ octets coupés\) …/);
+  assert.ok(big.length < 70_000);
+  assert.match(exit, /code de sortie 3/);
+  assert.deepEqual((await lastMsg()).agent.steps.map((s) => s.status), ['done', 'done', 'error']);
+});
+
+test('run_command : délai maximal (réglable) et Stop tuent la commande et ses enfants', async () => {
+  await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { commandTimeout: 2 } }).then((s) => (S.settings = s, true))`);
+  let t = Date.now();
+  await start('cmd-long', 'Tourne');
+  await decide(0, 'Lancer');
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'error'`, 15_000, 'délai dépassé');
+  assert.ok(Date.now() - t < 12_000);
+  assert.match(await A.ev(`${stepEl(0)}.querySelector('.title').textContent`), /délai de 2 s dépassé/);
+  await A.ev(`T.key('Escape', {}, document)`);   // la demande continue en boucle : on l'arrête
+  await finish();
+  // Stop pendant la commande.
+  await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { commandTimeout: 120 } }).then((s) => (S.settings = s, true))`);
+  await start('cmd-long', 'Tourne encore');
+  await decide(0, 'Lancer');
+  await A.waitFor(`${stepEl(0)}?.querySelector('.detail')?.textContent.includes('tic')`, 10_000, 'commande en cours');
+  t = Date.now();
+  await A.ev(`T.key('Escape', {}, document)`);
+  await finish();
+  assert.ok(Date.now() - t < 3000, `arrêt en ${Date.now() - t} ms`);
+  assert.equal((await lastMsg()).agent.steps[0].status, 'stopped');
+  await sleep(4000);
+  assert.ok(!fs.existsSync(path.join(DIR, 'enfant.txt')), 'le processus enfant a été tué avec la commande');
+});
+
+test('run_command : liste autorisée (réglages), et « Accepter tout » ne vaut pas pour une commande', async () => {
+  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
+  await A.waitFor(`T.dialog()?.querySelector('textarea.commands')`, 10_000);
+  assert.equal(await A.ev(`T.dialog().querySelector('textarea.commands').value`), '', 'vide par défaut');
+  await A.ev(`T.setValue(T.dialog().querySelector('textarea.commands'), 'node   -p\\n\\nnode -p'); T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);
+  await A.waitFor(`JSON.stringify(S.settings.allowedCommands) === '["node -p"]'`, 5_000, 'liste enregistrée');
+  await start('cmd-auto', 'Calcule');
+  await finish();
+  const m = await lastMsg();
+  assert.equal(m.agent.steps[0].status, 'done', 'lancée sans confirmation');
+  assert.equal(m.agent.steps[0].allowed, true);
+  assert.match(toolResults()[0], /--- sortie ---\n2/);
+  // « Accepter tout » des écritures : la commande demande quand même.
+  await start('tout-commande', 'Écris puis lance');
+  await decide(0, 'Accepter tout pour cette demande');
+  await A.waitFor(`${stepEl(1)}?.dataset.status === 'pending'`, 10_000, 'commande toujours à valider');
+  await A.ev(`T.button('Refuser', ${stepEl(1)})`);
+  await finish();
+  assert.deepEqual((await lastMsg()).agent.steps.map((s) => s.status), ['accepted', 'rejected']);
+  fs.rmSync(path.join(DIR, 'avant.txt'));
 });

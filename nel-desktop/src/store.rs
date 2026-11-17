@@ -396,6 +396,15 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["protectedFiles"] = protected.into();
+    // Commandes du mode Agent : délai maximal (2 min par défaut), et celles autorisées sans confirmation (aucune).
+    s["commandTimeout"] = (num(&s["commandTimeout"], 120.0).clamp(1.0, 3600.0) as u64).into();
+    let mut allowed: Vec<String> = Vec::new();
+    for c in s["allowedCommands"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|c| c.split_whitespace().collect::<Vec<_>>().join(" ")) {
+        if !c.is_empty() && !allowed.contains(&c) && allowed.len() < 100 {
+            allowed.push(c);
+        }
+    }
+    s["allowedCommands"] = allowed.into();
     s
 }
 
