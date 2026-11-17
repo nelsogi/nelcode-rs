@@ -668,3 +668,63 @@ test('fournisseur Claude : modèle prérempli, en-têtes Anthropic, sans tempera
   assert.ok('temperature' in chats.at(-1) && 'top_p' in chats.at(-1));
   await A.ev(`window.__TAURI__.core.invoke('delete_provider', { id: ${JSON.stringify(claude.id)} })`);
 });
+
+// --- Points de restauration git -------------------------------------------------------------------------------
+
+test('point de restauration git : « Revenir à avant cette demande » remet les fichiers ; sans git, pas de bouton', async () => {
+  const restoreBtn = (k) => `[...[...document.querySelectorAll('#messages .msg.assistant')].at(${k}).querySelectorAll('.actions button')].find((b) => b.textContent.includes('Revenir à avant cette demande'))`;
+  await A.ev(`refreshProviders().then(() => true)`);
+  // Sans git : pas de point, pas de bouton.
+  await A.ev(`T.key('n', { ctrlKey: true }, document); S.current.workingDirectory = ${JSON.stringify(DIR)}; renderHeader(); true`);
+  await start('simple', 'Bonjour');
+  await finish();
+  assert.equal((await lastMsg()).agent.checkpoint, undefined);
+  assert.equal(await A.ev(`!${restoreBtn(-1)}`), true);
+  // Un dépôt git : un fichier suivi, un .gitignore, un commit.
+  const GIT = path.join(OUT, 'depot');
+  const git = (...args) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: GIT, encoding: 'utf8' }).trim();
+  const player = 'class Player {\n    public void Run() { } // Player\n}\n';
+  fs.mkdirSync(path.join(GIT, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(GIT, 'src/Player.cs'), player);
+  fs.writeFileSync(path.join(GIT, '.gitignore'), '*.log\n');
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-q', '--no-gpg-sign', '-m', 'init');
+  const head = git('rev-parse', 'HEAD');
+  const gread = (f) => fs.readFileSync(path.join(GIT, f), 'utf8');
+  await A.ev(`T.key('n', { ctrlKey: true }, document); S.current.workingDirectory = ${JSON.stringify(GIT)}; renderHeader(); true`);
+  await start('editeur', 'Renomme Player');
+  await decide(0, 'Accepter');
+  await finish();
+  assert.match(gread('src/Player.cs'), /class Joueur/);
+  const { id } = (await lastMsg()).agent.checkpoint;
+  assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/nelcode'), `refs/nelcode/checkpoints/${id}`);
+  // Après la demande : un fichier créé à la main, un fichier ignoré.
+  fs.writeFileSync(path.join(GIT, 'neuf.txt'), 'neuf');
+  fs.writeFileSync(path.join(GIT, 'trace.log'), 'journal');
+  // Pendant une génération, le bouton est désactivé.
+  await start('ecrivain', 'Encore');
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000, 'écriture à valider');
+  assert.equal(await A.ev(`${restoreBtn(-2)}.disabled`), true);
+  await A.ev(`T.button('Refuser', ${stepEl(0)})`);
+  await finish();
+  // Revenir à avant la première demande : confirmation, puis les fichiers sont remis.
+  await A.ev(`${restoreBtn(-2)}.click()`);
+  await A.waitFor(`T.dialog()?.textContent.includes('.gitignore')`, 5_000, 'confirmation');
+  assert.match(await A.ev(`T.dialog().textContent`), /fichiers créés depuis sont supprimés/);
+  await A.ev(`T.button('Revenir à avant cette demande', T.dialog())`);
+  await A.waitFor(`T.toasts().includes('Fichiers remis')`, 10_000, 'restauration');
+  assert.equal(gread('src/Player.cs'), player);
+  assert.equal(fs.existsSync(path.join(GIT, 'neuf.txt')), false, 'créé depuis : supprimé');
+  assert.equal(gread('trace.log'), 'journal', 'ignoré : intact');
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(git('status', '--porcelain'), '', 'index de l\'utilisateur inchangé, fichiers comme au commit');
+  assert.equal(await A.ev(`S.current.messages.at(-3).agent.steps[0].status`), 'undone');
+  assert.equal(await A.ev(`S.current.messages.length`), 4, 'les messages restent');
+  // Le point supprimé du dépôt : message clair.
+  git('update-ref', '-d', `refs/nelcode/checkpoints/${id}`);
+  await A.ev(`${restoreBtn(-2)}.click()`);
+  await A.waitFor(`!!T.dialog()`, 5_000);
+  await A.ev(`T.button('Revenir à avant cette demande', T.dialog())`);
+  await A.waitFor(`T.toasts().includes('n\\'existe plus')`, 10_000, 'point disparu');
+});

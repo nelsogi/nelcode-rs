@@ -685,6 +685,7 @@ export function messageEl(m, i, faded) {
     const prev = S.current.messages[i - 1];
     if (m.claude) acts.append(h('span', { class: 'claude-cost', title: 'Coût estimé par l\'outil claude, et durée de la demande' }, claudeCost(m.claude)));
     if (prev?.role === 'user' && !S.current.compare && !S.current.claudeAgent) acts.append(actionButton([icon('refresh-cw'), 'Régénérer'], 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
+    if (m.agent?.checkpoint) acts.append(actionButton([icon('undo-2'), 'Revenir à avant cette demande'], 'Remettre les fichiers du projet dans leur état d\'avant cette demande (point de restauration git)', () => restoreCheckpoint(i), busy));
     if (m.versions?.length > 1) {
       const at = m.versions.indexOf(m.content);
       acts.append(h('span', { class: 'versions' },
@@ -696,6 +697,22 @@ export function messageEl(m, i, faded) {
   }
   el.append(acts);
   return el;
+}
+
+// Mode Agent dans un dépôt git : le dossier reprend l'état du point de restauration pris avant la demande de la
+// réponse i. Les écritures acceptées de cette demande et des suivantes deviennent « annulée » ; les messages restent.
+export async function restoreCheckpoint(i) {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  const s = S.current, c = s.messages[i].agent.checkpoint;
+  if (!(await confirmDialog('Revenir à avant cette demande',
+    `Tous les fichiers du projet (${c.dir}) reviennent à leur état d'avant cette demande, y compris les modifications faites depuis (à la main ou par les demandes suivantes), et les fichiers créés depuis sont supprimés. Les fichiers ignorés par .gitignore ne sont pas touchés. La conversation reste telle quelle.`,
+    'Revenir à avant cette demande', true))) return;
+  try { await invoke('agent_restore', { dir: c.dir, id: c.id }); } catch (e) { return toast('Restauration impossible : ' + errText(e), 'error', 8000); }
+  for (const m of s.messages.slice(i)) for (const st of m.agent?.steps ?? []) if ((st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted') st.status = 'undone';
+  toast('Fichiers remis dans leur état d\'avant cette demande.', 'success');
+  await saveSession(s);
+  renderMessages();
+  refreshFiles(true);
 }
 
 export function renderComposer() {

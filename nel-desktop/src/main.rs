@@ -3,6 +3,7 @@
 
 mod agent;
 mod catalog;
+mod checkpoint;
 mod claude_agent;
 mod command;
 #[cfg(feature = "cuda")]
@@ -762,7 +763,8 @@ fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, mod
 // --- Mode Agent -------------------------------------------------------------------------------------------
 
 /// Comme `remote_generate`, avec les outils de l'agent dans le dossier de travail `dir` : les étapes partent dans
-/// « agent-step », puis « gen-done » ({ …, agent: { request, steps } }).
+/// « agent-step », puis « gen-done » ({ …, agent: { request, steps, checkpoint? } }). Si `dir` est dans un dépôt git,
+/// un point de restauration est pris avant (checkpoint : { id, dir }) ; sans git ou en cas d'échec, la demande part sans.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, dir: String, options: GenOptions) -> Result<()> {
@@ -776,7 +778,15 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
     let max_turns = store::load_settings()["agentMaxTurns"].as_u64().unwrap_or(10) as usize;
     tauri::async_runtime::spawn(async move {
         let s = options.sampling();
-        let done = agent::run(&app, &provider, &model, &history, &message, &dir, (s.temperature, s.top_p), max_turns, cancel).await;
+        let d = dir.clone();
+        let checkpoint = tauri::async_runtime::spawn_blocking(move || checkpoint::create(&d)).await.map_err(|e| e.to_string()).and_then(|r| r).unwrap_or_else(|e| {
+            log::error(&format!("point de restauration impossible : {e}"));
+            None
+        });
+        let mut done = agent::run(&app, &provider, &model, &history, &message, &dir, (s.temperature, s.top_p), max_turns, cancel).await;
+        if let Some(id) = checkpoint {
+            done["agent"]["checkpoint"] = json!({ "id": id, "dir": dir });
+        }
         app.state::<AppState>().remote_cancel.lock().unwrap().take();
         generating.store(false, Ordering::SeqCst);
         let _ = app.emit("gen-done", done);
@@ -824,6 +834,15 @@ fn agent_undo(request: String, step: String) -> Result<()> {
 #[tauri::command]
 fn agent_undo_all(request: String) -> Result<Vec<String>> {
     agent::undo_all(&request)
+}
+
+/// « Revenir à avant cette demande » : le dossier `dir` reprend l'état du point de restauration `id`.
+#[tauri::command(async)]
+fn agent_restore(state: State<'_, AppState>, dir: String, id: String) -> Result<()> {
+    if state.generating.load(Ordering::SeqCst) {
+        return Err("une réponse est en cours".into());
+    }
+    checkpoint::restore(&dir, &id)
 }
 
 /// Panneau Fichiers : le diff d'un fichier sur la session (voir agent::session_diff).
@@ -965,6 +984,7 @@ fn main() {
             agent_decide,
             agent_undo,
             agent_undo_all,
+            agent_restore,
             nelcode_md_info,
             create_nelcode_md,
             agent_session_diff,
