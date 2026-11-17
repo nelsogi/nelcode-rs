@@ -11,6 +11,7 @@ export const UI = {
   planCollapsed: false,
   nelcodeAsk: 0,
   importToast: null,
+  preparing: false,     // un résumé automatique se prépare avant l'envoi
 };export const S = {
   info: {},            // app_info : dossiers
   settings: {},        // settings.json

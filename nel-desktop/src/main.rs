@@ -6,6 +6,7 @@ mod catalog;
 mod checkpoint;
 mod claude_agent;
 mod command;
+mod custom_commands;
 #[cfg(feature = "cuda")]
 mod delayload;
 mod gpu;
@@ -657,6 +658,18 @@ fn list_files(dir: String) -> Result<Vec<String>> {
     Ok(agent::walk(&root))
 }
 
+/// Les commandes personnalisées : celles du projet (`.nelcode/commands`) et les globales (nom, description, origine, texte).
+#[tauri::command]
+fn custom_commands(dir: String) -> Vec<Value> {
+    custom_commands::list(&dir)
+}
+
+/// Crée un modèle de commande (`scope` : "project" ou "global"), jamais par-dessus un fichier existant ; rend son chemin.
+#[tauri::command]
+fn create_custom_command(dir: String, scope: String, name: String, description: String) -> Result<String> {
+    custom_commands::create(&dir, &scope, &name, &description)
+}
+
 /// Lit un fichier texte du dossier de travail, sans pouvoir en sortir (« .. », lien, chemin absolu). Au plus
 /// 100 Ko, en UTF-8. Un fichier protégé (.env, *.pem, réglages…) n'est lu qu'avec `confirm` : sinon l'erreur
 /// « PROTECTED\t<motif>\t<chemin> » demande à l'interface de poser la question.
@@ -970,6 +983,8 @@ fn main() {
             install_catalog_model,
             cancel_catalog,
             list_files,
+            custom_commands,
+            create_custom_command,
             read_file,
             server_status,
             server_apply,

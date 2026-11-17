@@ -11,6 +11,7 @@ import { openCatalog } from './catalog.js';
 import { runCommand, updateSuggest } from './palette.js';
 import { projectName, rememberProject, renderProject, sameProject, sessionsByProject } from './projects.js';
 import { refreshFiles } from './files.js';
+import { autoSummarize, summaryEl } from './summary.js';
 
 export const TITLE_LENGTH = 40;
 
@@ -31,6 +32,22 @@ export function turnsOf(messages, end = messages.length) {
     if (messages[i].role === 'user' && messages[i + 1].role === 'assistant') turns.push([messages[i].content, messages[i + 1].content]);
   return turns;
 }
+
+// Le résumé des échanges précédents, s'il couvre bien des messages qui existent encore (avant `end`).
+export const summaryOf = (s, end = s.messages.length) => (s.summary && s.summary.upTo <= end ? s.summary : null);
+
+export const SUMMARY_HEAD = 'Résumé des échanges précédents :\n';
+
+// Ce qui part au modèle : le résumé (comme un premier échange), puis les tours qui le suivent. Les messages résumés
+// restent dans la conversation, seul l'envoi change.
+export function historyOf(s, end = s.messages.length) {
+  const sm = summaryOf(s, end);
+  if (!sm) return turnsOf(s.messages, end);
+  return [[SUMMARY_HEAD + sm.text, 'Compris, je tiens compte de ce résumé.'], ...turnsOf(s.messages.slice(sm.upTo), end - sm.upTo)];
+}
+
+// Le résumé ne survit pas à une coupure de la conversation en dessous de ce qu'il couvre (modifier, régénérer).
+export function dropStaleSummary(s) { if (s.summary && s.summary.upTo > s.messages.length) delete s.summary; }
 
 export function newSession() {
   return {
@@ -251,7 +268,7 @@ export function genOptions() {
 }
 
 export function canGenerate() {
-  if (S.gen) return false;
+  if (S.gen || UI.preparing) return false;
   if (S.bench) { toast('Test de vitesse en cours…', 'warning'); return false; }
   if (U.state === 'installing') { toast('Installation de la mise à jour en cours…', 'warning'); return false; }
   if (!S.model.name && !S.current?.compare && !S.current?.claudeAgent) {
@@ -265,7 +282,8 @@ export async function send(text) {
   text = text.trim();
   if (!text || !canGenerate()) return false;
   const s = S.current;
-  const history = turnsOf(s.messages);
+  if (!s.compare && !(await autoSummarize(s, text))) return false;
+  const history = historyOf(s);
   s.messages.push({ role: 'user', content: text });
   if (s.compare) return startGen(s, { kind: 'compare', question: text, history, historyB: turnsOf(s.messages.map((m) => m.compare ? { role: 'assistant', content: m.compare.content } : m), s.messages.length - 1), a: { text: '', tokens: [] }, b: { text: '', tokens: [] }, side: 'a' });
   return startGen(s, { kind: 'send', index: s.messages.length, question: text, history });
@@ -276,8 +294,9 @@ export async function regenerate(index) {
   if (!canGenerate() || s.compare || s.messages[index]?.role !== 'assistant') return;
   const question = s.messages[index - 1].content;
   s.messages.splice(index + 1);          // la suite de la conversation est retirée
+  dropStaleSummary(s);
   await saveSession(s);
-  return startGen(s, { kind: 'regen', index, question, history: turnsOf(s.messages, index - 1), old: s.messages[index] });
+  return startGen(s, { kind: 'regen', index, question, history: historyOf(s, index - 1), old: s.messages[index] });
 }
 
 export async function startGen(s, g) {
@@ -293,7 +312,7 @@ export async function startGen(s, g) {
       // Claude Agent : l'outil claude reprend sa propre session ; l'historique n'est pas renvoyé.
       if (!s.workingDirectory) throw new Error('Claude Agent : choisis d\'abord un dossier de travail (/dir).');
       await invoke('claude_agent_send', { sessionId: s.claudeAgent.sessionId ?? null, message: g.question, dir: s.workingDirectory });
-    } else if (s.agent) {
+    } else if (s.agent && g.kind !== 'summary') {
       // Le mode Agent : seulement un modèle distant qui gère les outils ; jamais un .nelmodel ni un GGUF local.
       if (!r) throw new Error(AGENT_LOCAL);
       if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
@@ -304,7 +323,7 @@ export async function startGen(s, g) {
   } catch (e) {
     S.gen = null;
     U.idle?.();
-    if (g.kind !== 'regen') s.messages.pop();
+    if (g.kind !== 'regen' && g.kind !== 'summary') s.messages.pop();
     toast(errText(e), 'error');
     renderAll();
     return false;
@@ -334,6 +353,7 @@ export async function onDone(p) {
   S.gen = null;
   const s = g.session;
   if (g.kind === 'compare') return onCompareDone(g, s, p);
+  if (g.kind === 'summary') return onSummaryDone(g, s, p);
   let text = (p.text ?? '').trim();
   // Mode Agent : les étapes restent dans la conversation même sans réponse finale (pour voir et annuler les écritures).
   if (p.agent?.steps?.length && (p.error || !text)) {
@@ -374,6 +394,17 @@ export async function onDone(p) {
     S.lastSpeed = claudeCost(p.claude) + (p.stopped ? ' · arrêtée' : '');
   }
   renderAll();
+}
+
+// Le résumé est écrit : il remplace, pour le modèle, les messages jusqu'à g.upTo. Arrêté ou en erreur : rien ne change.
+export async function onSummaryDone(g, s, p) {
+  const text = (p.text ?? '').trim();
+  let result = 'ok';
+  if (p.stopped) result = 'stopped';
+  else if (p.error || !text) { result = 'error'; toast(p.error ? 'Résumé impossible : ' + p.error : 'Le modèle n\'a pas écrit de résumé.', 'warning', 6000); }
+  else { s.summary = { text, upTo: g.upTo, date: localIso() }; await saveSession(s); }
+  renderAll();
+  g.resolve(result);
 }
 
 export async function onCompareDone(g, s, p) {
@@ -538,6 +569,7 @@ export async function submitEdit(index, text) {
   if (!text.trim() || !canGenerate()) return;
   const s = S.current;
   s.messages.splice(index);   // la conversation repart de ce message
+  dropStaleSummary(s);
   UI.editing = null;
   await send(text);
 }
@@ -628,16 +660,18 @@ export function renderMessages() {
   $('empty').hidden = s.messages.length > 0 || !!g;
   box.classList.toggle('wide', !!s.compare);
   $('tip').hidden = true;
-  // Les tours que le modèle ne voit plus (contexte plein) sont grisés.
-  const turns = turnsOf(s.messages).length;
-  const fadedTurns = S.context && !g && !s.compare ? Math.max(0, turns - S.context.keptTurns) : 0;
-  const fadedEnd = fadedTurns * 2;
+  // Les messages que le modèle ne voit plus sont grisés : ceux qui sont résumés, puis (contexte plein) les plus anciens.
+  const sm = !s.compare && summaryOf(s), summarized = sm ? sm.upTo : 0;
+  const dropped = S.context && !g && !s.compare ? Math.max(0, historyOf(s).length - S.context.keptTurns) : 0;
+  const fadedEnd = summarized + 2 * Math.max(0, dropped - (sm ? 1 : 0));
   s.messages.forEach((m, i) => {
-    if (fadedEnd && i === fadedEnd) box.append(h('div', { class: 'faded-sep' }, 'au-dessus : hors de la mémoire du modèle'));
+    if (sm && i === summarized) box.append(summaryEl(sm));
+    if (fadedEnd > summarized && i === fadedEnd) box.append(h('div', { class: 'faded-sep' }, 'au-dessus : hors de la mémoire du modèle'));
     if (g?.kind === 'regen' && i === g.index) return box.append(g.el = streamingEl());
     box.append(m.compare ? compareEl(m, i) : messageEl(m, i, i < fadedEnd));
   });
-  if (g?.kind === 'send') box.append(g.el = streamingEl());
+  if (sm && summarized === s.messages.length) box.append(summaryEl(sm));
+  if (g?.kind === 'send' || g?.kind === 'summary') box.append(g.el = streamingEl());
   if (g?.kind === 'compare') box.append(g.el = compareStreamingEl());
   if (g) { const sc = $('scroller'); sc.scrollTop = sc.scrollHeight; }
 }
@@ -728,6 +762,7 @@ export function renderStatus() {
   st.replaceChildren();
   if (S.model.loading) st.append(h('span', { class: 'spinner' }), `Chargement de ${S.model.loading}…`);
   else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), `${S.gen.side.toUpperCase()} · ${S.gen.session.compare[S.gen.side]} écrit…  Échap pour arrêter`);
+  else if (S.gen?.kind === 'summary') st.append(h('span', { class: 'spinner' }), `${S.model.name} résume les échanges précédents…  Échap pour arrêter`);
   else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
   else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
   else if (S.current?.claudeAgent) st.append(`Claude Agent${S.claudeStatus?.model ? ' · ' + S.claudeStatus.model : ''} · ${S.claudeStatus?.permissionMode === 'acceptEdits' ? 'modifications de fichiers acceptées' : 'rien d\'automatique'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
@@ -737,6 +772,10 @@ export function renderStatus() {
     S.server.busy ? h('span', { class: 'spinner' }) : h('span', { class: 'dot' }), S.server.busy ? `API · répond…` : `API :${S.server.port}`));
 }
 
+// Si les anciens échanges sont résumés : ce que le modèle lit à leur place.
+const summaryNote = () => { const sm = summaryOf(S.current); return sm ? `
+Les ${sm.upTo / 2} premiers échanges sont remplacés par leur résumé (/compact pour le refaire).` : ''; };
+
 export function refreshContext() {
   clearTimeout(UI.contextTimer);
   UI.contextTimer = setTimeout(async () => {
@@ -745,24 +784,24 @@ export function refreshContext() {
     if (!S.model.name) { S.context = null; $('context-text').textContent = '— / — tokens'; fill.style.width = '0'; return; }
     if (S.model.remote) {
       // Pas de tokenizer pour un modèle distant : environ 4 caractères par token.
-      const chars = turnsOf(S.current.messages).flat().join('').length + (await expandMentions($('input').value, true)).length;
+      const chars = historyOf(S.current).flat().join('').length + (await expandMentions($('input').value, true)).length;
       const n = Math.ceil(chars / 4), ctx = S.model.blockSize;
       S.context = null;
       fill.style.width = ctx ? Math.min(100, 100 * n / ctx) + '%' : '0';
       fill.className = ctx && n > ctx ? 'full' : ctx && n > 0.8 * ctx ? 'warn' : '';
-      $('context-text').textContent = ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`;
-      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.';
+      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (summaryOf(S.current) ? ' · résumé' : '');
+      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.' + summaryNote();
       return;
     }
     try {
-      const c = await invoke('context_info', { history: turnsOf(S.current.messages), message: await expandMentions($('input').value, true) });
+      const c = await invoke('context_info', { history: historyOf(S.current), message: await expandMentions($('input').value, true) });
       const changed = S.context?.keptTurns !== c.keptTurns;
       S.context = c;
       const ratio = (c.tokens + c.reserve) / c.blockSize;
       fill.style.width = Math.min(100, 100 * c.tokens / c.blockSize) + '%';
       fill.className = ratio > 1 ? 'full' : ratio > 0.8 ? 'warn' : '';
-      $('context-text').textContent = `${c.tokens} / ${c.blockSize} tokens`;
-      $('context').title = `Le modèle verra ${c.tokens} tokens au prochain message (contexte max ${c.blockSize}, dont ${c.reserve} gardés pour la réponse).\n${c.keptTurns} échange(s) précédent(s) en mémoire.${ratio > 1 ? '\nTrop long : le modèle n\'en lira que la fin.' : ''}`;
+      $('context-text').textContent = `${c.tokens} / ${c.blockSize} tokens` + (summaryOf(S.current) ? ' · résumé' : '');
+      $('context').title = `Le modèle verra ${c.tokens} tokens au prochain message (contexte max ${c.blockSize}, dont ${c.reserve} gardés pour la réponse).\n${c.keptTurns} échange(s) précédent(s) en mémoire.${ratio > 1 ? '\nTrop long : le modèle n\'en lira que la fin.' : ''}${summaryNote()}`;
       if (changed && !S.gen && UI.editing === null) renderMessages();
     } catch { /* modèle en cours de changement */ }
   }, 150);
@@ -809,7 +848,7 @@ export async function submitInput() {
   if (text === null) return;
   if (text !== line && S.model.name && !S.current.compare) {
     try {
-      const c = await invoke('context_info', { history: turnsOf(S.current.messages), message: text });
+      const c = await invoke('context_info', { history: historyOf(S.current), message: text });
       if (c.tokens + c.reserve > c.blockSize && !(await confirmDialog('Le message dépasse le contexte', `Avec ses fichiers, le message fait ${c.tokens.toLocaleString('fr-CH')} tokens, et le modèle n'en voit que ${c.blockSize.toLocaleString('fr-CH')} (dont ${c.reserve} pour la réponse) : il n'en lira que la fin.`, 'Envoyer quand même'))) return;
     } catch { /* modèle en cours de changement */ }
   }

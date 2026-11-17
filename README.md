@@ -94,6 +94,16 @@ Le modèle ne voit qu'une partie de la conversation (256 tokens pour un `.nelmod
 limité à **8 192 tokens** par défaut, réglable dans les Réglages) : la barre sous la saisie montre combien le prochain message
 en utilisera, et les échanges qu'il ne voit plus sont grisés.
 
+**Résumé automatique** (modèles distants, Claude compris, et GGUF ; pas les `.nelmodel`, dont le contexte est trop
+petit, ni Claude Agent, qui gère le sien) : quand la conversation dépasse **80 %** du contexte du modèle (réglable dans
+**Réglages → Résumé automatique**, 0 = jamais), les anciens échanges sont résumés par le modèle actif (décisions, fichiers
+modifiés, plan en cours, erreurs non résolues) et seul le résumé part au modèle, avec les **4 derniers échanges** tels
+quels. Les messages d'origine restent dans la conversation, grisés, avec un bloc repliable « Résumé des échanges
+précédents » à leur place ; la barre de contexte indique « · résumé ». En mode Agent, les contenus de fichiers et sorties
+de commandes ne sont repris dans le résumé qu'en une ligne (« fichier lu : src/Player.cs, 120 lignes »), et pendant une
+même demande les anciens résultats d'outils sont réduits de la même façon quand le contexte approche du seuil.
+`/compact [consigne]` résume à la main (par exemple `/compact garde surtout les tests`).
+
 Dans les réponses, les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript, HTML, CSS, JSON) et ont
 un bouton **Copier**.
 
@@ -265,11 +275,22 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/dir` | Changer le dossier de travail |
 | `/open` | Ouvrir le dossier de travail dans l'Explorateur |
 | `/delete` | Supprimer la conversation |
+| `/compact [consigne]` | Résumer les anciens échanges (les 4 derniers restent tels quels) |
+| `/commands` | Commandes personnalisées : liste, et création d'une nouvelle |
 | `/settings` | Réglages de génération |
 | `/info` | Modèle, réglages, dossiers |
 | `/help` | Liste des commandes et des raccourcis |
 
 Sans valeur, `/temp`, `/topk`, `/topp` et `/max` affichent le réglage actuel.
+
+**Commandes personnalisées** : chaque fichier `.md` de `.nelcode/commands/` (dans le dossier de travail) ou de
+`%APPDATA%\NelCode\commands` (globales) devient une commande `/nom` (nom du fichier : minuscules, chiffres, `-`, `_`).
+Un front matter facultatif donne la description (`---`, `description: Relire le code`, `---`) ; `$ARGUMENTS` est remplacé
+par le texte tapé après la commande (`/tests src/a.cs`), ou ajouté à la fin s'il manque. Elles apparaissent dans les
+suggestions `/` et la palette Ctrl+K avec leur description et leur origine (projet ou globale). Une commande du projet
+remplace une globale du même nom, jamais une commande intégrée. Une commande n'est qu'un texte envoyé au modèle comme un
+message ordinaire : elle ne lance rien elle-même, et en mode Agent chaque écriture ou commande demande toujours son accord.
+`/commands` les liste et crée un modèle de fichier (jamais par-dessus un fichier existant).
 
 Dans les **Réglages** (Ctrl+,), la **pénalité de répétition** (1 à 2, 1,15 par défaut) rend moins probables les tokens
 des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haute, il évite même les mots utiles.

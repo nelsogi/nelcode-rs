@@ -102,7 +102,7 @@ $('input').addEventListener('keydown', (e) => {
     // Entrée sur une suggestion incomplète la complète ; sur une commande déjà complète, l'exécute.
     if (open) {
       const it = UI.sugg.items[UI.sugg.sel];
-      if (it && $('input').value.trim() !== it.fill.trim()) return pickSuggest(UI.sugg.sel);
+      if (it && $('input').value.trim().toLowerCase() !== it.fill.trim().toLowerCase()) return pickSuggest(UI.sugg.sel);
     }
     if (S.gen) return;
     submitInput();

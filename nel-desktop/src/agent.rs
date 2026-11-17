@@ -556,6 +556,53 @@ fn short(s: &str, n: usize) -> String {
     if one.chars().count() <= n { one } else { one.chars().take(n).collect::<String>() + "…" }
 }
 
+/// Une estimation du contexte pris par `messages` : environ 4 caractères par token, comme `remote::fit`.
+fn est_tokens(messages: &[Value]) -> u64 {
+    messages.iter().map(|m| m.to_string().chars().count() as u64 / 4 + 4).sum()
+}
+
+/// La ligne qui remplace le résultat d'un outil : « fichier lu : src/Player.cs, 120 lignes ».
+fn tool_line(call: Option<&Value>, content: &str) -> String {
+    let name = call.and_then(|c| c["function"]["name"].as_str()).unwrap_or("outil");
+    let args: Value = call.and_then(|c| c["function"]["arguments"].as_str()).and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
+    let a = |k: &str| args[k].as_str().unwrap_or("?").to_string();
+    let lines = plural(content.lines().count(), "ligne");
+    match name {
+        "read_file" => format!("fichier lu : {}, {lines}", a("path")),
+        "search" => format!("recherche « {} » : {lines}", a("query")),
+        "list_files" => format!("liste de fichiers : {lines}"),
+        "run_command" => format!("commande lancée : {}, sortie de {lines}", a("program")),
+        _ => format!("{name} : résultat de {lines}"),
+    }
+}
+
+/// Remplace par une ligne courte les gros résultats d'outils d'avant le dernier tour (le modèle sait ce qu'il a lu,
+/// il peut relire). Rend combien ont été remplacés.
+fn shrink_tool_results(messages: &mut [Value]) -> usize {
+    let Some(last) = messages.iter().rposition(|m| m["role"] == "assistant" && m["tool_calls"].is_array()) else { return 0 };
+    let mut n = 0;
+    for i in 0..last {
+        let content = messages[i]["content"].as_str().unwrap_or_default();
+        if messages[i]["role"] != "tool" || content.len() <= 300 {
+            continue;
+        }
+        let id = &messages[i]["tool_call_id"];
+        let call = messages[..i].iter().flat_map(|m| m["tool_calls"].as_array().into_iter().flatten()).find(|c| &c["id"] == id);
+        let line = tool_line(call, content);
+        messages[i]["content"] = line.into();
+        n += 1;
+    }
+    n
+}
+
+/// Contexte presque plein (`percent` % de `context` tokens) : les anciens résultats d'outils sont réduits.
+fn shrink_if_full(messages: &mut [Value], context: Option<u64>, percent: u64) -> usize {
+    match context {
+        Some(c) if percent > 0 && est_tokens(messages) * 100 >= c * percent => shrink_tool_results(messages),
+        _ => 0,
+    }
+}
+
 /// La demande en cours : ses étapes, affichées dans la conversation (« agent-step ») et rendues à la fin.
 struct Run<'a> {
     app: &'a AppHandle,
@@ -892,7 +939,12 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
         nelcode = info;
         let mut messages = vec![json!({ "role": "system", "content": system })];
         messages.extend(remote::fit(history, message, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024)));
+        let percent = store::load_settings()["summaryThreshold"].as_u64().unwrap_or(80);
         for turn_no in 0..max_turns {
+            let shrunk = shrink_if_full(&mut messages, m["contextLength"].as_u64(), percent);
+            if shrunk > 0 {
+                crate::log::info(&format!("agent : {shrunk} ancien(s) résultat(s) d'outil réduit(s) (contexte presque plein)"));
+            }
             let mut body = remote::chat_body(&p, model, &m, messages.clone(), sampling);
             body["tools"] = tools();
             let t = remote::stream_chat(app, provider_id, &url, &body, &cancel).await?;
@@ -1045,6 +1097,29 @@ mod tests {
         fs::create_dir(d.join("NELCODE.md")).unwrap();
         assert!(nelcode_md(&d).is_none(), "un dossier n'est pas un NELCODE.md");
         fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn anciens_resultats_d_outils_reduits() {
+        let big = |l: &str| format!("{}{l}", "    1  ligne\n".repeat(119));
+        let call = |id: &str, name: &str, args: Value| json!({ "role": "assistant", "content": null, "tool_calls": [{ "id": id, "type": "function", "function": { "name": name, "arguments": args.to_string() } }] });
+        let mut m = vec![
+            json!({ "role": "system", "content": "s" }), json!({ "role": "user", "content": "lis" }),
+            call("a", "read_file", json!({ "path": "src/Player.cs" })), json!({ "role": "tool", "tool_call_id": "a", "content": big("fin") }),
+            call("b", "run_command", json!({ "program": "dotnet", "args": ["build"] })), json!({ "role": "tool", "tool_call_id": "b", "content": big("fin") }),
+            call("c", "search", json!({ "query": "Player" })), json!({ "role": "tool", "tool_call_id": "c", "content": big("fin") }),
+        ];
+        let before = est_tokens(&m);
+        // Contexte pas presque plein, ou seuil à 0 (désactivé), ou taille inconnue : rien ne change.
+        assert_eq!(shrink_if_full(&mut m, Some(1_000_000), 80), 0);
+        assert_eq!(shrink_if_full(&mut m, Some(before), 0), 0);
+        assert_eq!(shrink_if_full(&mut m, None, 80), 0);
+        assert_eq!(shrink_if_full(&mut m, Some(before + 100), 80), 2, "les deux résultats d'avant le dernier tour");
+        assert_eq!(m[3]["content"], "fichier lu : src/Player.cs, 120 lignes");
+        assert_eq!(m[5]["content"], "commande lancée : dotnet, sortie de 120 lignes");
+        assert!(m[7]["content"].as_str().unwrap().len() > 1000, "le dernier tour reste entier");
+        assert!(est_tokens(&m) < before / 2);
+        assert_eq!(shrink_tool_results(&mut m), 0, "déjà réduits");
     }
 
     #[test]

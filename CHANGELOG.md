@@ -48,6 +48,24 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   sont pas touchés) ; la conversation reste.
 - Claude Agent, **choix du modèle** (`--model`) dans Réglages → Claude Agent : alias ou id complet, vide pour celui de
   l'outil (la variable `ANTHROPIC_MODEL` du PC n'est pas transmise).
+- **Résumé automatique du contexte** (modèles distants, fournisseur Claude, GGUF ; pas les `.nelmodel` ni Claude Agent) :
+  au-delà de **80 %** du contexte du modèle (réglable : Réglages → Résumé automatique, 0 = jamais), les anciens échanges
+  sont résumés par le modèle actif (décisions, fichiers modifiés, plan en cours, erreurs non résolues) ; les 4 derniers
+  échanges restent tels quels. Seul ce qui est envoyé au modèle change : les messages d'origine restent dans la
+  conversation sauvegardée, grisés, avec un bloc repliable « Résumé des échanges précédents » à leur place, et la barre de
+  contexte indique « · résumé ». Un deuxième résumé reprend le premier ; modifier ou régénérer un message déjà résumé
+  retire le résumé. **`/compact [consigne]`** résume à la main (`/compact garde surtout les tests`).
+- Mode Agent et résumé : les anciens résultats d'outils (contenu des fichiers lus, sorties de commandes) ne sont repris
+  dans le résumé qu'en une ligne (« fichier lu : src/Player.cs, 120 lignes ») ; dans une même demande, quand le contexte
+  dépasse le seuil, les résultats d'outils d'avant le dernier tour sont remplacés de la même façon.
+- **Commandes personnalisées** : les `.md` de `.nelcode/commands/` (dossier de travail, lus par le bac à sable) et de
+  `%APPDATA%\NelCode\commands` (globales) deviennent des commandes `/nom` ; `description:` en front matter facultatif,
+  `$ARGUMENTS` remplacé par le texte tapé après la commande. Suggestions `/` et palette Ctrl+K avec description et origine
+  (projet ou globale) ; le projet remplace une globale du même nom, jamais une commande intégrée. Une commande n'est qu'un
+  texte envoyé au modèle : elle ne lance rien et ne contourne aucune validation du mode Agent. **`/commands`** les liste
+  et crée un modèle de fichier (jamais par-dessus un fichier existant).
+- Tests : lecture du front matter, noms, priorité, création sans écraser, réduction des résultats d'outils (unitaires) ;
+  résumé automatique, réglage, `/compact`, étapes de l'agent, exclusions, commandes personnalisées (`e2e/context.test.mjs`).
 
 - **Interface** :
   - **projets** : sélecteur des projets récents en haut de la barre latérale, conversations du projet affiché, ou toutes
