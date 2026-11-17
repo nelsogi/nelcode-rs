@@ -16,6 +16,7 @@
     <button id="claude-chat" class="new-chat claude" title="Nouvelle conversation Claude Agent (outil claude d'Anthropic, avec ta clé API)">
       <span><span data-icon="bot"></span> Claude Agent</span>
     </button>
+    <button id="project-btn" class="project-btn" aria-haspopup="menu"></button>
     <input id="search" class="search" type="search" placeholder="Rechercher…" spellcheck="false">
     <div class="section-title">Conversations</div>
     <ul id="sessions" class="list sessions"></ul>
@@ -43,6 +44,7 @@
         <button id="nelcode-chip" class="chip" hidden></button>
         <button id="agent-btn" class="chip" title="Mode Agent : le modèle lit et modifie les fichiers du dossier de travail (avec ton accord). Modèles distants qui gèrent les outils seulement."><span data-icon="bot"></span><span>Agent</span></button>
         <button id="transp-btn" class="chip" title="Mode transparence : au survol d'un mot, les 5 choix du modèle"><span data-icon="eye"></span><span>Transparence</span></button>
+        <button id="files-btn" class="chip icon-only" title="Panneau Fichiers (Ctrl+Maj+E)" aria-label="Panneau Fichiers"><span data-icon="folder-tree"></span></button>
         <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span data-icon="folder"></span><span id="folder-name"></span></button>
         <button id="folder-open" class="chip icon-only" title="Ouvrir le dossier dans l'Explorateur" aria-label="Ouvrir le dossier"><span data-icon="external-link"></span></button>
       </div>
@@ -77,6 +79,7 @@
   </section>
 
   <aside id="plan" class="plan" hidden></aside>
+  <aside id="files" class="files" hidden aria-label="Fichiers du dossier de travail"></aside>
 </div>
 
 <div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer</div></div>
@@ -86,6 +89,6 @@
 <div id="tip" class="tip" hidden></div>
 
 <script src="icons.js"></script>
-<script src="app.js"></script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

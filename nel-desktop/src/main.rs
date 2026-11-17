@@ -826,6 +826,18 @@ fn agent_undo_all(request: String) -> Result<Vec<String>> {
     agent::undo_all(&request)
 }
 
+/// Panneau Fichiers : le diff d'un fichier sur la session (voir agent::session_diff).
+#[tauri::command]
+fn agent_session_diff(dir: String, path: String, steps: Vec<(String, String)>) -> Result<Option<Value>> {
+    agent::session_diff(&dir, &path, &steps)
+}
+
+/// La taille du texte (réglages, Ctrl + = / - / 0) : le zoom de la page, de 50 % à 200 %.
+#[tauri::command]
+fn set_zoom(window: tauri::WebviewWindow, scale: f64) -> Result<()> {
+    window.set_zoom(if scale.is_finite() { scale.clamp(0.5, 2.0) } else { 1.0 }).map_err(|e| e.to_string())
+}
+
 // --- Claude Agent ------------------------------------------------------------------------------------------
 
 /// L'outil `claude` trouvé (ou le lien d'installation), la clé, le mode de permission, les outils autorisés.
@@ -955,6 +967,8 @@ fn main() {
             agent_undo_all,
             nelcode_md_info,
             create_nelcode_md,
+            agent_session_diff,
+            set_zoom,
             claude_agent_status,
             claude_agent_save_key,
             open_claude_install,

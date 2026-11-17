@@ -358,6 +358,30 @@ pub fn undo(request: &str, step: &str) -> Result<()> {
     Ok(())
 }
 
+/// Le diff d'un fichier sur toute la session : son contenu avant la première écriture de l'agent parmi `steps`
+/// ([demande, étape], dans l'ordre), contre son contenu actuel. Rien si aucune de ces écritures n'a de sauvegarde
+/// (Claude Agent, par exemple) : l'interface montre alors les diffs des étapes.
+pub fn session_diff(dir: &str, path: &str, steps: &[(String, String)]) -> Result<Option<Value>> {
+    let sb = Sandbox::new(dir)?;
+    let want = path.replace('\\', "/");
+    for (request, step) in steps {
+        let Ok(dir) = backups(request) else { continue };
+        let Ok(bytes) = fs::read(dir.join(format!("{step}.json"))) else { continue };
+        let Ok(b) = serde_json::from_slice::<Value>(&bytes) else { continue };
+        if b["rel"].as_str() != Some(want.as_str()) {
+            continue;
+        }
+        let abs = sb.resolve(&want)?;
+        let now = current(&abs);
+        let lines = diff(b["before"].as_str().unwrap_or_default(), now.as_deref().unwrap_or_default());
+        return Ok(Some(json!({
+            "created": b["before"].is_null(), "deleted": now.is_none(),
+            "diff": lines.iter().map(|(c, l)| json!([c.to_string(), l])).collect::<Vec<_>>(),
+        })));
+    }
+    Ok(None)
+}
+
 /// Annule toutes les écritures de la demande, de la dernière à la première. Rend les étapes annulées ; s'arrête à la
 /// première qui ne peut pas l'être.
 pub fn undo_all(request: &str) -> Result<Vec<String>> {

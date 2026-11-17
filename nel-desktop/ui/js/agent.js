@@ -1,0 +1,178 @@
+// Nel Code Desktop — agent.js : Le mode Agent et Claude Agent : étapes, plan, NELCODE.md.
+// Les textes (messages, noms) passent toujours par textContent, jamais par innerHTML.
+
+// --- Mode Agent -----------------------------------------------------------------------------------------
+
+import { $, dialog, errText, h, invoke, toast } from './util.js';
+import { S, UI } from './state.js';
+import { closeEdit, newSession, renderAll, renderHeader, renderMessages, saveSession } from './conversation.js';
+import { openSettings } from './settings.js';
+import { refreshFiles } from './files.js';
+
+export const AGENT_LOCAL = 'Le mode Agent demande un modèle distant qui gère les outils (llama.cpp lancé avec --jinja, Ollama avec Qwen3…) : les .nelmodel et les modèles GGUF de ce PC n\'y ont pas accès.';
+
+// --- Claude Agent ---------------------------------------------------------------------------------------
+// Une conversation menée par l'outil « claude » d'Anthropic installé sur le PC, avec une clé API.
+
+export const money = (usd) => `${Number(usd ?? 0).toLocaleString('fr-CH', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} $`;
+
+export const claudeCost = (c) => [c.cost !== null && c.cost !== undefined && money(c.cost), c.durationMs && `${(c.durationMs / 1000).toLocaleString('fr-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`,
+  c.turns && `${c.turns} tour${c.turns > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+
+export async function startClaudeAgent() {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  const st = S.claudeStatus = await invoke('claude_agent_status');
+  if (!st.cli) {
+    return dialog('Claude Agent', [h('p', {}, 'Claude Agent utilise l\'outil en ligne de commande « claude » d\'Anthropic, introuvable sur ce PC (ni dans le PATH, ni dans %USERPROFILE%\\.local\\bin).'),
+      h('p', {}, 'Installe-le, puis relance Nel Code :'), h('div', { class: 'url' }, st.installUrl)],
+    [{ label: 'Fermer', value: null }, { label: 'Ouvrir la page d\'installation', value: 'open', primary: true }]).then((v) => v && invoke('open_claude_install'));
+  }
+  if (!st.hasKey) {
+    toast('Claude Agent : ajoute d\'abord ta clé API Anthropic (Réglages → Claude Agent).', 'warning', 8000);
+    return openSettings();
+  }
+  closeEdit();
+  S.current = { ...newSession(), claudeAgent: {} };
+  S.lastSpeed = '';
+  renderAll();
+  $('input').focus();
+}
+
+// La section Claude Agent des réglages : rend { el, mode, tools } (enregistrés avec les autres réglages ; la clé, tout de suite).
+export async function claudeSection() {
+  const st = S.claudeStatus = await invoke('claude_agent_status');
+  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: st.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…' });
+  const saveKey = async (value) => {
+    try {
+      await invoke('claude_agent_save_key', { key: value });
+      key.value = '';
+      S.claudeStatus = await invoke('claude_agent_status');
+      key.placeholder = S.claudeStatus.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…';
+      toast(value ? 'Clé API enregistrée dans le Gestionnaire d\'identification.' : 'Clé API retirée.', 'success', 3000);
+    } catch (e) { toast(errText(e), 'error'); }
+  };
+  const mode = h('select', { class: 'text-input mode' }, h('option', { value: 'default' }, 'Rien d\'automatique (par défaut) : tout ce qui demande un accord est refusé'),
+    h('option', { value: 'acceptEdits' }, 'Accepter les modifications de fichiers (acceptEdits)'));
+  mode.value = st.permissionMode;
+  const tools = h('textarea', { class: 'text-input claude-tools', rows: 2, spellcheck: 'false', placeholder: 'Read\nBash(dotnet build *)' });
+  tools.value = (st.allowedTools ?? []).join('\n');
+  const el = h('div', { class: 'field claude-field' }, h('div', { class: 'row' }, h('span', {}, 'Claude Agent')),
+    h('div', { class: 'hint cli' }, st.cli ? `Outil « claude » : ${st.cli}` : [`Outil « claude » d'Anthropic introuvable : `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_claude_install'); } }, 'l\'installer')]),
+    h('div', { class: 'row-btns' }, key, h('button', { class: 'btn', onclick: () => saveKey(key.value) }, 'Ranger la clé'),
+      st.hasKey ? h('button', { class: 'btn', onclick: () => saveKey('') }, 'Retirer la clé') : null),
+    h('div', { class: 'hint' }, 'Clé API Anthropic (Console Anthropic), rangée dans le Gestionnaire d\'identification de Windows et passée à l\'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.'),
+    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Mode de permission')), mode),
+    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Outils autorisés sans accord (--allowedTools)')), tools,
+      h('div', { class: 'hint' }, 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.')));
+  return { el, mode, tools };
+}
+
+export async function refreshNelcode() {
+  const chip = $('nelcode-chip'), s = S.current, ask = ++UI.nelcodeAsk;
+  if (!s?.agent || !s.workingDirectory) { chip.hidden = true; return; }
+  let info;
+  try { info = await invoke('nelcode_md_info', { dir: s.workingDirectory }); } catch { chip.hidden = true; return; }
+  if (ask !== UI.nelcodeAsk) return;   // une réponse plus récente est déjà là
+  chip.hidden = false;
+  chip.classList.toggle('on', info.exists);
+  chip.dataset.exists = info.exists ? '1' : '';
+  chip.replaceChildren(icon(info.exists ? 'file-text' : 'plus'), h('span', {}, 'NELCODE.md'));
+  chip.title = info.exists
+    ? `NELCODE.md pris en compte : ajouté au message système de chaque demande (${info.bytes.toLocaleString('fr-CH')} octets${info.truncated ? `, coupé aux ${info.max.toLocaleString('fr-CH')} premiers` : ''}).`
+    : 'Créer un NELCODE.md modèle à la racine du dossier de travail : ses instructions seront ajoutées à chaque demande Agent.';
+}
+
+export async function nelcodeChip() {
+  const s = S.current;
+  if ($('nelcode-chip').dataset.exists) return toast($('nelcode-chip').title, '', 6000);
+  try {
+    await invoke('create_nelcode_md', { dir: s.workingDirectory });
+    toast('NELCODE.md créé : complète-le, il sera ajouté à chaque demande Agent.', 'success', 6000);
+  } catch (e) { toast(errText(e), 'error'); }
+  refreshNelcode();
+}
+
+export function toggleAgent() {
+  const s = S.current;
+  if (s.claudeAgent) return toast('Une conversation Claude Agent a déjà ses propres outils.', 'warning');
+  if (!s.agent && !S.model.remote) return toast(AGENT_LOCAL, 'warning', 8000);
+  if (s.compare) return toast('Le mode Agent ne marche pas en conversation comparée.', 'warning');
+  s.agent = !s.agent;
+  if (!s.agent) delete s.agent;
+  if (s.messages.length) saveSession(s);
+  renderHeader();
+  toast(s.agent ? `Mode Agent : ${S.model.name} peut lire les fichiers de « ${s.workingDirectory || '(aucun dossier)'} », et les modifier avec ton accord.` : 'Mode Agent désactivé.', '', 4000);
+}
+
+export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks' };
+
+export const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur', running: 'en cours', stopped: 'arrêtée' };
+
+export function diffEl(lines) {
+  return h('div', { class: 'diff' }, lines.map(([c, l]) => h('div', { class: { '+': 'add', '-': 'del', '…': 'skip' }[c] ?? 'ctx' }, h('span', { class: 'sign' }, c === '…' ? '' : c), l)));
+}
+
+// Les étapes de l'agent. `m` : le message fini (Annuler y met à jour les étapes) ; null pendant la réponse.
+export function stepsEl(steps, m) {
+  const box = h('div', { class: 'steps' });
+  for (const st of steps) {
+    const write = st.kind === 'write' || st.kind === 'edit';
+    const status = STEP_STATUS[st.status] ? h('span', { class: 'status ' + st.status }, STEP_STATUS[st.status]) : null;
+    const body = h('div', { class: 'step-body' });
+    if (st.diff) body.append(diffEl(st.diff));
+    else if (st.detail) body.append(h('pre', { class: 'detail' }, st.detail));
+    if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
+    const decide = (decision) => invoke('agent_decide', { request: st.request, step: st.id, decision }).catch((e) => toast(errText(e), 'error'));
+    // Un fichier protégé : une confirmation à chaque fois (jamais « Accepter tout »).
+    if (st.status === 'pending' && !m && st.protected) body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn danger', onclick: () => decide('accept') }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : 'Autoriser la lecture'),
+      h('button', { class: 'btn primary', onclick: () => decide('reject') }, 'Refuser')));
+    // Une commande : Lancer ou Refuser, à chaque fois (jamais « Accepter tout »).
+    if (st.status === 'pending' && !m && st.kind === 'command') body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('terminal'), 'Lancer'),
+      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser')));
+    if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command') body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Accepter'),
+      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser'),
+      h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));
+    if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
+    box.append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
+      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title), status), body));
+  }
+  const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');
+  if (undoable?.length) box.append(h('div', { class: 'row-btns undo-all' },
+    h('button', { class: 'btn', onclick: () => undoSteps(m, undoable.map((st) => st.id), () => invoke('agent_undo_all', { request: m.agent.request })) }, icon('undo-2'), 'Annuler toute la demande')));
+  return box;
+}
+
+// Annule des écritures (le Rust refuse si un fichier a changé depuis), puis les marque « annulée » dans la conversation.
+export async function undoSteps(m, ids, run) {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  try {
+    const done = await run();
+    for (const st of m.agent.steps) if (done.includes(st.id)) st.status = 'undone';
+    toast(done.length > 1 ? `${done.length} modifications annulées.` : 'Modification annulée.', 'success');
+  } catch (e) { toast('Annulation impossible : ' + errText(e), 'error', 8000); }
+  await saveSession(S.current);
+  renderMessages();
+  refreshFiles(true);
+}
+
+export const PLAN_ICONS = { todo: 'circle', in_progress: 'circle-dot', done: 'check' };
+
+export const PLAN_STATUS = { todo: 'à faire', in_progress: 'en cours', done: 'fait' };
+
+// Le panneau Plan, à droite de la conversation : le plan en cours, sinon le dernier gardé avec la conversation.
+export function renderPlan() {
+  const s = S.current, box = $('plan');
+  const tasks = (S.gen?.session === s && S.gen.plan) || s?.plan?.tasks;
+  box.hidden = !tasks?.length;
+  if (box.hidden) return;
+  const done = tasks.filter((t) => t.status === 'done').length;
+  box.classList.toggle('collapsed', UI.planCollapsed);
+  box.replaceChildren(
+    h('button', { class: 'plan-head', title: UI.planCollapsed ? 'Déplier le plan' : 'Replier le plan', 'aria-expanded': String(!UI.planCollapsed), onclick: () => { UI.planCollapsed = !UI.planCollapsed; renderPlan(); } },
+      icon('list-checks'), h('span', { class: 'plan-title' }, 'Plan'), h('span', { class: 'plan-count' }, `${done}/${tasks.length}`), icon(UI.planCollapsed ? 'chevron-left' : 'chevron-right')),
+    UI.planCollapsed ? '' : h('ol', { class: 'plan-tasks' }, tasks.map((t) => h('li', { 'data-status': t.status, title: PLAN_STATUS[t.status] }, icon(PLAN_ICONS[t.status] ?? 'circle'), h('span', {}, t.title)))));
+}

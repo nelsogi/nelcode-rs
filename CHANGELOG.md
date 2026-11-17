@@ -38,6 +38,22 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   défaut, ou acceptEdits) et outils autorisés (`--allowedTools`) dans les réglages ; Stop envoie Ctrl+C (SIGINT) puis
   attend la fin propre. Tests avec un faux exécutable qui rejoue des flux enregistrés.
 
+- **Interface** :
+  - **projets** : sélecteur des projets récents en haut de la barre latérale, conversations du projet affiché, ou toutes
+    regroupées par projet ; une nouvelle conversation se range dans le projet affiché ;
+  - **panneau Fichiers** repliable à droite (Ctrl+Maj+E) : arborescence du dossier de travail, badges A / M sur les
+    fichiers créés ou modifiés par l'agent, aperçu colorié (fichier protégé sur confirmation), diff de la session ;
+  - **assistant du premier lancement** en 3 étapes (bienvenue et couleur, modèle, dossier de travail) ;
+  - **notifications discrètes** (en bas à droite, quatre au plus, croix, durée selon le genre), **aide des raccourcis**
+    avec « ? », **taille du texte** réglable (80 à 150 %, Ctrl+= / Ctrl+- / Ctrl+0) ;
+  - tests de l'interface : `e2e/ux.test.mjs`.
+
+### Modifié
+
+- `app.js` (1870 lignes) est découpé en modules ES (`nel-desktop/ui/js/` : utilitaires, état, conversation, agent,
+  réglages, catalogue, fournisseurs, palette, et les nouveaux projets, fichiers, premier lancement), sans changer le
+  comportement : tous les tests de l'interface passent toujours.
+
 ### Corrigé
 
 - Les tests de l'interface n'utilisent plus les vraies clés du Gestionnaire d'identification (espace à part pour les

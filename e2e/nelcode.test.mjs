@@ -235,7 +235,8 @@ test('blocs de code : coloration (C#, Rust, Python, JS, HTML, CSS, JSON) et Copi
   await waitFor(`window.__copied === ${JSON.stringify(samples.rust[0])}`, 5_000, 'code copié');
   assert.match(await ev(`${msg}.querySelectorAll('.code-block .copy')[1].textContent`), /Copié/);
   // Rendu sans innerHTML ; la CSP de la fenêtre n'a pas changé.
-  assert.ok(!/\.innerHTML\s*=|insertAdjacentHTML|outerHTML\s*=/.test(fs.readFileSync(path.join(ROOT, 'nel-desktop', 'ui', 'app.js'), 'utf8')));
+  const sources = fs.readdirSync(path.join(ROOT, 'nel-desktop', 'ui', 'js')).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(ROOT, 'nel-desktop', 'ui', 'js', f), 'utf8'));
+  assert.ok(sources.length >= 9 && sources.every((code) => !/\.innerHTML\s*=|insertAdjacentHTML|outerHTML\s*=/.test(code)), 'aucun module ne passe par innerHTML');
   const conf = JSON.parse(fs.readFileSync(path.join(ROOT, 'nel-desktop', 'tauri.conf.json'), 'utf8'));
   assert.equal(conf.app.security.csp, "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost");
   await ev(`S.current.messages.splice(-2); renderMessages(); true`);

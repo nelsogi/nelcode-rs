@@ -415,6 +415,21 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["claudeAllowedTools"] = tools.into();
+    // Projets : les dossiers de travail récents (12 au plus, sans doublon à la casse près), le projet affiché.
+    let mut recent: Vec<String> = Vec::new();
+    for p in s["recentProjects"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|p| p.trim().trim_end_matches(['\\', '/']).to_string()) {
+        if !p.is_empty() && !recent.iter().any(|r| r.eq_ignore_ascii_case(&p)) && recent.len() < 12 {
+            recent.push(p);
+        }
+    }
+    s["recentProjects"] = recent.into();
+    if !s["currentProject"].is_string() {
+        s["currentProject"] = "".into();
+    }
+    // Interface : taille du texte (80 à 150 %, par pas de 10), panneau Fichiers ouvert, premier lancement fait.
+    s["textSize"] = ((num(&s["textSize"], 100.0).clamp(80.0, 150.0) / 10.0).round() as u64 * 10).into();
+    s["filesPanel"] = s["filesPanel"].as_bool().unwrap_or(false).into();
+    s["onboarded"] = s["onboarded"].as_bool().unwrap_or(false).into();
     s
 }
 

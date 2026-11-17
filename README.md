@@ -63,6 +63,27 @@ paramètres, le contexte, le format de chat et la licence déclarée dans le fic
 Le tokenizer est reconstruit depuis le fichier (BPE de Qwen2 ou de Llama 3) ; pour un autre, pose son `tokenizer.json`
 à côté du `.gguf`.
 
+### Premier lancement
+
+Au premier lancement (ni modèle, ni fournisseur, ni conversation), un assistant en 3 étapes présente Nel Code et sa
+couleur, propose d'où vient le modèle (catalogue, fichier `.nelmodel` / `.gguf`, serveur distant ou Claude Agent) et
+demande le dossier de travail ; « Commencer » ouvre le choix fait, « Passer » le ferme pour de bon. Il se rouvre depuis
+la palette Ctrl+K (« Assistant de démarrage »).
+
+### Projets et panneau Fichiers
+
+Un **projet** est un dossier de travail. Le sélecteur en haut de la barre latérale montre le projet affiché, les projets
+récents (12 au plus) et **Ouvrir un dossier…** : avec un projet choisi, la liste ne montre que ses conversations, et une
+nouvelle conversation s'y range. **Tous les projets** montre toutes les conversations, regroupées sous le nom de leur
+projet quand il y en a plusieurs.
+
+Le **panneau Fichiers** (bouton à droite de l'en-tête, Ctrl+Maj+E) montre l'arborescence du dossier de travail (sans
+dossiers cachés ni de compilation), repliable dossier par dossier. Un clic sur un fichier l'affiche, colorié ; un
+fichier protégé (`.env`, `*.pem`…) n'est affiché qu'après confirmation. Les fichiers créés (**A**) ou modifiés (**M**) par
+l'agent dans la conversation portent un badge, et leurs dossiers un point ; **Diff de la session** montre tout ce qui a
+changé depuis avant la première modification de l'agent (pour Claude Agent : les diffs de ses étapes). Le panneau est en
+lecture seule.
+
 ### Discuter
 
 Écris un message et appuie sur Entrée. La réponse s'affiche au fil des tokens ; **Stop** (ou Échap) l'arrête.
@@ -253,6 +274,12 @@ des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haut
 | `Ctrl+I` | Importer un modèle |
 | `Ctrl+,` | Réglages |
 | `F2` | Renommer la conversation |
+| `Ctrl+Maj+E` | Panneau Fichiers |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Taille du texte (80 à 150 %, aussi dans les Réglages) |
+| `?` | Aide des raccourcis (hors d'un champ, ou dans la saisie vide) |
+
+Les notifications sont discrètes : en bas à droite, quatre au plus, fermées toutes seules (un succès après 3 s, une
+erreur après 9 s) ou par leur croix.
 
 ![La palette Ctrl+K](docs/palette.png)
 
@@ -411,6 +438,8 @@ sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Acc
 annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart, fichiers protégés (lecture et
 recherche, motifs des réglages), noms réservés de Windows, NELCODE.md, plan et commandes (shells refusés, sortie en
 direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants), et le fournisseur Claude.
+`e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
+petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et la taille du texte.
 `e2e/claude.test.mjs` couvre Claude Agent avec un faux exécutable `claude` (`e2e/fake-claude/main.rs`, compilé par le
 test avec `rustc`) qui rejoue des flux stream-json enregistrés (`e2e/fake-claude/*.jsonl`). Les clés des tests sont
 rangées à part dans le Gestionnaire d'identification : les tests ne touchent jamais aux vraies clés. Les fichiers de test se lancent
@@ -456,9 +485,23 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | Dossier | Contenu |
 |---|---|
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, et `js/` : modules ES sans framework, voir ci-dessous) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
+
+L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `index.html` (`js/main.js`) :
+
+| Module | Contenu |
+|---|---|
+| `util.js` | Appels au Rust, éléments du DOM, notifications, fenêtres et menus, coloration du code |
+| `state.js` | L'état partagé : `S` (conversations, modèles, réponse en cours) et `UI` (petits états de l'interface) |
+| `conversation.js` | Conversations, modèles, fichiers `@`, génération, réflexion, transparence, comparaison, affichage, saisie |
+| `agent.js` | Mode Agent et Claude Agent : étapes, plan, NELCODE.md |
+| `settings.js` | Réglages, mises à jour, serveur local, calcul (GPU, test de vitesse), taille du texte |
+| `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |
+| `palette.js` | Commandes `/`, palette Ctrl+K, aide et raccourcis |
+| `projects.js` · `files.js` · `onboarding.js` | Projets · panneau Fichiers · assistant du premier lancement |
+| `main.js` | Écouteurs (Rust, clavier, boutons) et démarrage |
 
 Une release se fait en poussant un tag `v<version>` (la version de `nel-desktop/Cargo.toml`) : GitHub Actions lance les tests,
 construit l'installateur et crée une release **brouillon** (voir `.github/workflows/release.yml`).

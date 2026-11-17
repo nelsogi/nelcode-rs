@@ -38,7 +38,8 @@ export async function launch({ settings = {}, files = {}, env = {} } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nelcode-e2e-'));
   const port = 9400 + Math.floor(Math.random() * 500);
   // Pas de recherche de mise à jour pendant les tests, réponses courtes et presque déterministes.
-  fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ autoUpdate: false, temperature: 0.1, maxReplyTokens: 32, ...settings }));
+  // Premier lancement déjà fait (sauf `onboarded: false` : les tests de l'assistant).
+  fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ autoUpdate: false, temperature: 0.1, maxReplyTokens: 32, onboarded: true, ...settings }));
   for (const [file, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(home, file)), { recursive: true });
     fs.writeFileSync(path.join(home, file), content);
