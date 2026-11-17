@@ -113,14 +113,21 @@ export function diffEl(lines) {
 }
 
 // Les étapes de l'agent. `m` : le message fini (Annuler y met à jour les étapes) ; null pendant la réponse.
+// Claude Agent : une étape lancée par un sous-agent a `parent` (l'étape « Sous-agent : … ») et s'affiche dans son corps.
 export function stepsEl(steps, m) {
   const box = h('div', { class: 'steps' });
+  const subs = new Map();   // id d'une étape → le conteneur de ses étapes de sous-agent
+  const count = {};
+  for (const st of steps) if (st.parent) count[st.parent] = (count[st.parent] ?? 0) + 1;
   for (const st of steps) {
     const write = st.kind === 'write' || st.kind === 'edit';
     const status = STEP_STATUS[st.status] ? h('span', { class: 'status ' + st.status }, STEP_STATUS[st.status]) : null;
     const body = h('div', { class: 'step-body' });
+    const n = count[st.id];
+    if (n) { subs.set(st.id, h('div', { class: 'substeps' })); body.append(subs.get(st.id)); }
+    // La raison d'un refus ou d'une erreur (Claude Agent) accompagne le diff.
+    if (st.detail && (!st.diff || st.status === 'rejected' || st.status === 'error')) body.append(h('pre', { class: 'detail' }, st.detail));
     if (st.diff) body.append(diffEl(st.diff));
-    else if (st.detail) body.append(h('pre', { class: 'detail' }, st.detail));
     if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
     const decide = (decision) => invoke('agent_decide', { request: st.request, step: st.id, decision }).catch((e) => toast(errText(e), 'error'));
     // Un fichier protégé : une confirmation à chaque fois (jamais « Accepter tout »).
@@ -137,8 +144,9 @@ export function stepsEl(steps, m) {
       h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));
     if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
-    box.append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
-      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title), status), body));
+    (subs.get(st.parent) ?? box).append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
+      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title),
+        n ? h('span', { class: 'count' }, `${n} étape${n > 1 ? 's' : ''}`) : null, status), body));
   }
   const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');
   if (undoable?.length) box.append(h('div', { class: 'row-btns undo-all' },

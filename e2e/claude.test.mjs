@@ -141,6 +141,9 @@ test('outil refusé par le mode de permission : étape « refusée »', async ()
   const m = await A.ev(`S.current.messages.at(-1)`);
   assert.deepEqual(m.agent.steps.map((s) => [s.kind, s.status]), [['edit', 'rejected']]);
   assert.match(m.agent.steps[0].detail, /Non autorisé par le mode de permission/);
+  // La raison du refus s'affiche avec le diff.
+  assert.match(await A.ev(`${msg}.querySelector('.step.edit .step-body .detail').textContent`), /Non autorisé par le mode de permission/);
+  assert.ok(await A.ev(`!!${msg}.querySelector('.step.edit .step-body .diff')`));
   assert.equal(m.content, 'Je n\'ai pas la permission de modifier ce fichier.');
 });
 
@@ -166,4 +169,62 @@ test('Stop : Ctrl+C (SIGINT) puis fin propre, le début de la réponse est gard�
   const m = await A.ev(`S.current.messages.at(-1)`);
   assert.equal(m.content, 'Je commence un long travail');
   assert.match(await A.ev(`S.lastSpeed`), /arrêtée/);
+});
+
+// Les étapes de premier niveau du dernier message : [titre, compteur, titres des étapes du sous-agent].
+const groups = () => A.ev(`[...${msg}.querySelectorAll(':scope > .steps > .step')].map((d) => [d.querySelector(':scope > summary .title').textContent,
+  d.querySelector(':scope > summary .count')?.textContent ?? '', [...d.querySelectorAll(':scope > .step-body > .substeps > .step')].map((c) => c.querySelector(':scope > summary .title').textContent)])`);
+
+test('sous-agents (rendu seul) : étapes avec parent dans l\'étape parente, sur plusieurs niveaux ; parent introuvable : premier niveau', async () => {
+  await newClaude();
+  const steps = [
+    { id: 's1', kind: 'note', title: 'Sous-agent : A', status: 'done', detail: 'rapport de A' },
+    { id: 's2', kind: 'read', title: 'Lecture de a.txt', status: 'done', parent: 's1' },
+    { id: 's3', kind: 'note', title: 'Sous-agent : B', status: 'running', parent: 's1' },
+    { id: 's4', kind: 'search', title: 'Recherche de "x"', status: 'done', parent: 's3' },
+    { id: 's5', kind: 'note', title: 'Message du sous-agent', detail: 'texte de A', status: 'done', parent: 's1' },
+    { id: 's6', kind: 'read', title: 'Lecture orpheline', status: 'done', parent: 's99' },
+    { id: 's7', kind: 'note', title: 'Fini.', status: 'done' },
+  ];
+  await A.ev(`S.current.messages.push({ role: 'user', content: 'q' }, { role: 'assistant', content: 'réponse', agent: { request: 'rtest', steps: ${JSON.stringify(steps)} } }); renderMessages(); true`);
+  assert.deepEqual(await groups(), [
+    ['Sous-agent : A', '3 étapes', ['Lecture de a.txt', 'Sous-agent : B', 'Message du sous-agent']],
+    ['Lecture orpheline', '', []],
+    ['Fini.', '', []],
+  ]);
+  assert.equal(await A.ev(`${msg}.querySelector('[data-step="s3"] > summary .count').textContent`), '1 étape');
+  assert.ok(await A.ev(`!!${msg}.querySelector('[data-step="s3"] > .step-body > .substeps > [data-step="s4"]')`));
+  assert.match(await A.ev(`${msg}.querySelector('[data-step="s5"]').textContent`), /texte de A/);
+  // Pendant la réponse : les étapes qui tournent sont ouvertes, y compris l'étape parente.
+  const live = steps.map((s) => (s.id === 's1' ? { ...s, status: 'running' } : s));
+  assert.deepEqual(await A.ev(`import('/js/agent.js').then((a) => [...a.stepsEl(${JSON.stringify(live)}, null).querySelectorAll('details[open]')].map((d) => d.dataset.step))`), ['s1', 's3']);
+});
+
+test('sous-agents : étapes regroupées dans l\'étape Sous-agent, texte du sous-agent hors de la réponse, coût ; gardé au rechargement', async () => {
+  await newClaude();
+  await A.ev(`T.submit('sousagent : explore le projet')`);
+  // Pendant la réponse : l'étape Sous-agent est ouverte et reçoit ses étapes.
+  await A.waitFor(`S.gen && document.querySelector('#messages .steps > details.step[open] > .step-body > .substeps > .step')`, 15_000, 'étapes du sous-agent en direct');
+  await A.waitFor('!S.gen', 30_000, 'fin');
+  const m = await A.ev(`S.current.messages.at(-1)`);
+  assert.equal(m.content, 'Le sous-agent a trouvé une seule classe, Program.');
+  const task = m.agent.steps.find((s) => s.title === 'Sous-agent : Explorer le projet');
+  assert.deepEqual(m.agent.steps.filter((s) => s.parent === task.id).map((s) => s.title), ['Lecture de src/Program.cs', 'Recherche de "class"', 'Message du sous-agent']);
+  const check = async () => {
+    assert.deepEqual(await groups(), [['Sous-agent : Explorer le projet', '3 étapes', ['Lecture de src/Program.cs', 'Recherche de "class"', 'Message du sous-agent']]]);
+    assert.match(await A.ev(`${msg}.querySelector('.substeps').textContent`), /Le projet ne contient qu'une classe : Program\./);
+    const body = await A.ev(`${msg}.querySelector(':scope > .body').textContent`);
+    assert.match(body, /Le sous-agent a trouvé une seule classe/);
+    assert.doesNotMatch(body, /ne contient qu'une classe/);
+    assert.equal(await A.ev(`${msg}.querySelector('.claude-cost').textContent`), '0,0789 $ · 23,5 s · 3 tours');
+  };
+  await check();
+  // Rouverte : le même regroupement.
+  const id = await A.ev(`S.current.id`);
+  assert.ok(A.readJson(path.join('sessions', id + '.json')).messages.at(-1).agent.steps.some((s) => s.parent === task.id), 'parent enregistré');
+  await A.ev(`T.key('n', { ctrlKey: true }, document)`);
+  await A.waitFor(`S.current.id !== ${JSON.stringify(id)}`, 5_000, 'nouvelle conversation');
+  await A.ev(`openSession(S.sessions.find((s) => s.id === ${JSON.stringify(id)})); true`);
+  await A.waitFor(`S.current.id === ${JSON.stringify(id)} && ${msg}?.querySelector('.substeps')`, 5_000, 'conversation rouverte');
+  await check();
 });

@@ -448,6 +448,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 :root[data-theme="light"] .step.command .detail { background: #1f1e1c; color: #ebe8e2; }
 .step .status.running { color: var(--accent-text); border-color: var(--accent-border); }
 .step .status.stopped { color: var(--warning); border-color: var(--warning); }
+.step summary .count { font-size: 11.5px; color: var(--faint); }
+.substeps { display: flex; flex-direction: column; gap: 3px; margin-left: 4px; padding-left: 10px; border-left: 2px solid var(--border); }
 #nelcode-chip.on { color: var(--success); border-color: var(--success); }
 .plan { width: 260px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--sidebar); display: flex; flex-direction: column; overflow-y: auto; }
 .plan.collapsed { width: 44px; }
