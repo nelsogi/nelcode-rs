@@ -105,6 +105,14 @@ pub fn args(session: Option<&str>, mode: &str, allowed: &[String]) -> Vec<String
     a
 }
 
+/// Les variables d'environnement transmises à `claude` : ni secret (KEY, TOKEN, SECRET : CLAUDE_CODE_OAUTH_TOKEN,
+/// ANTHROPIC_AUTH_TOKEN…), ni ANTHROPIC_* (ANTHROPIC_BASE_URL enverrait la clé ailleurs), ni CLAUDE_CODE_USE_*
+/// (Bedrock, Vertex… : une autre authentification que la clé API).
+fn passed_var(name: &str) -> bool {
+    let n = name.to_uppercase();
+    !hidden_var(&n) && !n.starts_with("ANTHROPIC_") && !n.starts_with("CLAUDE_CODE_USE_")
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Stop : Ctrl+C
 
@@ -172,6 +180,8 @@ pub struct Translator<'a> {
     pub request: String,
     pub steps: Vec<Value>,
     by_tool: HashMap<String, String>,
+    /// L'étape Task/Agent du sous-agent qui a écrit la ligne en cours (champ « parent » des étapes créées).
+    parent: Option<String>,
     /// Le texte du tour en cours (depuis la dernière étape).
     pub text: String,
     saw_delta: bool,
@@ -184,7 +194,7 @@ pub struct Translator<'a> {
 
 impl<'a> Translator<'a> {
     pub fn new(app: Option<&'a AppHandle>, root: &Path, request: String) -> Self {
-        Self { app, root: root.to_path_buf(), request, steps: Vec::new(), by_tool: HashMap::new(), text: String::new(), saw_delta: false, reasoning: String::new(), think: (None, None), plan: Value::Null, session_id: None, result: None }
+        Self { app, root: root.to_path_buf(), request, steps: Vec::new(), by_tool: HashMap::new(), parent: None, text: String::new(), saw_delta: false, reasoning: String::new(), think: (None, None), plan: Value::Null, session_id: None, result: None }
     }
 
     fn emit(&self, event: &str, payload: Value) {
@@ -198,10 +208,10 @@ impl<'a> Translator<'a> {
         let path = Path::new(p);
         let root = self.root.to_string_lossy().trim_start_matches(r"\\?\").to_lowercase().replace('\\', "/");
         let full = path.to_string_lossy().replace('\\', "/");
-        if path.is_absolute() && full.to_lowercase().starts_with(&root) {
-            full[root.len()..].trim_start_matches('/').to_string()
-        } else {
-            full
+        // Le dossier lui-même ou un chemin dedans, pas un voisin au nom plus long (C:/projet-bis pour C:/projet).
+        match full.get(root.len()..) {
+            Some(rest) if path.is_absolute() && full.to_lowercase().starts_with(&root) && (root.ends_with('/') || rest.is_empty() || rest.starts_with('/')) => rest.trim_start_matches('/').to_string(),
+            _ => full,
         }
     }
 
@@ -209,6 +219,9 @@ impl<'a> Translator<'a> {
         let id = format!("s{}", self.steps.len() + 1);
         s["id"] = id.clone().into();
         s["request"] = self.request.clone().into();
+        if let Some(p) = &self.parent {
+            s["parent"] = p.clone().into();
+        }
         self.emit("agent-step", s.clone());
         self.steps.push(s);
         id
@@ -233,14 +246,17 @@ impl<'a> Translator<'a> {
     }
 
     /// Un outil demandé par Claude : une étape (sauf TodoWrite, qui devient le plan).
-    fn tool_use(&mut self, b: &Value) {
-        // Le texte d'avant l'outil devient une étape ; la réponse finale repart de zéro.
-        if !self.text.trim().is_empty() {
-            let t = std::mem::take(&mut self.text);
-            self.step(json!({ "kind": "note", "title": short(&t, 90), "detail": t.trim(), "status": "done" }));
-            self.emit("agent-clear", Value::Null);
+    fn tool_use(&mut self, b: &Value, sub: bool) {
+        // Le texte d'avant l'outil devient une étape ; la réponse finale repart de zéro (pas pour un outil de
+        // sous-agent : le texte en cours est celui de l'agent principal).
+        if !sub {
+            if !self.text.trim().is_empty() {
+                let t = std::mem::take(&mut self.text);
+                self.step(json!({ "kind": "note", "title": short(&t, 90), "detail": t.trim(), "status": "done" }));
+                self.emit("agent-clear", Value::Null);
+            }
+            self.text.clear();
         }
-        self.text.clear();
         let (name, input, id) = (b["name"].as_str().unwrap_or("?"), &b["input"], b["id"].as_str().unwrap_or_default().to_string());
         let path = input["file_path"].as_str().or(input["notebook_path"].as_str()).or(input["path"].as_str()).map(|p| self.rel(p));
         let p = path.clone().unwrap_or_default();
@@ -315,8 +331,10 @@ impl<'a> Translator<'a> {
         if let Some(s) = v["session_id"].as_str() {
             self.session_id = Some(s.to_string());
         }
-        // Les messages d'un sous-agent : seulement ses outils, pas son texte.
+        // Les messages d'un sous-agent : ses outils et son texte deviennent des étapes rattachées à l'étape du
+        // Task/Agent qui l'a lancé (si on la connaît) ; son texte ne va jamais dans la réponse.
         let sub = !v["parent_tool_use_id"].is_null();
+        self.parent = v["parent_tool_use_id"].as_str().and_then(|x| self.by_tool.get(x)).cloned();
         match v["type"].as_str().unwrap_or_default() {
             "stream_event" if !sub => {
                 let d = &v["event"]["delta"];
@@ -339,13 +357,22 @@ impl<'a> Translator<'a> {
             "assistant" => {
                 for b in v["message"]["content"].as_array().into_iter().flatten() {
                     match b["type"].as_str() {
-                        Some("tool_use") => self.tool_use(b),
+                        Some("tool_use") => self.tool_use(b, sub),
+                        Some("text") if sub => {
+                            let t = b["text"].as_str().unwrap_or_default().trim();
+                            if !t.is_empty() {
+                                self.step(json!({ "kind": "note", "title": "Message du sous-agent", "detail": clip(t), "status": "done" }));
+                            }
+                        }
                         // Sans --include-partial-messages (ou si le flux n'a pas donné le texte) : le texte entier.
-                        Some("text") if !sub && !self.saw_delta => self.add_text(b["text"].as_str().unwrap_or_default()),
+                        Some("text") if !self.saw_delta => self.add_text(b["text"].as_str().unwrap_or_default()),
                         _ => {}
                     }
                 }
-                self.saw_delta = false;
+                // Le message d'un sous-agent ne concerne pas le flux partiel de l'agent principal.
+                if !sub {
+                    self.saw_delta = false;
+                }
             }
             "user" => {
                 for b in v["message"]["content"].as_array().into_iter().flatten() {
@@ -400,7 +427,7 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
     let resumed = session.is_some();
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_SUSPENDED: u32 = 0x0000_0004;
-    let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().filter(|(k, _)| !hidden_var(&k.to_string_lossy())).collect();
+    let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().filter(|(k, _)| passed_var(&k.to_string_lossy())).collect();
     let mut cmd = Command::new(&cli);
     cmd.args(args(session.as_deref(), &mode, &allowed))
         .current_dir(&root)
@@ -517,6 +544,10 @@ mod tests {
         assert_eq!(a[6..], ["acceptEdits", "--allowedTools", "Read,Bash(git log *)", "--resume", "abc-123"]);
         assert_eq!(args(None, "bypassPermissions", &[])[6], "default", "seuls default et acceptEdits");
         assert!(!args(Some(""), "default", &[]).contains(&"--resume".to_string()));
+        for v in ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "claude_code_use_vertex"] {
+            assert!(!passed_var(v), "{v}");
+        }
+        assert!(passed_var("PATH") && passed_var("USERPROFILE"));
     }
 
     #[test]
@@ -544,5 +575,41 @@ mod tests {
         assert_eq!(t.plan, json!([{ "title": "Lire", "status": "done" }, { "title": "Corriger", "status": "in_progress" }]));
         assert_eq!(t.text, "Fini.", "le texte sans flux partiel est repris du message entier");
         assert_eq!(t.result.as_ref().unwrap()["total_cost_usd"], 0.0123);
+    }
+
+    #[test]
+    fn sous_agents() {
+        let mut t = Translator::new(None, &std::env::temp_dir(), "r1".into());
+        for line in [
+            json!({ "type": "stream_event", "event": { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "Je délègue." } }, "parent_tool_use_id": null }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "Je délègue." }] }, "parent_tool_use_id": null }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "task1", "name": "Task", "input": { "description": "Explorer", "prompt": "…" } }] }, "parent_tool_use_id": null }),
+            json!({ "type": "stream_event", "event": { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "ignoré" } }, "parent_tool_use_id": "task1" }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "a1", "name": "Glob", "input": { "pattern": "*.rs" } }] }, "parent_tool_use_id": "task1" }),
+            json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "a1", "content": "main.rs" }] }, "parent_tool_use_id": "task1" }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "a2", "name": "Read", "input": { "file_path": "main.rs" } }] }, "parent_tool_use_id": "task1" }),
+            json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "a2", "content": "fn main() {}" }] }, "parent_tool_use_id": "task1" }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "  Un seul fichier.  " }, { "type": "text", "text": " " }] }, "parent_tool_use_id": "task1" }),
+            json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "task1", "content": [{ "type": "text", "text": "Un seul fichier." }] }] }, "parent_tool_use_id": null }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "x1", "name": "Grep", "input": { "pattern": "x" } }] }, "parent_tool_use_id": "inconnu" }),
+            json!({ "type": "stream_event", "event": { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "Fini." } }, "parent_tool_use_id": null }),
+            json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "Fini." }] }, "parent_tool_use_id": null }),
+        ] {
+            t.line(&line);
+        }
+        let s: Vec<(&str, &str, &str, Option<&str>)> = t.steps.iter().map(|s| (s["id"].as_str().unwrap(), s["title"].as_str().unwrap(), s["status"].as_str().unwrap(), s["parent"].as_str())).collect();
+        assert_eq!(s, [
+            ("s1", "Je délègue.", "done", None),
+            ("s2", "Sous-agent : Explorer", "done", None),
+            ("s3", "Recherche de fichiers *.rs", "done", Some("s2")),
+            ("s4", "Lecture de main.rs", "done", Some("s2")),
+            ("s5", "Message du sous-agent", "done", Some("s2")),
+            ("s6", "Recherche de \"x\"", "running", None),
+        ]);
+        assert!(t.steps[5].get("parent").is_none(), "parent_tool_use_id inconnu : pas de champ parent");
+        assert_eq!(t.steps[4]["detail"], "Un seul fichier.");
+        assert_eq!(t.steps[4]["kind"], "note");
+        assert_eq!(t.steps[3]["detail"], "fn main() {}");
+        assert_eq!(t.text, "Fini.", "ni le texte ni le flux du sous-agent dans la réponse");
     }
 }
