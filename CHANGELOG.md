@@ -2,6 +2,50 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.8.0] - 2026-11-16
+
+### Ajouté
+
+- **Nel Code** : mode **Agent**, pour les modèles distants qui gèrent les outils (tool calling OpenAI : llama.cpp
+  `--jinja`, Ollama avec Qwen3…) ; les `.nelmodel` et les GGUF locaux n'y ont pas accès :
+  - outils `list_files`, `read_file`, `search`, `write_file`, `edit_file`, limités au dossier de travail (chemins
+    normalisés ; `..`, chemins absolus, liens et jonctions qui sortent du dossier, fichiers de plus de 100 Ko refusés) ;
+    pas d'exécution de commandes ;
+  - la boucle outil → résultat → réponse, avec un nombre maximal de tours réglable (10 par défaut) ;
+  - suivi en direct : bloc Réflexion, puis une ligne par étape, dépliable ; Stop à tout moment ;
+  - chaque écriture montre un diff (vert / rouge) et attend Accepter, Refuser ou « Accepter tout pour cette demande » ;
+    sauvegarde de chaque écriture, Annuler par étape et « Annuler toute la demande » (refusé si le fichier a changé) ;
+  - le contenu d'un fichier n'est jamais une instruction pour Nel Code : seul le modèle demande un outil, seul
+    l'utilisateur valide une écriture ;
+  - tests : `e2e/agent.test.mjs` (faux modèle à outils) et tests unitaires (bac à sable avec jonction, diff, écritures).
+
+### Modifié
+
+- La lecture des fichiers `@` passe par le même bac à sable que l'agent.
+- Les tests de l'interface se lancent un fichier après l'autre (`--test-concurrency=1`).
+
+### Corrigé
+
+- Les suggestions (`/`, `@`) ne se ferment plus quand la saisie retrouve le focus aussitôt après l'avoir perdu.
+
+## [0.7.0] - 2026-11-16
+
+### Ajouté
+
+- **Nel Code** : modèles distants, par des serveurs compatibles avec l'API OpenAI (llama.cpp, Ollama, LM Studio…) :
+  - section **Fournisseurs** des réglages : nom, adresse, clé facultative ; **Tester** appelle `/v1/models` et liste
+    les modèles ; ils apparaissent dans la liste des modèles avec le badge « réseau » et le nom du fournisseur ;
+  - **Importer depuis Qwen Code** (`~/.qwen/settings.json`, `modelProviders.openai`) : fournisseurs, réglages de chaque
+    modèle (température, top_p, max_tokens, taille du contexte) et clé (`envKey`) ;
+  - appels faits par la partie Rust (CSP inchangée), en streaming SSE, délai maximal (2 min sans rien recevoir), Stop
+    qui ferme la connexion, messages clairs (serveur injoignable, clé refusée, modèle arrêté ou introuvable) ;
+  - **Réflexion** (`reasoning_content`, `reasoning`, `<think>…</think>`) dans un bloc repliable au-dessus de la
+    réponse, avec sa durée, jamais renvoyée au modèle ;
+  - clés dans le Gestionnaire d'identification de Windows, jamais dans `settings.json` ; avertissement pour une adresse
+    `http://` vers une autre machine ;
+  - tests : `e2e/remote.test.mjs` (faux serveur local) et tests unitaires (balises `<think>` coupées, adresses,
+    contexte, Gestionnaire d'identification, `.env`).
+
 ## [0.6.0] - 2026-11-16
 
 ### Ajouté

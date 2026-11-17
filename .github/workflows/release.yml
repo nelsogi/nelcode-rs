@@ -59,7 +59,7 @@ jobs:
       - name: Tests de l'interface
         run: |
           cargo build -p nel-desktop
-          node --test --test-reporter=spec "e2e/*.test.mjs"
+          node --test --test-concurrency=1 --test-reporter=spec "e2e/*.test.mjs"
 
       # La feature cuda : nvcc compile les noyaux de Candle (cl.exe de MSVC dans le PATH), et l'exécutable est lié
       # aux bibliothèques d'import CUDA. Les DLL elles-mêmes ne sont pas dans l'installateur (pack GPU à part).

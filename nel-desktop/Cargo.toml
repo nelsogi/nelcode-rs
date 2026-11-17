@@ -1,6 +1,6 @@
 [package]
 name = "nel-desktop"
-version = "0.6.0"
+version = "0.8.0"
 edition = "2024"
 
 [dependencies]
@@ -17,8 +17,9 @@ tauri-plugin-process = "2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 sha2 = "0.10"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
 getrandom = "0.3"
+tokio = { version = "1", features = ["time", "macros", "sync"] }
 
 [features]
 # GPU NVIDIA : voir nel-engine/src/gpu.rs et build.rs (DLL CUDA chargées en différé).

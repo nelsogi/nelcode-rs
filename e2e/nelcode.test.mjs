@@ -2,7 +2,7 @@
 // WebView2 temporaires, puis pilotée par le port de débogage de WebView2 (voir harness.mjs).
 //
 //   cargo build -p nel-desktop
-//   node --test --test-reporter=spec e2e/
+//   node --test --test-concurrency=1 --test-reporter=spec e2e/   (une fenêtre de Nel Code à la fois)
 //
 // Modèle : variable NELMODEL, sinon test-models/minichat-v3b.nelmodel. Exécutable : NELCODE_EXE, sinon
 // target/debug/nel-desktop.exe. Les tests se suivent : chacun part de l'état laissé par le précédent.

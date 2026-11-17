@@ -15,7 +15,7 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 
 ## Installation
 
-1. Télécharge `Nel Code_0.6.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.8.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -76,6 +76,70 @@ en utilisera, et les échanges qu'il ne voit plus sont grisés.
 Dans les réponses, les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript, HTML, CSS, JSON) et ont
 un bouton **Copier**.
 
+### Modèles distants (llama.cpp, Ollama, LM Studio…)
+
+Nel Code peut aussi discuter avec des modèles qui tournent sur une autre machine, par un serveur compatible avec
+l'API OpenAI.
+
+1. **Réglages → Fournisseurs → Ajouter un fournisseur** : un nom, l'adresse de l'API (par exemple
+   `http://10.5.33.228:11434/v1` pour Ollama, `http://hôte:8080/v1` pour llama.cpp, `http://hôte:1234/v1` pour
+   LM Studio ; `/v1` est ajouté s'il manque) et, si le serveur en demande une, la clé.
+2. **Tester** appelle `/v1/models` et liste les modèles du serveur. Ils apparaissent dans la liste des modèles avec le
+   badge **réseau** et le nom du fournisseur : un clic les choisit (la barre d'état affiche `modèle · réseau · fournisseur`).
+
+**Importer depuis Qwen Code** crée les fournisseurs à partir de `~/.qwen/settings.json` (`modelProviders.openai`) : un
+par adresse (`baseUrl`), avec les réglages de chaque modèle (`samplingParams` : `temperature`, `top_p`, `max_tokens` ;
+`generationConfig.contextWindowSize`). La clé (`envKey`) est cherchée dans `env` de ce fichier, dans `~/.qwen/.env`,
+puis dans les variables d'environnement.
+
+Les appels partent de la partie Rust de Nel Code (pas de la page : sa politique de sécurité ne change pas), en
+streaming. Si le serveur n'envoie rien pendant 2 minutes, la réponse s'arrête avec « délai dépassé » ; **Stop** ferme la
+connexion tout de suite (le début de la réponse est gardé). Un serveur éteint, une clé refusée ou un modèle arrêté donnent
+un message clair. La barre de contexte est une estimation (environ 4 caractères par token) ; les échanges les plus anciens
+sont retirés s'ils ne tiennent plus dans le contexte du modèle (quand il est connu, par exemple importé de Qwen Code).
+
+**Réflexion** : si le modèle envoie son raisonnement (`reasoning_content` de llama.cpp, `reasoning` d'Ollama, ou des
+balises `<think>…</think>` au début du texte), il s'affiche dans un bloc **Réflexion** repliable au-dessus de la
+réponse, avec sa durée. Il est gardé dans la conversation, mais jamais renvoyé au modèle avec les messages suivants.
+
+**Sécurité** : la clé d'un fournisseur est rangée dans le **Gestionnaire d'identification de Windows**
+(« NelCode:provider:… »), jamais dans `settings.json` ; supprimer le fournisseur la supprime. Une adresse en `http://`
+vers une autre machine affiche un avertissement : les messages passent **en clair** sur le réseau, préfère `https://`
+si le serveur le permet.
+
+### Mode Agent
+
+Avec un modèle distant qui gère les **outils** (tool calling de l'API OpenAI : llama.cpp lancé avec `--jinja`, Ollama
+avec Qwen3…), le bouton **Agent** (en haut, ou `/agent`) laisse le modèle travailler dans le **dossier de travail** de
+la conversation. Les `.nelmodel` et les modèles GGUF de ce PC n'y ont pas accès.
+
+| Outil | Effet |
+|---|---|
+| `list_files` | Liste les fichiers (sans dossiers cachés, `node_modules`, `target`…, sans suivre les liens) |
+| `read_file` | Lit un fichier texte (100 Ko au plus), avec les numéros de ligne |
+| `search` | Cherche un texte dans les fichiers (« chemin:ligne: texte ») |
+| `write_file` | Crée un nouveau fichier — **avec ton accord** |
+| `edit_file` | Remplace un passage d'un fichier — **avec ton accord** |
+
+Le modèle demande un outil, Nel Code l'exécute et lui renvoie le résultat, jusqu'à sa réponse finale (10 tours au plus,
+réglable dans les Réglages). Tout s'affiche en direct dans la conversation : la **Réflexion** repliable, puis une ligne
+par étape (« Lecture de src/Program.cs », « Recherche de "Player" — 4 résultats »), à déplier pour voir le détail.
+**Stop** (ou Échap) arrête tout, à tout moment.
+
+**Écritures** : avant chaque écriture, Nel Code montre le diff (lignes ajoutées en vert, retirées en rouge) avec
+**Accepter**, **Refuser** et **Accepter tout pour cette demande**. Aucun fichier n'est modifié sans accord. Chaque
+écriture acceptée est sauvegardée (`%APPDATA%\NelCode\agent-backups`) : **Annuler** sur l'étape, ou **Annuler toute la
+demande**, remet les fichiers comme avant (un fichier créé est supprimé). Si le fichier a changé depuis, l'annulation est
+refusée, pour ne rien perdre.
+
+**Sécurité** :
+- tout reste dans le dossier de travail : chemins relatifs normalisés ; `..`, chemins absolus, noms avec `:` et liens
+  (symboliques ou jonctions) qui sortent du dossier sont refusés ; les fichiers trop gros aussi ;
+- pas d'exécution de commandes ;
+- ce qui est lu dans un fichier n'est **jamais une instruction pour Nel Code** : c'est renvoyé au modèle comme donnée
+  (avec la consigne de ne pas y obéir), et seul le modèle peut demander un outil. Une écriture attend toujours ton accord,
+  quoi que dise un fichier.
+
 ### Fichiers du dossier de travail (@)
 
 Tape `@` dans la saisie : les fichiers du dossier de travail s'affichent (sans les dossiers cachés, `node_modules`,
@@ -99,6 +163,7 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/model <nom>` | Charger un modèle installé |
 | `/models` | Lister les modèles installés |
 | `/import [fichier]` | Importer un `.nelmodel` ou un `.gguf` |
+| `/agent` | Mode Agent (modèle distant qui gère les outils) |
 | `/catalogue` | Télécharger un modèle ouvert |
 | `/temp <0.1 à 2>` | Température : bas = sage, haut = créatif |
 | `/topk <n>` | Tirage parmi les K tokens les plus probables (0 = sans limite) |
@@ -273,14 +338,20 @@ L'application de développement est lancée avec des dossiers de données et Web
 
 ```powershell
 cargo build -p nel-desktop
-node --test --test-reporter=spec "e2e/*.test.mjs"
+node --test --test-concurrency=1 --test-reporter=spec "e2e/*.test.mjs"
 ```
 
 `e2e/nelcode.test.mjs` couvre le démarrage, l'import, une réponse, Stop, Régénérer et les versions, Modifier, le
 changement de modèle, la recherche, renommer et supprimer, les réglages, la transparence, la comparaison et le vote, le
 test de vitesse, le rapport de bug, les blocs de code et les fichiers `@`. `e2e/server.test.mjs` couvre le serveur
 local : désactivé par défaut, activé dans les réglages, clé obligatoire puis renouvelée, `/v1/models`, chat avec et sans
-streaming, erreurs, écoute sur 127.0.0.1 seulement, indicateur de la barre d'état. `e2e/gguf.test.mjs` couvre le catalogue
+streaming, erreurs, écoute sur 127.0.0.1 seulement, indicateur de la barre d'état. `e2e/remote.test.mjs` couvre les
+modèles distants avec un faux serveur local : fournisseurs, avertissement http, clé hors de `settings.json`, Tester,
+badge « réseau », streaming, réflexion (trois formats), Stop, délai maximal, erreurs, import depuis Qwen Code.
+`e2e/agent.test.mjs` couvre le mode Agent avec un faux modèle qui appelle les outils : chaque outil, chaque refus (bac à
+sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Accepter / Refuser / Accepter tout, chaque
+annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart. Les fichiers de test se lancent
+l'un après l'autre (`--test-concurrency=1`) : une seule fenêtre de Nel Code à la fois. `e2e/gguf.test.mjs` couvre le catalogue
 (servi en local : licence, empreinte refusée, téléchargement), une réponse de Qwen2.5-Coder, le contexte réglable et
 l'import d'un `.gguf` par glisser-déposer ; il est ignoré sans le `.gguf` de test. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans
 CUDA ou sans pack. `E2E_VERBOSE=1` affiche la sortie de l'application.
@@ -322,7 +393,7 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | Dossier | Contenu |
 |---|---|
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, mode Agent, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
 

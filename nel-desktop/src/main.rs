@@ -1,11 +1,13 @@
 // Pas de console derrière la fenêtre en version publiée.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod catalog;
 #[cfg(feature = "cuda")]
 mod delayload;
 mod gpu;
 mod log;
+mod remote;
 mod server;
 mod store;
 
@@ -48,6 +50,10 @@ struct AppState {
     catalog_cancel: AtomicBool,
     /// Le serveur local (API OpenAI), quand il est activé.
     server: Mutex<Option<server::Running>>,
+    /// La réponse d'un modèle distant en cours : Stop la réveille, et la connexion est fermée.
+    remote_cancel: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    /// Mode Agent : les écritures qui attendent l'accord de l'utilisateur.
+    approvals: agent::Approvals,
 }
 
 /// Le GPU, initialisé au premier appel depuis le pack (%APPDATA%\NelCode\gpu).
@@ -638,11 +644,6 @@ fn cancel_catalog(state: State<AppState>) {
 
 // --- Fichiers du dossier de travail (lecture seule : Nel Code n'y écrit jamais) ----------------------------
 
-/// La taille maximale d'un fichier joint à un message.
-const MAX_FILE_BYTES: u64 = 100_000;
-const MAX_LISTED: usize = 5000;
-const SKIPPED_DIRS: [&str; 8] = ["node_modules", "target", "bin", "obj", "dist", "build", "__pycache__", "venv"];
-
 /// Les fichiers du dossier de travail (chemins relatifs, avec des /), sans les dossiers cachés ni ceux de compilation.
 #[tauri::command]
 fn list_files(dir: String) -> Result<Vec<String>> {
@@ -650,51 +651,16 @@ fn list_files(dir: String) -> Result<Vec<String>> {
     if !root.is_dir() {
         return Err(format!("dossier introuvable : {dir}"));
     }
-    let mut out = Vec::new();
-    let mut stack = vec![(root.clone(), 0)];
-    while let Some((folder, depth)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&folder) else { continue };
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let Ok(kind) = e.file_type() else { continue };
-            if name.starts_with('.') || kind.is_symlink() {
-                continue;
-            }
-            if kind.is_dir() {
-                if depth < 8 && !SKIPPED_DIRS.contains(&name.to_lowercase().as_str()) {
-                    stack.push((e.path(), depth + 1));
-                }
-            } else if let Ok(rel) = e.path().strip_prefix(&root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-                if out.len() >= MAX_LISTED {
-                    out.sort();
-                    return Ok(out);
-                }
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
+    Ok(agent::walk(&root))
 }
 
 /// Lit un fichier texte du dossier de travail, sans pouvoir en sortir (« .. », lien, chemin absolu). Au plus
-/// MAX_FILE_BYTES octets, en UTF-8.
+/// 100 Ko, en UTF-8.
 #[tauri::command]
 fn read_file(dir: String, path: String) -> Result<String> {
-    let root = std::fs::canonicalize(&dir).map_err(|e| format!("dossier introuvable : {e}"))?;
-    let file = std::fs::canonicalize(root.join(&path)).map_err(|_| format!("fichier introuvable : {path}"))?;
-    if !file.starts_with(&root) || !file.is_file() {
-        return Err(format!("« {path} » n'est pas un fichier du dossier de travail"));
-    }
-    let size = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
-    if size > MAX_FILE_BYTES {
-        return Err(format!("« {path} » est trop gros ({} Ko, au plus {} Ko)", size.div_ceil(1000), MAX_FILE_BYTES / 1000));
-    }
-    let bytes = std::fs::read(&file).map_err(|e| format!("{path} : {e}"))?;
-    if bytes.contains(&0) {
-        return Err(format!("« {path} » n'est pas un fichier texte"));
-    }
-    String::from_utf8(bytes).map_err(|_| format!("« {path} » n'est pas du texte UTF-8"))
+    let sb = agent::Sandbox::new(&dir)?;
+    let abs = sb.resolve(&path).map_err(|e| if e.contains("refusé") { format!("« {path} » n'est pas un fichier du dossier de travail") } else { e })?;
+    agent::read_text(&abs, &path)
 }
 
 // --- Serveur local (API OpenAI) ----------------------------------------------------------------------------
@@ -724,10 +690,118 @@ fn regenerate_server_key() -> Result<String> {
     Ok(key)
 }
 
-/// Stop / Échap : le thread de génération s'arrête après le token en cours.
+// --- Modèles distants (fournisseurs compatibles avec l'API OpenAI) ----------------------------------------
+
+#[tauri::command]
+fn list_providers() -> Vec<Value> {
+    remote::list()
+}
+
+/// `key` : nouvelle clé (vide : retirée ; absente : inchangée), rangée dans le Gestionnaire d'identification.
+#[tauri::command]
+fn save_provider(id: Option<String>, name: String, url: String, key: Option<String>) -> Result<Value> {
+    remote::save(id, &name, &url, key.as_deref())
+}
+
+#[tauri::command]
+fn delete_provider(id: String) -> Result<()> {
+    remote::delete(&id)
+}
+
+/// « Tester » : la liste des modèles du fournisseur (GET /v1/models), gardée dans les réglages.
+#[tauri::command]
+async fn test_provider(id: String) -> Result<Vec<String>> {
+    remote::test(&id).await
+}
+
+#[tauri::command]
+fn import_qwen() -> Result<Value> {
+    remote::import_qwen()
+}
+
+/// Comme `generate`, avec le modèle `model` du fournisseur `provider` : « gen-token », « gen-reasoning » (la réflexion),
+/// puis « gen-done » ({ text, reasoning, reasoningSeconds, … } ou { error }).
+#[tauri::command]
+fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, options: GenOptions) -> Result<()> {
+    if state.generating.swap(true, Ordering::SeqCst) {
+        return Err("une réponse est déjà en cours".into());
+    }
+    state.stop.store(false, Ordering::SeqCst);
+    let cancel = Arc::new(tokio::sync::Notify::new());
+    *state.remote_cancel.lock().unwrap() = Some(cancel.clone());
+    let generating = state.generating.clone();
+    tauri::async_runtime::spawn(async move {
+        let clock = Instant::now();
+        let s = options.sampling();
+        let done = match remote::generate(&app, &provider, &model, &history, &message, (s.temperature, s.top_p), cancel).await {
+            Ok(r) => json!({
+                "text": r.content, "reasoning": r.reasoning, "reasoningSeconds": r.reasoning_seconds, "model": model,
+                "tokens": r.tokens, "seconds": clock.elapsed().as_secs_f64(), "stopped": r.stopped,
+            }),
+            Err(e) => {
+                log::error(&format!("modèle distant « {model} » : {e}"));
+                json!({ "error": e })
+            }
+        };
+        app.state::<AppState>().remote_cancel.lock().unwrap().take();
+        generating.store(false, Ordering::SeqCst);
+        let _ = app.emit("gen-done", done);
+    });
+    Ok(())
+}
+
+// --- Mode Agent -------------------------------------------------------------------------------------------
+
+/// Comme `remote_generate`, avec les outils de l'agent dans le dossier de travail `dir` : les étapes partent dans
+/// « agent-step », puis « gen-done » ({ …, agent: { request, steps } }).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, dir: String, options: GenOptions) -> Result<()> {
+    if state.generating.swap(true, Ordering::SeqCst) {
+        return Err("une réponse est déjà en cours".into());
+    }
+    state.stop.store(false, Ordering::SeqCst);
+    let cancel = Arc::new(tokio::sync::Notify::new());
+    *state.remote_cancel.lock().unwrap() = Some(cancel.clone());
+    let generating = state.generating.clone();
+    let max_turns = store::load_settings()["agentMaxTurns"].as_u64().unwrap_or(10) as usize;
+    tauri::async_runtime::spawn(async move {
+        let s = options.sampling();
+        let done = agent::run(&app, &provider, &model, &history, &message, &dir, (s.temperature, s.top_p), max_turns, cancel).await;
+        app.state::<AppState>().remote_cancel.lock().unwrap().take();
+        generating.store(false, Ordering::SeqCst);
+        let _ = app.emit("gen-done", done);
+    });
+    Ok(())
+}
+
+/// La réponse de l'utilisateur à une écriture : "accept", "reject" ou "accept_all" (pour le reste de la demande).
+#[tauri::command]
+fn agent_decide(state: State<AppState>, request: String, step: String, decision: String) -> Result<()> {
+    if !["accept", "reject", "accept_all"].contains(&decision.as_str()) {
+        return Err(format!("décision inconnue : {decision}"));
+    }
+    let tx = state.approvals.lock().unwrap().remove(&format!("{request}/{step}")).ok_or("cette écriture n'attend plus de réponse")?;
+    tx.send(decision).map_err(|_| "la demande est finie".to_string())
+}
+
+#[tauri::command]
+fn agent_undo(request: String, step: String) -> Result<()> {
+    agent::undo(&request, &step)
+}
+
+#[tauri::command]
+fn agent_undo_all(request: String) -> Result<Vec<String>> {
+    agent::undo_all(&request)
+}
+
+/// Stop / Échap : le thread de génération s'arrête après le token en cours ; une réponse distante ferme sa connexion.
 #[tauri::command]
 fn stop_generation(state: State<AppState>) {
     state.stop.store(true, Ordering::SeqCst);
+    if let Some(c) = state.remote_cancel.lock().unwrap().as_ref() {
+        c.notify_one();
+    }
 }
 
 fn main() {
@@ -793,6 +867,16 @@ fn main() {
             server_status,
             server_apply,
             regenerate_server_key,
+            list_providers,
+            save_provider,
+            delete_provider,
+            test_provider,
+            import_qwen,
+            remote_generate,
+            agent_generate,
+            agent_decide,
+            agent_undo,
+            agent_undo_all,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");

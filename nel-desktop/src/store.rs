@@ -386,6 +386,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     // Le serveur local : désactivé par défaut, port de 1024 à 65535.
     s["serverEnabled"] = s["serverEnabled"].as_bool().unwrap_or(false).into();
     s["serverPort"] = (num(&s["serverPort"], 8765.0).clamp(1024.0, 65535.0) as u64).into();
+    // Mode Agent : le nombre maximal de tours (une demande d'outils et son résultat = un tour).
+    s["agentMaxTurns"] = (num(&s["agentMaxTurns"], 10.0).clamp(1.0, 50.0) as u64).into();
     s
 }
 

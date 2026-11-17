@@ -393,3 +393,51 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .server .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .server-on { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; color: var(--success); }
 .server-on .dot { background: var(--success); box-shadow: 0 0 6px var(--success-glow); }
+
+/* --- Modèles distants --- */
+.models li .badge { font: 10.5px var(--mono); color: var(--accent-text); border: 1px solid var(--accent-border); border-radius: 4px; padding: 0 4px; }
+.models li.remote .meta { max-width: 70px; overflow: hidden; text-overflow: ellipsis; }
+.providers-field { display: flex; flex-direction: column; gap: 8px; }
+.providers-field > .row { width: 100%; }
+.providers { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.provider { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.provider .name { flex: 1; min-width: 0; }
+.provider .key { flex: 1; min-width: 0; }
+.provider .http { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.provider .http[hidden] { display: none; }
+.provider .status { font: 11.5px var(--mono); overflow-wrap: anywhere; user-select: text; }
+.provider .btn, .providers-field .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.providers-field .row-btns { display: flex; gap: 6px; width: 100%; }
+
+/* --- Réflexion --- */
+.reasoning { margin: 0 0 8px; border-left: 2px solid var(--border-strong); padding: 2px 0 2px 10px; color: var(--dim); }
+.reasoning summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; user-select: none; }
+.reasoning summary::-webkit-details-marker { display: none; }
+.reasoning summary .icon { width: 14px; height: 14px; transition: transform .15s; }
+.reasoning[open] summary .icon { transform: rotate(90deg); }
+.reasoning .think { white-space: pre-wrap; font-size: 13px; margin-top: 4px; max-height: 260px; overflow-y: auto; }
+
+/* --- Mode Agent --- */
+.steps { display: flex; flex-direction: column; gap: 3px; margin: 0 0 8px; }
+.step { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.step summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 13px; user-select: none; }
+.step summary::-webkit-details-marker { display: none; }
+.step summary .icon { width: 14px; height: 14px; color: var(--dim); }
+.step summary .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
+.step .status { font-size: 11.5px; border-radius: 4px; padding: 0 6px; color: var(--dim); border: 1px solid var(--border); }
+.step .status.pending { color: var(--warning); border-color: var(--warning); }
+.step .status.accepted { color: var(--success); border-color: var(--success); }
+.step .status.rejected, .step .status.undone { color: var(--faint); text-decoration: line-through; }
+.step .status.error { color: var(--error); border-color: var(--error-border); }
+.step[data-status="error"] summary .icon { color: var(--error); }
+.step[data-status="pending"] { border-color: var(--warning); }
+.step-body { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 8px; }
+.step-body .detail { margin: 0; max-height: 240px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre; user-select: text; background: var(--sidebar); border-radius: 6px; padding: 6px 8px; }
+.step-body .row-btns, .undo-all { display: flex; gap: 6px; flex-wrap: wrap; }
+.step-body .btn, .undo-all .btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 10px; }
+.diff { font: 12px/1.45 var(--mono); max-height: 320px; overflow: auto; background: var(--sidebar); border-radius: 6px; padding: 4px 0; user-select: text; }
+.diff > div { white-space: pre; padding: 0 8px; }
+.diff .sign { display: inline-block; width: 14px; color: var(--faint); }
+.diff .add { background: var(--sure-bg); color: var(--success); }
+.diff .del { background: var(--unsure-bg); color: var(--error); }
+.diff .skip { color: var(--faint); font-style: italic; }

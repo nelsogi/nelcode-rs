@@ -15,6 +15,7 @@ const S = {
   gen: null,           // la réponse en cours : { session, kind, index, el, text }
   context: null,       // { tokens, blockSize, keptTurns }
   server: { port: null, busy: false },   // le serveur local (API OpenAI)
+  providers: [],       // les fournisseurs de modèles distants (sans leurs clés)
 };
 
 // --- Petits outils ---------------------------------------------------------------------------------------
@@ -176,6 +177,16 @@ async function chooseFolder(s = S.current) {
 async function refreshModels() {
   S.models = await invoke('list_models');
   renderModels();
+}
+
+// Un modèle distant devient le modèle actif (rien à charger : les appels partent au fournisseur).
+async function selectRemote(p, m) {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  Object.assign(S.model, { name: m.id, blockSize: m.contextLength ?? null, device: `réseau · ${p.name}`, remote: { provider: p.id, model: m.id } });
+  S.lastSpeed = '';
+  renderModels(); renderStatus(); refreshContext();
+  try { S.settings = await invoke('save_settings', { changes: { lastModel: `remote:${p.id}/${m.id}` } }); } catch { /* sans gravité */ }
+  toast(`${m.id} (${p.name}) : modèle distant.`, 'success', 2500);
 }
 
 async function loadModel(name) {
@@ -377,13 +388,20 @@ async function regenerate(index) {
 }
 
 async function startGen(s, g) {
-  S.gen = { ...g, session: s, text: '', tokens: [] };
+  S.gen = { ...g, session: s, text: '', tokens: [], reasoning: '', thinkStart: null, thinkEnd: null, steps: [] };
   renderMessages();
   renderComposer();
   renderStatus();
   try {
+    const r = S.model.remote;
     if (g.kind === 'compare')
       await invoke('compare_generate', { a: s.compare.a, b: s.compare.b, historyA: g.history, historyB: g.historyB, message: g.question, options: genOptions() });
+    else if (s.agent) {
+      // Le mode Agent : seulement un modèle distant qui gère les outils ; jamais un .nelmodel ni un GGUF local.
+      if (!r) throw new Error(AGENT_LOCAL);
+      if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
+      await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, dir: s.workingDirectory, options: genOptions() });
+    } else if (r) await invoke('remote_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, options: genOptions() });
     else await invoke('generate', { history: g.history, message: g.question, options: genOptions() });
     return true;
   } catch (e) {
@@ -401,6 +419,7 @@ function onToken(p) {
   const g = S.gen;
   if (!g) return;
   const out = g.kind === 'compare' ? g[p.side] : g;
+  if (g.reasoning && !g.thinkEnd && p.text) { g.thinkEnd = Date.now(); showReasoning(); }
   out.text += p.text;
   if (p.choices) out.tokens.push([p.text, p.choices.map(([t, pr]) => [t, +pr.toFixed(4)])]);
   const el = g.kind === 'compare' ? g.el?.querySelector(`[data-side=${p.side}]`) : g.el;
@@ -418,17 +437,28 @@ async function onDone(p) {
   S.gen = null;
   const s = g.session;
   if (g.kind === 'compare') return onCompareDone(g, s, p);
-  const text = (p.text ?? '').trim();
+  let text = (p.text ?? '').trim();
+  // Mode Agent : les étapes restent dans la conversation même sans réponse finale (pour voir et annuler les écritures).
+  if (p.agent?.steps?.length && (p.error || !text)) {
+    if (p.error) toast('Agent : ' + p.error, 'error', 10000);
+    text = text || (p.stopped ? '(arrêté)' : '(pas de réponse finale)');
+    p.error = null;
+  }
+  if (p.limit) toast(`Agent : nombre maximal de tours atteint (${p.limit}). Augmente-le dans les Réglages si besoin.`, 'warning', 8000);
   if (p.error || !text) {
     if (g.kind === 'send') { s.messages.pop(); if (S.current === s) $('input').value ||= g.question; }
     toast(p.error ? 'Erreur pendant la réponse : ' + p.error : 'Le modèle n\'a rien répondu.', p.error ? 'error' : 'warning');
-  } else if (g.kind === 'send') {
-    s.messages.push({ role: 'assistant', content: text, tokens: g.tokens.length ? g.tokens : undefined });
   } else {
-    const versions = g.old.versions ? [...g.old.versions] : [g.old.content];
-    versions.push(text);
-    // Les probabilités ne suivent que la dernière version écrite (bodyEl vérifie qu'elles collent au texte).
-    s.messages[g.index] = { ...g.old, content: text, versions, tokens: g.tokens.length ? g.tokens : g.old.tokens };
+    // La réflexion d'un modèle distant : gardée avec la réponse, jamais renvoyée au modèle (turnsOf ne prend que content).
+    const thought = p.reasoning?.trim() ? { reasoning: p.reasoning.trim(), reasoningSeconds: p.reasoningSeconds ?? 0 } : { reasoning: undefined, reasoningSeconds: undefined };
+    thought.agent = p.agent ?? undefined;
+    if (g.kind === 'send') s.messages.push({ role: 'assistant', content: text, tokens: g.tokens.length ? g.tokens : undefined, ...thought });
+    else {
+      const versions = g.old.versions ? [...g.old.versions] : [g.old.content];
+      versions.push(text);
+      // Les probabilités ne suivent que la dernière version écrite (bodyEl vérifie qu'elles collent au texte).
+      s.messages[g.index] = { ...g.old, content: text, versions, tokens: g.tokens.length ? g.tokens : g.old.tokens, ...thought };
+    }
   }
   if (text) { touch(s); await saveSession(s); }
   if (!p.error && p.tokens) {
@@ -455,6 +485,117 @@ async function onCompareDone(g, s, p) {
 }
 
 function stop() { if (S.gen) invoke('stop_generation'); }
+
+// --- Mode Agent -----------------------------------------------------------------------------------------
+
+const AGENT_LOCAL = 'Le mode Agent demande un modèle distant qui gère les outils (llama.cpp lancé avec --jinja, Ollama avec Qwen3…) : les .nelmodel et les modèles GGUF de ce PC n\'y ont pas accès.';
+
+function toggleAgent() {
+  const s = S.current;
+  if (!s.agent && !S.model.remote) return toast(AGENT_LOCAL, 'warning', 8000);
+  if (s.compare) return toast('Le mode Agent ne marche pas en conversation comparée.', 'warning');
+  s.agent = !s.agent;
+  if (!s.agent) delete s.agent;
+  if (s.messages.length) saveSession(s);
+  renderHeader();
+  toast(s.agent ? `Mode Agent : ${S.model.name} peut lire les fichiers de « ${s.workingDirectory || '(aucun dossier)'} », et les modifier avec ton accord.` : 'Mode Agent désactivé.', '', 4000);
+}
+
+const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert' };
+const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur' };
+
+function diffEl(lines) {
+  return h('div', { class: 'diff' }, lines.map(([c, l]) => h('div', { class: { '+': 'add', '-': 'del', '…': 'skip' }[c] ?? 'ctx' }, h('span', { class: 'sign' }, c === '…' ? '' : c), l)));
+}
+
+// Les étapes de l'agent. `m` : le message fini (Annuler y met à jour les étapes) ; null pendant la réponse.
+function stepsEl(steps, m) {
+  const box = h('div', { class: 'steps' });
+  for (const st of steps) {
+    const write = st.kind === 'write' || st.kind === 'edit';
+    const status = STEP_STATUS[st.status] ? h('span', { class: 'status ' + st.status }, STEP_STATUS[st.status]) : null;
+    const body = h('div', { class: 'step-body' });
+    if (st.diff) body.append(diffEl(st.diff));
+    else if (st.detail) body.append(h('pre', { class: 'detail' }, st.detail));
+    if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
+    const decide = (decision) => invoke('agent_decide', { request: st.request, step: st.id, decision }).catch((e) => toast(errText(e), 'error'));
+    if (st.status === 'pending' && !m) body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Accepter'),
+      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser'),
+      h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));
+    if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
+    box.append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: st.status === 'pending' && !m },
+      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title), status), body));
+  }
+  const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');
+  if (undoable?.length) box.append(h('div', { class: 'row-btns undo-all' },
+    h('button', { class: 'btn', onclick: () => undoSteps(m, undoable.map((st) => st.id), () => invoke('agent_undo_all', { request: m.agent.request })) }, icon('undo-2'), 'Annuler toute la demande')));
+  return box;
+}
+
+// Annule des écritures (le Rust refuse si un fichier a changé depuis), puis les marque « annulée » dans la conversation.
+async function undoSteps(m, ids, run) {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  try {
+    const done = await run();
+    for (const st of m.agent.steps) if (done.includes(st.id)) st.status = 'undone';
+    toast(done.length > 1 ? `${done.length} modifications annulées.` : 'Modification annulée.', 'success');
+  } catch (e) { toast('Annulation impossible : ' + errText(e), 'error', 8000); }
+  await saveSession(S.current);
+  renderMessages();
+}
+
+// Une étape nouvelle ou mise à jour, pendant la réponse.
+listen('agent-step', (e) => {
+  const g = S.gen, st = e.payload;
+  if (!g) return;
+  const i = g.steps.findIndex((x) => x.id === st.id);
+  if (i >= 0) g.steps[i] = st; else g.steps.push(st);
+  if (!g.el || S.current !== g.session) return;
+  const fresh = stepsEl(g.steps, null), old = g.el.querySelector('.steps');
+  // Les étapes dépliées par l'utilisateur le restent.
+  if (old) for (const d of old.querySelectorAll('details[open]')) fresh.querySelector(`[data-step="${d.dataset.step}"]`)?.setAttribute('open', '');
+  old ? old.replaceWith(fresh) : g.el.querySelector('.body').before(fresh);
+  if (st.status === 'pending') fresh.querySelector(`[data-step="${st.id}"]`)?.scrollIntoView({ block: 'nearest' });
+  followEnd();
+});
+// Le texte qui accompagnait les outils est devenu une étape : la réponse finale repart de zéro.
+listen('agent-clear', () => {
+  const g = S.gen;
+  if (!g) return;
+  g.text = '';
+  const body = g.el?.querySelector('.body');
+  if (body) body.replaceChildren(waiting('travaille…'));
+});
+
+// --- Réflexion (modèles distants) ------------------------------------------------------------------------
+
+// Le bloc « Réflexion » repliable, au-dessus de la réponse ; ouvert pendant qu'elle s'écrit.
+function reasoningEl(text, seconds, live) {
+  const label = live ? 'Réflexion…' : `Réflexion · ${Number(seconds ?? 0).toLocaleString('fr-CH', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} s`;
+  return h('details', { class: 'reasoning', open: live }, h('summary', {}, icon('chevron-right'), label), h('div', { class: 'think' }, text));
+}
+
+// La réflexion en cours dans la réponse qui s'écrit (l'état replié ou déplié choisi est gardé).
+function showReasoning() {
+  const g = S.gen;
+  if (!g?.el || S.current !== g.session) return;
+  const old = g.el.querySelector('.reasoning');
+  const live = !g.thinkEnd;
+  const el = reasoningEl(g.reasoning, (g.thinkEnd - g.thinkStart) / 1000, live);
+  if (old && !live) el.open = false; else if (old) el.open = old.open;
+  old ? old.replaceWith(el) : g.el.prepend(el);
+  followEnd();
+}
+
+listen('gen-reasoning', (e) => {
+  const g = S.gen;
+  if (!g || g.kind === 'compare') return;
+  g.thinkStart ??= Date.now();
+  g.reasoning += e.payload.text;
+  showReasoning();
+});
 
 // --- Mode transparence -----------------------------------------------------------------------------------
 
@@ -773,7 +914,7 @@ function renderModels() {
   const ul = $('models');
   ul.replaceChildren();
   for (const m of S.models) {
-    const active = m.name === S.model.name, loading = m.name === S.model.loading;
+    const active = m.name === S.model.name && !S.model.remote, loading = m.name === S.model.loading;
     const tip = [m.name, sizeText(m.bytes), m.parameters && `${m.parameters.toLocaleString('fr-CH')} paramètres`, m.blockSize && `contexte ${m.blockSize} tokens`, { 'weights.dat': 'poids TorchSharp (weights.dat)', gguf: 'modèle GGUF' }[m.weights] ?? 'poids safetensors', m.license && `licence ${m.license}`].filter(Boolean).join('\n');
     ul.append(h('li', {
       class: (active ? 'active ' : '') + (loading ? 'loading' : ''), title: tip,
@@ -781,7 +922,14 @@ function renderModels() {
     }, h('span', { class: 'dot' }), h('span', { class: 'label' }, m.name), h('span', { class: 'meta' }, loading ? 'chargement…' : paramsText(m.parameters)),
     h('button', { class: 'more', title: 'Plus…', 'aria-label': 'Plus', onclick: (e) => { e.stopPropagation(); modelMenu(m, e); } }, icon('ellipsis'))));
   }
-  if (!S.models.length) ul.append(h('li', { class: 'none', onclick: () => openCatalog() }, 'Aucun modèle. Glisse un .nelmodel ou un .gguf ici, ou ouvre le catalogue ', icon('download'), '.'));
+  for (const p of S.providers) for (const m of p.models ?? []) {
+    const active = S.model.remote?.provider === p.id && S.model.remote?.model === m.id;
+    const tip = [`${m.label ?? m.id} · ${p.name}`, p.url, m.contextLength && `contexte ${m.contextLength} tokens`, m.temperature !== undefined && `température ${m.temperature}`,
+      m.topP !== undefined && `top-p ${m.topP}`, m.maxTokens && `max ${m.maxTokens} tokens`].filter(Boolean).join('\n');
+    ul.append(h('li', { class: 'remote' + (active ? ' active' : ''), title: tip, 'data-provider': p.id, 'data-model': m.id, onclick: () => !active && selectRemote(p, m) },
+      h('span', { class: 'dot' }), h('span', { class: 'label' }, m.id), h('span', { class: 'badge' }, 'réseau'), h('span', { class: 'meta' }, p.name)));
+  }
+  if (!S.models.length && !S.providers.some((p) => p.models?.length)) ul.append(h('li', { class: 'none', onclick: () => openCatalog() }, 'Aucun modèle. Glisse un .nelmodel ou un .gguf ici, ou ouvre le catalogue ', icon('download'), '.'));
 }
 
 function renderHeader() {
@@ -794,6 +942,7 @@ function renderHeader() {
   $('compare-chip').hidden = !s.compare;
   if (s.compare) $('compare-chip').replaceChildren(`A ${s.compare.a}`, icon('arrow-left-right'), h('span', {}, `B ${s.compare.b}`));
   $('transp-btn').classList.toggle('on', !!S.settings.transparency);
+  $('agent-btn').classList.toggle('on', !!s.agent);
 }
 
 function followEnd() {
@@ -828,7 +977,11 @@ function renderMessages() {
 const waiting = (text) => h('span', { class: 'waiting' }, icon('asterisk'), text);
 
 function streamingEl() {
-  return h('div', { class: 'msg assistant ' + (S.gen.text ? 'streaming' : 'thinking') }, h('div', { class: 'body' }, S.gen.text ? richText(S.gen.text.trimStart()) : waiting('réfléchit…')));
+  const g = S.gen;
+  return h('div', { class: 'msg assistant ' + (g.text ? 'streaming' : 'thinking') },
+    g.reasoning ? reasoningEl(g.reasoning, ((g.thinkEnd ?? Date.now()) - g.thinkStart) / 1000, !g.thinkEnd) : null,
+    g.steps.length ? stepsEl(g.steps, null) : null,
+    h('div', { class: 'body' }, g.text ? richText(g.text.trimStart()) : waiting('réfléchit…')));
 }
 
 function messageEl(m, i, faded) {
@@ -849,6 +1002,8 @@ function messageEl(m, i, faded) {
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); autoGrow(ta); }, 0);
     return el;
   }
+  if (!user && m.reasoning) el.append(reasoningEl(m.reasoning, m.reasoningSeconds, false));
+  if (!user && m.agent?.steps?.length) el.append(stepsEl(m.agent.steps, m));
   el.append(user ? h('div', { class: 'body' }, richText(m.content)) : bodyEl(m.content, m.tokens));
   const busy = !!S.gen;
   const acts = h('div', { class: 'actions' });
@@ -901,6 +1056,17 @@ function refreshContext() {
   contextTimer = setTimeout(async () => {
     const fill = $('context-fill');
     if (!S.model.name) { S.context = null; $('context-text').textContent = '— / — tokens'; fill.style.width = '0'; return; }
+    if (S.model.remote) {
+      // Pas de tokenizer pour un modèle distant : environ 4 caractères par token.
+      const chars = turnsOf(S.current.messages).flat().join('').length + (await expandMentions($('input').value, true)).length;
+      const n = Math.ceil(chars / 4), ctx = S.model.blockSize;
+      S.context = null;
+      fill.style.width = ctx ? Math.min(100, 100 * n / ctx) + '%' : '0';
+      fill.className = ctx && n > ctx ? 'full' : ctx && n > 0.8 * ctx ? 'warn' : '';
+      $('context-text').textContent = ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`;
+      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.';
+      return;
+    }
     try {
       const c = await invoke('context_info', { history: turnsOf(S.current.messages), message: await expandMentions($('input').value, true) });
       const changed = S.context?.keptTurns !== c.keptTurns;
@@ -922,6 +1088,7 @@ const COMMANDS = [
   { name: 'compare', desc: 'Conversation comparée entre deux modèles', run: () => openCompare() },
   { name: 'classement', desc: 'Classement du mode comparaison', run: () => openLeaderboard() },
   { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
+  { name: 'agent', desc: 'Activer / désactiver le mode Agent (modèle distant qui gère les outils)', run: () => toggleAgent() },
   { name: 'model', args: '<nom>', desc: 'Charger un modèle installé', run: (a) => a ? loadModel(a) : toast('Usage : /model <nom>', 'warning') },
   { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.length ? S.models.map((m) => h('div', { class: 'line' }, m.name === S.model.name ? icon('check') : h('span', { class: 'pad' }), `${m.name} — ${sizeText(m.bytes)}`)) : 'Aucun modèle.', '', 8000) },
   { name: 'import', args: '[fichier]', desc: 'Importer un .nelmodel ou un .gguf (chemin relatif au dossier de travail)', run: (a) => importFlow(a || null) },
@@ -1030,6 +1197,7 @@ async function openSettings() {
     { key: 'topP', label: 'Top-p', min: 0.05, max: 1, step: 0.01, hint: 'Tirage parmi les tokens qui font cette part des chances (1 = pas de limite).' },
     { key: 'maxReplyTokens', label: 'Longueur max', min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse d\'un .nelmodel, en tokens (environ 3 caractères chacun). Un modèle GGUF écrit jusqu\'à 1024 tokens et s\'arrête de lui-même.' },
     { key: 'repetitionPenalty', label: 'Pénalité de répétition', min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
+    { key: 'agentMaxTurns', label: 'Mode Agent : tours au plus', min: 1, max: 50, step: 1, hint: 'Combien de fois le modèle peut demander des outils (lire, chercher, écrire) avant de devoir répondre.' },
     { key: 'contextLimit', label: 'Contexte des modèles GGUF', min: 512, max: 32768, step: 512, hint: 'Au plus ce nombre de tokens de conversation (le modèle peut en gérer plus, mais la mémoire et le temps de réponse montent vite). Les .nelmodel gardent leur taille.' },
   ];
   const inputs = {};
@@ -1046,7 +1214,7 @@ async function openSettings() {
   const calc = await calcSection(s);
   body.push(calc.el);
   const srv = await serverSection(s);
-  body.push(srv.el);
+  body.push(srv.el, await providersSection());
   const auto = h('input', { type: 'checkbox', checked: s.autoUpdate !== false });
   body.push(h('div', { class: 'field updates' }, h('label', { class: 'check' }, auto, 'Rechercher les mises à jour au démarrage (une fois par jour)'),
     h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
@@ -1056,7 +1224,7 @@ async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
         serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value) };
     const before = s.device ?? 'auto', limit = s.contextLimit;
@@ -1068,6 +1236,79 @@ async function openSettings() {
     if (S.model.name && ((S.settings.device ?? 'auto') !== before || (gguf && S.settings.contextLimit !== limit))) loadModel(S.model.name);
   }
   applyTheme();
+}
+
+// --- Fournisseurs de modèles distants ----------------------------------------------------------------
+
+// http:// vers une autre machine : les messages passent en clair sur le réseau.
+const cleartext = (url) => /^http:\/\//i.test(url.trim()) && !/^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:|\/|$)/i.test(url.trim());
+
+async function refreshProviders() {
+  S.providers = await invoke('list_providers');
+  renderModels();
+}
+
+// La section Fournisseurs des réglages : chaque fournisseur s'enregistre tout de suite (pas avec « Enregistrer »).
+async function providersSection() {
+  await refreshProviders();
+  const box = h('div', { class: 'providers' });
+  const draw = () => box.replaceChildren(...S.providers.map((p) => providerForm(p, draw)));
+  draw();
+  const add = h('button', { class: 'btn', onclick: () => { box.append(providerForm({ models: [] }, draw)); box.lastChild.querySelector('input').focus(); } }, icon('plus'), 'Ajouter un fournisseur');
+  const qwen = h('button', { class: 'btn', onclick: async () => {
+    try {
+      const r = await invoke('import_qwen');
+      toast(`Qwen Code : ${r.providers} fournisseur(s) créé(s), ${r.models} modèle(s) importé(s)${r.keys ? ', clé rangée dans le Gestionnaire d\'identification' : ''}.`, 'success', 6000);
+      await refreshProviders(); draw();
+    } catch (e) { toast('Import depuis Qwen Code : ' + errText(e), 'error', 8000); }
+  } }, icon('download'), 'Importer depuis Qwen Code');
+  return h('div', { class: 'field providers-field' }, h('div', { class: 'row' }, h('span', {}, 'Fournisseurs (modèles distants)')), box, h('div', { class: 'row-btns' }, add, qwen),
+    h('div', { class: 'hint' }, 'Un serveur compatible avec l\'API OpenAI : llama.cpp, Ollama (http://hôte:11434/v1), LM Studio… Ses modèles apparaissent dans la liste avec le badge « réseau ». La clé va dans le Gestionnaire d\'identification de Windows, jamais dans settings.json.'));
+}
+
+function providerForm(p, redraw) {
+  const name = h('input', { class: 'text-input name', placeholder: 'Nom (ex. Ollama du labo)', value: p.name ?? '', spellcheck: 'false' });
+  const url = h('input', { class: 'text-input url', placeholder: 'http://10.5.33.228:11434/v1', value: p.url ?? '', spellcheck: 'false' });
+  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)' });
+  const warn = h('div', { class: 'warn-text http' }, icon('circle-alert'), 'Adresse en http : les messages passent en clair sur le réseau. Préfère https si le serveur le permet.');
+  const status = h('div', { class: 'hint status' }, p.models?.length ? `${p.models.length} modèle(s) : ${p.models.map((m) => m.id).join(', ')}` : '');
+  const showWarn = () => (warn.hidden = !cleartext(url.value));
+  url.addEventListener('input', showWarn);
+  showWarn();
+  // Les champs de ce formulaire ne valident pas toute la fenêtre des réglages.
+  const form = h('div', { class: 'provider', 'data-id': p.id ?? '', onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); save(); } } });
+  const save = async (newKey = key.value || null) => {
+    try {
+      const saved = await invoke('save_provider', { id: p.id ?? null, name: name.value, url: url.value, key: newKey });
+      Object.assign(p, saved);
+      key.value = '';
+      key.placeholder = p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)';
+      form.dataset.id = p.id;
+      url.value = p.url;
+      await refreshProviders();
+      return true;
+    } catch (e) { status.className = 'warn-text status'; status.textContent = errText(e); return false; }
+  };
+  const test = async () => {
+    if (!(await save())) return;
+    status.className = 'hint status';
+    status.replaceChildren(h('span', { class: 'spinner' }), 'Test…');
+    try {
+      const ids = await invoke('test_provider', { id: p.id });
+      status.textContent = ids.length ? `${ids.length} modèle(s) : ${ids.join(', ')}` : 'Le serveur répond, mais ne propose aucun modèle.';
+      await refreshProviders();
+    } catch (e) { status.className = 'warn-text status'; status.textContent = errText(e); }
+  };
+  form.append(h('div', { class: 'row-btns' }, name, h('button', { class: 'btn', onclick: test }, icon('refresh-cw'), 'Tester'),
+    h('button', { class: 'btn', onclick: async () => (await save()) && toast('Fournisseur enregistré.', 'success', 2000) }, 'Enregistrer'),
+    h('button', { class: 'btn danger', title: 'Supprimer le fournisseur (et sa clé)', onclick: async () => {
+      if (!p.id) return form.remove();   // pas encore enregistré
+      await invoke('delete_provider', { id: p.id });
+      if (S.model.remote?.provider === p.id) Object.assign(S.model, { name: null, remote: null, blockSize: null });
+      await refreshProviders(); redraw(); renderStatus(); refreshContext();
+    } }, 'Supprimer')),
+  url, h('div', { class: 'row-btns' }, key, p.hasKey ? h('button', { class: 'btn', onclick: () => save('').then(() => toast('Clé retirée.', 'success', 2000)) }, 'Retirer la clé') : null), warn, status);
+  return form;
 }
 
 // --- Serveur local (API OpenAI) ------------------------------------------------------------------------
@@ -1173,6 +1414,7 @@ listen('gpu-pack-progress', (e) => { Object.assign(G, e.payload); gpuProgress();
 
 async function runBenchmark() {
   if (!S.model.name) return toast('Charge d\'abord un modèle.', 'warning');
+  if (S.model.remote) return toast('Le test de vitesse ne mesure que les modèles de ce PC.', 'warning');
   if (S.gen || S.bench) return toast('Attends la fin de la réponse en cours.', 'warning');
   try { await invoke('benchmark'); } catch (e) { return toast(errText(e), 'error'); }
   S.bench = 'CPU';
@@ -1228,7 +1470,7 @@ function openPalette() {
   if (closeOverlay) return;
   const actions = [
     ['Nouvelle conversation', 'Ctrl+N', startNew], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard],
-    ['Mode transparence', '', toggleTransparency], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', openSettings],
+    ['Mode transparence', '', toggleTransparency], ['Mode Agent', '', toggleAgent], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', openSettings],
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
     ['Ouvrir le dossier de travail', '', () => openFolder()], ['Supprimer la conversation', '', () => S.current.messages.length && deleteSession(S.current)],
@@ -1347,7 +1589,8 @@ $('input').addEventListener('keydown', (e) => {
     submitInput();
   }
 });
-$('input').addEventListener('blur', () => setTimeout(() => ($('suggest').hidden = true), 100));
+// Les suggestions se ferment quand la saisie perd vraiment le focus (pas si elle l'a retrouvé entre-temps).
+$('input').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('input')) $('suggest').hidden = true; }, 100));
 $('send').onclick = () => (S.gen ? stop() : submitInput());
 $('new-chat').onclick = startNew;
 $('search').oninput = renderSessions;
@@ -1356,6 +1599,7 @@ $('catalog-btn').onclick = () => openCatalog();
 $('settings-btn').onclick = openSettings;
 $('arena-btn').onclick = openLeaderboard;
 $('transp-btn').onclick = toggleTransparency;
+$('agent-btn').onclick = toggleAgent;
 $('palette-btn').onclick = openPalette;
 $('title').ondblclick = () => renameSession(S.current);
 $('folder-chip').onclick = () => chooseFolder();
@@ -1390,7 +1634,7 @@ listen('gen-done', async (e) => { await onDone(e.payload); U.idle?.(); });
 listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payload; renderStatus(); } });
 listen('model-loading', (e) => { S.model.loading = e.payload; renderModels(); renderStatus(); });
 listen('model-loaded', (e) => {
-  Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, device: e.payload.device, loading: null });
+  Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, device: e.payload.device, loading: null, remote: null });
   S.lastSpeed = '';
   renderModels(); renderStatus(); refreshContext();
   toast(`Modèle ${e.payload.name} chargé sur ${e.payload.device} (${e.payload.seconds.toFixed(1)} s).`, 'success', 2500);
@@ -1437,9 +1681,13 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
   const st = await invoke('model_status');
   Object.assign(S.model, { name: st.name, loading: st.loading, blockSize: st.blockSize, device: st.device });
   S.server.port = (await invoke('server_status')).port;
+  S.providers = await invoke('list_providers');
   renderAll();
   $('input').focus();
-  if (!S.model.name && !S.model.loading && S.models.length) {
+  const [, rp, rm] = String(S.settings.lastModel ?? '').match(/^remote:([^/]+)\/(.+)$/) ?? [];
+  const lastRemote = S.providers.find((p) => p.id === rp)?.models?.find((m) => m.id === rm);
+  if (lastRemote && !S.model.name) selectRemote(S.providers.find((p) => p.id === rp), lastRemote);
+  else if (!S.model.name && !S.model.loading && S.models.length) {
     const last = S.models.find((m) => m.name === S.settings.lastModel) ?? S.models[0];
     loadModel(last.name);
   }
