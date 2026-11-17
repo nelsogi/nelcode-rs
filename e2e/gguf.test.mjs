@@ -89,7 +89,7 @@ test('réponse du modèle GGUF, avec un bloc de code colorié', async (t) => {
   const block = `[...document.querySelectorAll('#messages .msg.assistant')].pop().querySelector('.code-block')`;
   assert.equal(await A.ev(`${block}?.dataset.lang`), 'py');
   assert.ok(await A.ev(`[...${block}.querySelectorAll('.hl-kw')].some((s) => s.textContent === 'def')`));
-  assert.match(await A.ev(`S.lastSpeed`), /tokens\/s/);
+  await A.waitFor(`/tokens\\/s/.test(S.lastSpeed ?? '')`, 5_000, 'vitesse affichée (après l\'enregistrement de la réponse)');
 });
 
 test('contexte réglable : le modèle est rechargé avec la nouvelle limite', async (t) => {

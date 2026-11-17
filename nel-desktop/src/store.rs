@@ -405,6 +405,16 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["allowedCommands"] = allowed.into();
+    // Claude Agent : mode de permission (rien d'automatique par défaut, ou acceptEdits) et outils autorisés.
+    let mode = s["claudePermissionMode"].as_str().filter(|m| crate::claude_agent::PERMISSION_MODES.contains(m)).unwrap_or("default").to_string();
+    s["claudePermissionMode"] = mode.into();
+    let mut tools: Vec<String> = Vec::new();
+    for t in s["claudeAllowedTools"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|t| t.trim().to_string()) {
+        if !t.is_empty() && !tools.contains(&t) && tools.len() < 100 {
+            tools.push(t);
+        }
+    }
+    s["claudeAllowedTools"] = tools.into();
     s
 }
 

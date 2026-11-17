@@ -114,7 +114,8 @@ export async function launch({ settings = {}, files = {}, env = {} } = {}) {
     // Les processus de WebView2 peuvent garder le dossier quelques secondes de plus : ce n'est qu'un dossier
     // temporaire, un échec ici n'en est pas un pour les tests.
     try {
-      fs.rmSync(home, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 });
+      // Node allonge l'attente à chaque essai (250, 500, … ms) : 8 essais, 9 s au plus (30 × 500 ms en faisaient 232).
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
     } catch (e) {
       console.warn(`dossier temporaire non effacé : ${home} (${e.code})`);
     }

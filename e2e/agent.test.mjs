@@ -15,6 +15,7 @@ import { launch, sleep } from './harness.mjs';
 
 let server, A, DIR, OUT, PROVIDER;
 const chats = [];   // les requêtes de chat reçues
+const modelRequests = [];   // les demandes de /v1/models (adresse, en-têtes)
 
 // Le scénario de chaque faux modèle : n = nombre de résultats d'outils déjà reçus → [contenu, appels] ; [] = réponse finale.
 const call = (name, args) => ({ name, args });
@@ -104,7 +105,7 @@ before(async () => {
     let data = '';
     req.on('data', (d) => (data += d));
     req.on('end', () => {
-      if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [...Object.keys(SCRIPTS), 'sans-outils'].map((id) => ({ id })) })); }
+      if (req.url.startsWith('/v1/models')) { modelRequests.push({ url: req.url, headers: req.headers }); res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [...Object.keys(SCRIPTS), 'sans-outils'].map((id) => ({ id })) })); }
       chat(req, res, JSON.parse(data));
     });
   });
@@ -624,4 +625,46 @@ test('run_command : liste autorisée (réglages), et « Accepter tout » ne vaut
   await finish();
   assert.deepEqual((await lastMsg()).agent.steps.map((s) => s.status), ['accepted', 'rejected']);
   fs.rmSync(path.join(DIR, 'avant.txt'));
+});
+
+// --- Fournisseur Claude ---------------------------------------------------------------------------------------
+
+test('fournisseur Claude : modèle prérempli, en-têtes Anthropic, sans temperature/top_p, mode Agent', async () => {
+  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
+  await A.waitFor(`T.dialog()?.querySelector('.providers-field')`, 10_000);
+  await A.ev(`T.button('Ajouter Claude (Anthropic)', T.dialog())`);
+  const form = `[...T.dialog().querySelectorAll('.provider')].pop()`;
+  // Le modèle : l'adresse de l'API d'Anthropic, l'option cochée, le badge.
+  assert.deepEqual(await A.ev(`[${form}.querySelector('.name').value, ${form}.querySelector('.url').value, ${form}.querySelector('.omit-sampling').checked, ${form}.querySelector('.badge')?.textContent]`),
+    ['Claude', 'https://api.anthropic.com/v1/', true, 'Anthropic']);
+  assert.equal(await A.ev(`document.activeElement === ${form}.querySelector('.key')`), true, 'la clé à saisir');
+  assert.equal(await A.ev(`${form}.querySelector('.http').hidden`), true, 'https : pas d\'avertissement');
+  // Pour le test, le faux serveur à la place de l'API d'Anthropic (le type « anthropic » reste).
+  await A.ev(`T.setValue(${form}.querySelector('.url'), 'http://127.0.0.1:${server.address().port}/v1'); T.setValue(${form}.querySelector('.key'), 'sk-ant-faux'); T.button('Tester', ${form})`);
+  await A.waitFor(`${form}.querySelector('.status').textContent.includes('modèle(s)')`, 10_000, 'modèles de Claude');
+  const models = modelRequests.at(-1);
+  assert.equal(models.url, '/v1/models?limit=1000');
+  assert.deepEqual([models.headers['x-api-key'], models.headers['anthropic-version'], models.headers.authorization], ['sk-ant-faux', '2023-06-01', 'Bearer sk-ant-faux']);
+  const claude = A.readJson('settings.json').providers.find((p) => p.name === 'Claude');
+  assert.deepEqual([claude.kind, claude.omitSampling], ['anthropic', true]);
+  assert.ok(!fs.readFileSync(path.join(A.home, 'settings.json'), 'utf8').includes('sk-ant-faux'));
+  await A.ev(`T.key('Escape', {}, document)`);
+  // Le mode Agent avec ce fournisseur : les outils marchent, sans temperature ni top_p, avec un max_tokens.
+  await A.ev(`(() => { [...document.querySelectorAll('#models li.remote')].find((li) => li.dataset.model === 'planificateur' && li.dataset.provider === ${JSON.stringify(claude.id)}).click(); return true; })()`);
+  await A.waitFor(`S.model.remote?.provider === ${JSON.stringify(claude.id)}`, 5_000);
+  if (!(await A.ev(`!!S.current.agent`))) await A.ev(`document.getElementById('agent-btn').click()`);
+  const before = chats.length;
+  await A.ev(`T.submit('Planifie (sans outil à confirmer)')`);
+  await finish();
+  const bodies = chats.slice(before);
+  assert.equal(bodies.length, 4, 'trois plans puis la réponse');
+  assert.ok(bodies.every((b) => !('temperature' in b) && !('top_p' in b)), 'ni temperature ni top_p');
+  assert.ok(bodies.every((b) => b.max_tokens === 64000 && b.tools.length === 7));
+  assert.equal((await lastMsg()).content, 'Plan terminé.');
+  // L'option se décoche : temperature et top_p reviennent.
+  await A.ev(`window.__TAURI__.core.invoke('save_provider', { id: ${JSON.stringify(claude.id)}, name: 'Claude', url: ${JSON.stringify(claude.url)}, key: null, kind: 'anthropic', omitSampling: false })`);
+  await A.ev(`T.submit('Planifie encore')`);
+  await finish();
+  assert.ok('temperature' in chats.at(-1) && 'top_p' in chats.at(-1));
+  await A.ev(`window.__TAURI__.core.invoke('delete_provider', { id: ${JSON.stringify(claude.id)} })`);
 });

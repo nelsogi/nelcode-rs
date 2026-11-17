@@ -1,7 +1,9 @@
 //! Les modèles distants : des fournisseurs compatibles avec l'API OpenAI (llama.cpp, Ollama, LM Studio…), appelés
 //! par la partie Rust (jamais par l'interface : la CSP ne change pas), en streaming SSE.
 //!
-//! settings.json garde `providers: [{ id, name, url, models: [{ id, temperature?, topP?, maxTokens?, contextLength? }] }]`.
+//! settings.json garde `providers: [{ id, name, url, kind?, omitSampling?, models: [{ id, temperature?, topP?, maxTokens?,
+//! contextLength? }] }]`. `kind: "anthropic"` : l'API Claude (couche compatible OpenAI d'Anthropic) ; `omitSampling` :
+//! ne jamais envoyer temperature ni top_p (les modèles Claude récents les refusent).
 //! La clé d'un fournisseur n'y est jamais : elle est dans le Gestionnaire d'identification de Windows.
 
 use std::path::PathBuf;
@@ -29,7 +31,7 @@ fn idle_timeout() -> Duration {
 // ---------------------------------------------------------------------------------------------------------
 // Clés : Gestionnaire d'identification de Windows (identifiants génériques « NelCode:provider:<id> »)
 
-mod creds {
+pub(crate) mod creds {
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::Security::Credentials::{CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW, CredWriteW};
 
@@ -37,8 +39,17 @@ mod creds {
         s.encode_utf16().chain([0]).collect()
     }
 
+    /// « NelCode:provider:<id> ». Avec NELCODE_HOME (tests), un espace à part par dossier de données, pour que les
+    /// tests ne touchent jamais aux vraies clés de l'utilisateur. Fixé au premier appel.
     fn target(id: &str) -> Vec<u16> {
-        wide(&format!("NelCode:provider:{id}"))
+        static NS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let ns = NS.get_or_init(|| {
+            std::env::var("NELCODE_HOME").map_or(String::new(), |h| {
+                let hash = h.bytes().fold(0xcbf2_9ce4_8422_2325u64, |x, b| (x ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+                format!("test-{hash:016x}:")
+            })
+        });
+        wide(&format!("NelCode:{ns}provider:{id}"))
     }
 
     pub fn write(id: &str, key: &str) -> Result<(), String> {
@@ -140,6 +151,38 @@ pub fn list() -> Vec<Value> {
 }
 
 /// Crée ou modifie un fournisseur. `key` : nouvelle clé (vide : retirée ; absente : inchangée).
+/// La version d'API envoyée à l'API native d'Anthropic (liste des modèles).
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// `max_tokens` envoyé à Claude quand le modèle n'en a pas de réglé (réponse en streaming : pas de délai HTTP).
+const ANTHROPIC_MAX_TOKENS: u64 = 64_000;
+
+pub fn is_anthropic(p: &Value) -> bool {
+    p["kind"] == "anthropic"
+}
+
+/// Crée ou modifie un fournisseur. `key` : nouvelle clé (vide : retirée ; absente : inchangée). `kind` et
+/// `omit_sampling` : absents, inchangés (à la création : OpenAI, avec temperature/top_p).
+pub fn save_with(id: Option<String>, name: &str, url: &str, key: Option<&str>, kind: Option<&str>, omit_sampling: Option<bool>) -> Result<Value> {
+    let p = save(id, name, url, key)?;
+    let pid = p["id"].as_str().unwrap_or_default().to_string();
+    let mut list = providers();
+    if let Some(q) = list.iter_mut().find(|q| q["id"] == pid.as_str()) {
+        if let Some(k) = kind {
+            q["kind"] = if k == "anthropic" { "anthropic".into() } else { Value::Null };
+            if k != "anthropic" {
+                q.as_object_mut().unwrap().remove("kind");
+            }
+        }
+        if let Some(o) = omit_sampling {
+            q["omitSampling"] = o.into();
+        }
+    }
+    save_providers(list)?;
+    let mut p = find(&pid)?;
+    p["hasKey"] = creds::read(&pid).is_some().into();
+    Ok(p)
+}
+
 pub fn save(id: Option<String>, name: &str, url: &str, key: Option<&str>) -> Result<Value> {
     let name = name.trim();
     if name.is_empty() {
@@ -215,8 +258,14 @@ pub async fn test(id: &str) -> Result<Vec<String>> {
     let p = find(id)?;
     let url = p["url"].as_str().unwrap_or_default().to_string();
     let host = host_of(&url);
-    let mut req = client()?.get(format!("{url}/models")).timeout(idle_timeout().min(Duration::from_secs(30)));
+    // L'API d'Anthropic : la liste des modèles est sur son API native (x-api-key, anthropic-version, 1000 au plus).
+    let anthropic = is_anthropic(&p);
+    let models = if anthropic { format!("{url}/models?limit=1000") } else { format!("{url}/models") };
+    let mut req = client()?.get(models).timeout(idle_timeout().min(Duration::from_secs(30)));
     if let Some(k) = creds::read(id) {
+        if anthropic {
+            req = req.header("x-api-key", &k).header("anthropic-version", ANTHROPIC_VERSION);
+        }
         req = req.bearer_auth(k);
     }
     let resp = req.send().await.map_err(|e| send_error(&host, &e))?;
@@ -418,26 +467,31 @@ pub struct Turn {
     pub stopped: bool,
 }
 
-/// Le fournisseur `provider_id` : (adresse, hôte pour les messages, modèle et ses réglages).
-pub fn provider(provider_id: &str, model: &str) -> Result<(String, String, Value)> {
+/// Le fournisseur `provider_id` : (hôte pour les messages, adresse, modèle et ses réglages, le fournisseur).
+pub fn provider(provider_id: &str, model: &str) -> Result<(String, String, Value, Value)> {
     let p = find(provider_id)?;
     let url = p["url"].as_str().unwrap_or_default().to_string();
     let m = p["models"].as_array().and_then(|ms| ms.iter().find(|x| x["id"] == model).cloned()).unwrap_or_default();
-    Ok((host_of(&url), url, m))
+    Ok((host_of(&url), url, m, p))
 }
 
 /// Le corps d'une requête de chat : modèle, messages, streaming, et les réglages du modèle (sinon `sampling`).
-pub fn chat_body(model: &str, settings: &Value, messages: Vec<Value>, sampling: (f32, f32)) -> Value {
+/// Avec `omitSampling` (Claude), ni temperature ni top_p. Pour Claude, un `max_tokens` par défaut.
+pub fn chat_body(provider: &Value, model: &str, settings: &Value, messages: Vec<Value>, sampling: (f32, f32)) -> Value {
     let mut body = json!({
         "model": model,
         "messages": messages,
         "stream": true,
         "stream_options": { "include_usage": true },
-        "temperature": settings["temperature"].as_f64().unwrap_or(sampling.0 as f64),
-        "top_p": settings["topP"].as_f64().unwrap_or(sampling.1 as f64),
     });
-    if let Some(n) = settings["maxTokens"].as_u64() {
-        body["max_tokens"] = n.into();
+    if provider["omitSampling"] != true {
+        body["temperature"] = settings["temperature"].as_f64().unwrap_or(sampling.0 as f64).into();
+        body["top_p"] = settings["topP"].as_f64().unwrap_or(sampling.1 as f64).into();
+    }
+    match settings["maxTokens"].as_u64() {
+        Some(n) => body["max_tokens"] = n.into(),
+        None if is_anthropic(provider) => body["max_tokens"] = ANTHROPIC_MAX_TOKENS.into(),
+        None => {}
     }
     body
 }
@@ -591,9 +645,9 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
 
 /// Écrit la réponse de `model` chez le fournisseur `provider_id` (une conversation simple, sans outils).
 pub async fn generate(app: &AppHandle, provider_id: &str, model: &str, history: &[(String, String)], message: &str, sampling: (f32, f32), cancel: Arc<Notify>) -> Result<Turn> {
-    let (_, url, m) = provider(provider_id, model)?;
+    let (_, url, m, p) = provider(provider_id, model)?;
     let messages = fit(history, message, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024));
-    stream_chat(app, provider_id, &url, &chat_body(model, &m, messages, sampling), &cancel).await
+    stream_chat(app, provider_id, &url, &chat_body(&p, model, &m, messages, sampling), &cancel).await
 }
 
 #[cfg(test)]
@@ -657,6 +711,19 @@ mod tests {
         assert_eq!(creds::read(&id).as_deref(), Some("sk-2"));
         creds::delete(&id);
         assert_eq!(creds::read(&id), None);
+    }
+
+    #[test]
+    fn corps_sans_temperature_pour_claude() {
+        let msgs = vec![json!({ "role": "user", "content": "a" })];
+        let openai = chat_body(&json!({}), "m", &json!({}), msgs.clone(), (0.7, 0.9));
+        assert_eq!((openai["temperature"].as_f64(), openai["top_p"].as_f64()), (Some(0.699999988079071), Some(0.8999999761581421)));
+        assert!(openai.get("max_tokens").is_none());
+        let claude = chat_body(&json!({ "kind": "anthropic", "omitSampling": true }), "claude-opus-5-5", &json!({ "temperature": 0.2 }), msgs.clone(), (0.7, 0.9));
+        assert!(claude.get("temperature").is_none() && claude.get("top_p").is_none(), "jamais envoyés, même réglés sur le modèle");
+        assert_eq!(claude["max_tokens"], 64_000);
+        let reglé = chat_body(&json!({ "kind": "anthropic", "omitSampling": true }), "m", &json!({ "maxTokens": 500 }), msgs, (0.7, 0.9));
+        assert_eq!(reglé["max_tokens"], 500);
     }
 
     #[test]

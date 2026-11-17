@@ -27,6 +27,21 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   SECRET ne sont pas transmises. Le journal ne note que le nom du programme.
 - Tests unitaires (NELCODE.md et sa limite, plans, validation sans shell, liste autorisée, variables cachées, sortie
   limitée, délai et Stop qui tuent les enfants) et de l'interface pour chacun de ces points.
+- **Fournisseur Claude** : bouton « Ajouter Claude (Anthropic) » (`https://api.anthropic.com/v1/`, clé dans le
+  Gestionnaire d'identification ; liste des modèles par l'API native d'Anthropic, `max_tokens` par défaut). Option par
+  fournisseur « Ne pas envoyer temperature/top_p », cochée pour Claude. Le mode Agent marche avec.
+- **Claude Agent** : type de conversation mené par l'outil en ligne de commande `claude` d'Anthropic installé sur le PC
+  (trouvé dans le PATH, sinon un message avec le lien d'installation), dans le dossier de travail, en
+  `-p --output-format stream-json --verbose --include-partial-messages`, puis `--resume`. Texte au fil de l'eau, chaque
+  outil en étape dépliable (diff, sortie de commande), plan, coût et durée. Clé API seulement (`ANTHROPIC_API_KEY`
+  depuis le Gestionnaire d'identification, pas de connexion à un compte) ; mode de permission (rien d'automatique par
+  défaut, ou acceptEdits) et outils autorisés (`--allowedTools`) dans les réglages ; Stop envoie Ctrl+C (SIGINT) puis
+  attend la fin propre. Tests avec un faux exécutable qui rejoue des flux enregistrés.
+
+### Corrigé
+
+- Les tests de l'interface n'utilisent plus les vraies clés du Gestionnaire d'identification (espace à part pour les
+  tests), et l'effacement d'un dossier de test bloqué n'attend plus 4 minutes.
 
 ### Sécurité
 

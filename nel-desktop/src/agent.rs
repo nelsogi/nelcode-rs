@@ -863,13 +863,13 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
     let mut nelcode = None;
     let result: Result<()> = async {
         let sb = Sandbox::new(dir)?;
-        let (_, url, m) = remote::provider(provider_id, model)?;
+        let (_, url, m, p) = remote::provider(provider_id, model)?;
         let (system, info) = system_prompt(&sb);
         nelcode = info;
         let mut messages = vec![json!({ "role": "system", "content": system })];
         messages.extend(remote::fit(history, message, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024)));
         for turn_no in 0..max_turns {
-            let mut body = remote::chat_body(model, &m, messages.clone(), sampling);
+            let mut body = remote::chat_body(&p, model, &m, messages.clone(), sampling);
             body["tools"] = tools();
             let t = remote::stream_chat(app, provider_id, &url, &body, &cancel).await?;
             reasoning += &t.reasoning;

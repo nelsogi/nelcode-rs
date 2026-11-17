@@ -3,6 +3,7 @@
 
 mod agent;
 mod catalog;
+mod claude_agent;
 mod command;
 #[cfg(feature = "cuda")]
 mod delayload;
@@ -705,9 +706,10 @@ fn list_providers() -> Vec<Value> {
 }
 
 /// `key` : nouvelle clé (vide : retirée ; absente : inchangée), rangée dans le Gestionnaire d'identification.
+/// `kind` : "anthropic" pour l'API Claude ; `omit_sampling` : ne pas envoyer temperature/top_p.
 #[tauri::command]
-fn save_provider(id: Option<String>, name: String, url: String, key: Option<String>) -> Result<Value> {
-    remote::save(id, &name, &url, key.as_deref())
+fn save_provider(id: Option<String>, name: String, url: String, key: Option<String>, kind: Option<String>, omit_sampling: Option<bool>) -> Result<Value> {
+    remote::save_with(id, &name, &url, key.as_deref(), kind.as_deref(), omit_sampling)
 }
 
 #[tauri::command]
@@ -824,6 +826,46 @@ fn agent_undo_all(request: String) -> Result<Vec<String>> {
     agent::undo_all(&request)
 }
 
+// --- Claude Agent ------------------------------------------------------------------------------------------
+
+/// L'outil `claude` trouvé (ou le lien d'installation), la clé, le mode de permission, les outils autorisés.
+#[tauri::command]
+fn claude_agent_status() -> Value {
+    claude_agent::status()
+}
+
+/// La clé API d'Anthropic de Claude Agent, dans le Gestionnaire d'identification (vide : retirée).
+#[tauri::command]
+fn claude_agent_save_key(key: String) -> Result<()> {
+    claude_agent::save_key(&key)
+}
+
+/// Le lien d'installation de l'outil `claude` (adresse fixe : l'interface ne peut pas ouvrir autre chose).
+#[tauri::command]
+fn open_claude_install() -> Result<()> {
+    std::process::Command::new("explorer").arg(claude_agent::INSTALL_URL).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Un message d'une conversation Claude Agent (reprend `session_id` s'il est donné) : le flux part dans
+/// « gen-token », « agent-step »…, la fin dans « gen-done » ({ …, claude: { sessionId, cost, durationMs, turns } }).
+#[tauri::command]
+fn claude_agent_send(app: AppHandle, state: State<AppState>, session_id: Option<String>, message: String, dir: String) -> Result<()> {
+    if state.generating.swap(true, Ordering::SeqCst) {
+        return Err("une réponse est déjà en cours".into());
+    }
+    state.stop.store(false, Ordering::SeqCst);
+    let cancel = Arc::new(tokio::sync::Notify::new());
+    *state.remote_cancel.lock().unwrap() = Some(cancel.clone());
+    let generating = state.generating.clone();
+    tauri::async_runtime::spawn(async move {
+        let done = claude_agent::run(&app, session_id, message, dir, cancel).await;
+        app.state::<AppState>().remote_cancel.lock().unwrap().take();
+        generating.store(false, Ordering::SeqCst);
+        let _ = app.emit("gen-done", done);
+    });
+    Ok(())
+}
+
 /// Stop / Échap : le thread de génération s'arrête après le token en cours ; une réponse distante ferme sa connexion.
 #[tauri::command]
 fn stop_generation(state: State<AppState>) {
@@ -834,6 +876,11 @@ fn stop_generation(state: State<AppState>) {
 }
 
 fn main() {
+    // Nel Code relancé pour envoyer un Ctrl+C à Claude Agent (Stop) : rien d'autre.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some(claude_agent::CTRL_C_ARG) {
+        std::process::exit(argv.get(2).and_then(|p| p.parse().ok()).map_or(2, claude_agent::ctrl_c_helper));
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -908,6 +955,10 @@ fn main() {
             agent_undo_all,
             nelcode_md_info,
             create_nelcode_md,
+            claude_agent_status,
+            claude_agent_save_key,
+            open_claude_install,
+            claude_agent_send,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");

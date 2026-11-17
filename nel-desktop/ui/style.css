@@ -464,3 +464,16 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .plan-tasks li[data-status="in_progress"] .icon { color: var(--accent-text); }
 .plan-tasks li[data-status="done"] { color: var(--faint); text-decoration: line-through; }
 .plan-tasks li[data-status="done"] .icon { color: var(--success); }
+
+/* --- Claude Agent --- */
+.new-chat.claude { padding: 6px 10px; font-size: 13px; color: var(--text-2); }
+.chip.claude .icon { color: var(--accent-text); }
+.claude-cost { font: 11.5px var(--mono); color: var(--faint); align-self: center; margin-left: 6px; }
+.claude-field { display: flex; flex-direction: column; gap: 8px; }
+.claude-field > .row, .claude-field .field { width: 100%; margin: 0; }
+.claude-field .row-btns { display: flex; gap: 6px; width: 100%; }
+.claude-field .key { flex: 1; min-width: 0; }
+.claude-field .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.field textarea.claude-tools { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); }
+.provider .check .badge { font: 10.5px var(--mono); color: var(--accent-text); border: 1px solid var(--accent-border); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+.dialog .url { font: 12px var(--mono); user-select: text; overflow-wrap: anywhere; }

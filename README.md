@@ -87,6 +87,13 @@ l'API OpenAI.
 2. **Tester** appelle `/v1/models` et liste les modèles du serveur. Ils apparaissent dans la liste des modèles avec le
    badge **réseau** et le nom du fournisseur : un clic les choisit (la barre d'état affiche `modèle · réseau · fournisseur`).
 
+**Ajouter Claude (Anthropic)** préremplit un fournisseur pour l'API d'Anthropic (`https://api.anthropic.com/v1/`, sa
+couche compatible OpenAI) : il suffit d'y coller une clé API de la Console Anthropic (rangée, comme les autres, dans le
+Gestionnaire d'identification). Pour ce fournisseur, l'option **Ne pas envoyer temperature/top_p** est cochée : les
+modèles Claude récents refusent ces réglages (erreur 400). Elle existe pour chaque fournisseur. Le mode Agent marche
+avec Claude (ses outils passent par la même API). Anthropic présente cette couche compatible comme un moyen d'essayer
+ses modèles plutôt qu'une solution de production : la réflexion de Claude n'y est pas renvoyée.
+
 **Importer depuis Qwen Code** crée les fournisseurs à partir de `~/.qwen/settings.json` (`modelProviders.openai`) : un
 par adresse (`baseUrl`), avec les réglages de chaque modèle (`samplingParams` : `temperature`, `top_p`, `max_tokens` ;
 `generationConfig.contextWindowSize`). La clé (`envKey`) est cherchée dans `env` de ce fichier, dans `~/.qwen/.env`,
@@ -106,6 +113,29 @@ réponse, avec sa durée. Il est gardé dans la conversation, mais jamais renvoy
 (« NelCode:provider:… »), jamais dans `settings.json` ; supprimer le fournisseur la supprime. Une adresse en `http://`
 vers une autre machine affiche un avertissement : les messages passent **en clair** sur le réseau, préfère `https://`
 si le serveur le permet.
+
+### Claude Agent
+
+**Claude Agent** (bouton sous « Nouvelle conversation », `/claude-agent`, palette Ctrl+K) est un type de conversation
+mené par l'outil en ligne de commande `claude` d'Anthropic, installé sur le PC
+([installation](https://code.claude.com/docs/en/setup)) : Nel Code le cherche dans le PATH (`claude.exe`, puis
+`claude.cmd`), puis dans `%USERPROFILE%\.local\bin`, et l'indique s'il manque. L'outil travaille dans le dossier de
+travail de la conversation ; Nel Code affiche son travail dans l'interface habituelle : le texte au fil de l'eau, la
+réflexion, chaque outil comme une étape dépliable (lecture, écriture et modification avec leur diff, commande avec sa
+sortie), son plan dans le panneau Plan, puis le **coût** (estimé par l'outil) et la **durée** de chaque demande. Le
+message suivant reprend la même session (`--resume`).
+
+- **Clé API seulement** : dans **Réglages → Claude Agent**, une clé API de la Console Anthropic, rangée dans le
+  Gestionnaire d'identification et passée à l'outil comme `ANTHROPIC_API_KEY`. Pas de connexion à un compte Claude.ai.
+  Les autres variables d'environnement qui contiennent `KEY`, `TOKEN` ou `SECRET` ne sont pas transmises.
+- **Mode de permission** : par défaut, rien d'automatique (`--permission-mode default` : sans personne pour répondre,
+  tout ce qui demande un accord est refusé et l'étape s'affiche « refusée ») ; en option, **accepter les
+  modifications de fichiers** (`acceptEdits`). **Outils autorisés** (`--allowedTools`), un par ligne :
+  `Read`, `Bash(dotnet build *)`…
+- **Stop** envoie Ctrl+C à l'outil (son SIGINT sous Windows), puis attend qu'il finisse proprement (le début de la
+  réponse est gardé) ; au-delà de 15 s, il est arrêté avec tous ses processus.
+- Le message part sur l'entrée standard de l'outil, jamais en argument. Pas de Régénérer ni de Modifier dans ces
+  conversations : la session de l'outil ne se réécrit pas.
 
 ### Mode Agent
 
@@ -191,6 +221,7 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/models` | Lister les modèles installés |
 | `/import [fichier]` | Importer un `.nelmodel` ou un `.gguf` |
 | `/agent` | Mode Agent (modèle distant qui gère les outils : fichiers, plan, commandes) |
+| `/claude-agent` | Nouvelle conversation Claude Agent |
 | `/catalogue` | Télécharger un modèle ouvert |
 | `/temp <0.1 à 2>` | Température : bas = sage, haut = créatif |
 | `/topk <n>` | Tirage parmi les K tokens les plus probables (0 = sans limite) |
@@ -379,7 +410,10 @@ badge « réseau », streaming, réflexion (trois formats), Stop, délai maximal
 sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Accepter / Refuser / Accepter tout, chaque
 annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart, fichiers protégés (lecture et
 recherche, motifs des réglages), noms réservés de Windows, NELCODE.md, plan et commandes (shells refusés, sortie en
-direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants). Les fichiers de test se lancent
+direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants), et le fournisseur Claude.
+`e2e/claude.test.mjs` couvre Claude Agent avec un faux exécutable `claude` (`e2e/fake-claude/main.rs`, compilé par le
+test avec `rustc`) qui rejoue des flux stream-json enregistrés (`e2e/fake-claude/*.jsonl`). Les clés des tests sont
+rangées à part dans le Gestionnaire d'identification : les tests ne touchent jamais aux vraies clés. Les fichiers de test se lancent
 l'un après l'autre (`--test-concurrency=1`) : une seule fenêtre de Nel Code à la fois. `e2e/gguf.test.mjs` couvre le catalogue
 (servi en local : licence, empreinte refusée, téléchargement), une réponse de Qwen2.5-Coder, le contexte réglable et
 l'import d'un `.gguf` par glisser-déposer ; il est ignoré sans le `.gguf` de test. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans
@@ -422,7 +456,7 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | Dossier | Contenu |
 |---|---|
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, mode Agent, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, JS sans framework) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
 

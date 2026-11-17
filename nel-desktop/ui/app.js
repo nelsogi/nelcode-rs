@@ -369,7 +369,7 @@ function canGenerate() {
   if (S.gen) return false;
   if (S.bench) { toast('Test de vitesse en cours…', 'warning'); return false; }
   if (U.state === 'installing') { toast('Installation de la mise à jour en cours…', 'warning'); return false; }
-  if (!S.model.name && !S.current?.compare) {
+  if (!S.model.name && !S.current?.compare && !S.current?.claudeAgent) {
     toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, importe un .nelmodel ou un .gguf, ou ouvre le catalogue.', 'warning');
     return false;
   }
@@ -404,7 +404,11 @@ async function startGen(s, g) {
     const r = S.model.remote;
     if (g.kind === 'compare')
       await invoke('compare_generate', { a: s.compare.a, b: s.compare.b, historyA: g.history, historyB: g.historyB, message: g.question, options: genOptions() });
-    else if (s.agent) {
+    else if (s.claudeAgent) {
+      // Claude Agent : l'outil claude reprend sa propre session ; l'historique n'est pas renvoyé.
+      if (!s.workingDirectory) throw new Error('Claude Agent : choisis d\'abord un dossier de travail (/dir).');
+      await invoke('claude_agent_send', { sessionId: s.claudeAgent.sessionId ?? null, message: g.question, dir: s.workingDirectory });
+    } else if (s.agent) {
       // Le mode Agent : seulement un modèle distant qui gère les outils ; jamais un .nelmodel ni un GGUF local.
       if (!r) throw new Error(AGENT_LOCAL);
       if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
@@ -470,9 +474,19 @@ async function onDone(p) {
   }
   // Le plan de l'agent : le dernier, gardé avec la conversation.
   if (Array.isArray(p.plan) && p.plan.length) s.plan = { request: p.agent?.request, tasks: p.plan, date: localIso() };
+  // Claude Agent : la session à reprendre, et le coût et la durée de la demande.
+  if (p.claude && s.claudeAgent) {
+    if (p.claude.sessionId) s.claudeAgent.sessionId = p.claude.sessionId;
+    const last = s.messages.at(-1);
+    if (last?.role === 'assistant') last.claude = { cost: p.claude.cost, durationMs: p.claude.durationMs, turns: p.claude.turns };
+    s.claudeAgent.cost = (s.claudeAgent.cost ?? 0) + (p.claude.cost ?? 0);
+  }
   if (text) { touch(s); await saveSession(s); }
   if (!p.error && p.tokens) {
     S.lastSpeed = `${p.tokens} tokens · ${(p.tokens / p.seconds).toFixed(1)} tokens/s${p.stopped ? ' · arrêtée' : ''}`;
+  }
+  if (p.claude) {
+    S.lastSpeed = claudeCost(p.claude) + (p.stopped ? ' · arrêtée' : '');
   }
   renderAll();
 }
@@ -499,6 +513,61 @@ function stop() { if (S.gen) invoke('stop_generation'); }
 // --- Mode Agent -----------------------------------------------------------------------------------------
 
 const AGENT_LOCAL = 'Le mode Agent demande un modèle distant qui gère les outils (llama.cpp lancé avec --jinja, Ollama avec Qwen3…) : les .nelmodel et les modèles GGUF de ce PC n\'y ont pas accès.';
+
+// --- Claude Agent ---------------------------------------------------------------------------------------
+// Une conversation menée par l'outil « claude » d'Anthropic installé sur le PC, avec une clé API.
+
+const money = (usd) => `${Number(usd ?? 0).toLocaleString('fr-CH', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} $`;
+const claudeCost = (c) => [c.cost !== null && c.cost !== undefined && money(c.cost), c.durationMs && `${(c.durationMs / 1000).toLocaleString('fr-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`,
+  c.turns && `${c.turns} tour${c.turns > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+
+async function startClaudeAgent() {
+  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  const st = S.claudeStatus = await invoke('claude_agent_status');
+  if (!st.cli) {
+    return dialog('Claude Agent', [h('p', {}, 'Claude Agent utilise l\'outil en ligne de commande « claude » d\'Anthropic, introuvable sur ce PC (ni dans le PATH, ni dans %USERPROFILE%\\.local\\bin).'),
+      h('p', {}, 'Installe-le, puis relance Nel Code :'), h('div', { class: 'url' }, st.installUrl)],
+    [{ label: 'Fermer', value: null }, { label: 'Ouvrir la page d\'installation', value: 'open', primary: true }]).then((v) => v && invoke('open_claude_install'));
+  }
+  if (!st.hasKey) {
+    toast('Claude Agent : ajoute d\'abord ta clé API Anthropic (Réglages → Claude Agent).', 'warning', 8000);
+    return openSettings();
+  }
+  closeEdit();
+  S.current = { ...newSession(), claudeAgent: {} };
+  S.lastSpeed = '';
+  renderAll();
+  $('input').focus();
+}
+
+// La section Claude Agent des réglages : rend { el, mode, tools } (enregistrés avec les autres réglages ; la clé, tout de suite).
+async function claudeSection() {
+  const st = S.claudeStatus = await invoke('claude_agent_status');
+  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: st.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…' });
+  const saveKey = async (value) => {
+    try {
+      await invoke('claude_agent_save_key', { key: value });
+      key.value = '';
+      S.claudeStatus = await invoke('claude_agent_status');
+      key.placeholder = S.claudeStatus.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…';
+      toast(value ? 'Clé API enregistrée dans le Gestionnaire d\'identification.' : 'Clé API retirée.', 'success', 3000);
+    } catch (e) { toast(errText(e), 'error'); }
+  };
+  const mode = h('select', { class: 'text-input mode' }, h('option', { value: 'default' }, 'Rien d\'automatique (par défaut) : tout ce qui demande un accord est refusé'),
+    h('option', { value: 'acceptEdits' }, 'Accepter les modifications de fichiers (acceptEdits)'));
+  mode.value = st.permissionMode;
+  const tools = h('textarea', { class: 'text-input claude-tools', rows: 2, spellcheck: 'false', placeholder: 'Read\nBash(dotnet build *)' });
+  tools.value = (st.allowedTools ?? []).join('\n');
+  const el = h('div', { class: 'field claude-field' }, h('div', { class: 'row' }, h('span', {}, 'Claude Agent')),
+    h('div', { class: 'hint cli' }, st.cli ? `Outil « claude » : ${st.cli}` : [`Outil « claude » d'Anthropic introuvable : `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_claude_install'); } }, 'l\'installer')]),
+    h('div', { class: 'row-btns' }, key, h('button', { class: 'btn', onclick: () => saveKey(key.value) }, 'Ranger la clé'),
+      st.hasKey ? h('button', { class: 'btn', onclick: () => saveKey('') }, 'Retirer la clé') : null),
+    h('div', { class: 'hint' }, 'Clé API Anthropic (Console Anthropic), rangée dans le Gestionnaire d\'identification de Windows et passée à l\'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.'),
+    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Mode de permission')), mode),
+    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Outils autorisés sans accord (--allowedTools)')), tools,
+      h('div', { class: 'hint' }, 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.')));
+  return { el, mode, tools };
+}
 
 // La puce NELCODE.md de l'en-tête (mode Agent) : pris en compte, ou bouton pour en créer un modèle.
 let nelcodeAsk = 0;
@@ -529,6 +598,7 @@ async function nelcodeChip() {
 
 function toggleAgent() {
   const s = S.current;
+  if (s.claudeAgent) return toast('Une conversation Claude Agent a déjà ses propres outils.', 'warning');
   if (!s.agent && !S.model.remote) return toast(AGENT_LOCAL, 'warning', 8000);
   if (s.compare) return toast('Le mode Agent ne marche pas en conversation comparée.', 'warning');
   s.agent = !s.agent;
@@ -975,7 +1045,7 @@ function renderSessions() {
       class: s === S.current ? 'active' : '', title: titleOf(s),
       onclick: () => openSession(s), oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e); },
       ondblclick: () => renameSession(s),
-    }, h('span', { class: 'label' }, s.compare ? icon('arrow-left-right') : null, titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
+    }, h('span', { class: 'label' }, s.compare ? icon('arrow-left-right') : s.claudeAgent ? icon('bot') : null, titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
   }
   if (!ul.children.length) ul.append(h('li', { class: 'none' }, q ? 'Aucun résultat.' : 'Pas encore de conversation.'));
 }
@@ -1010,6 +1080,9 @@ function renderHeader() {
   $('folder-chip').title = 'Dossier de travail : ' + (dir || '(aucun)') + '\nClic : changer';
   document.title = `${titleOf(s)} — Nel Code`;
   $('compare-chip').hidden = !s.compare;
+  $('claude-chip').hidden = !s.claudeAgent;
+  if (s.claudeAgent) $('claude-chip').replaceChildren(icon('bot'), h('span', {}, `Claude Agent${s.claudeAgent.cost ? ' · ' + money(s.claudeAgent.cost) : ''}`));
+  $('agent-btn').hidden = !!s.claudeAgent;
   if (s.compare) $('compare-chip').replaceChildren(`A ${s.compare.a}`, icon('arrow-left-right'), h('span', {}, `B ${s.compare.b}`));
   $('transp-btn').classList.toggle('on', !!S.settings.transparency);
   $('agent-btn').classList.toggle('on', !!s.agent);
@@ -1084,10 +1157,11 @@ function messageEl(m, i, faded) {
     await navigator.clipboard.writeText(m.content);
     b.replaceChildren(icon('check'), 'Copié'); setTimeout(() => b.replaceChildren(icon('copy'), 'Copier'), 1200);
   }));
-  if (user) acts.append(actionButton([icon('pencil'), 'Modifier'], 'Modifier et renvoyer (la suite est retirée)', () => startEdit(i), busy));
+  if (user && !S.current.claudeAgent) acts.append(actionButton([icon('pencil'), 'Modifier'], 'Modifier et renvoyer (la suite est retirée)', () => startEdit(i), busy));
   else {
     const prev = S.current.messages[i - 1];
-    if (prev?.role === 'user' && !S.current.compare) acts.append(actionButton([icon('refresh-cw'), 'Régénérer'], 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
+    if (m.claude) acts.append(h('span', { class: 'claude-cost', title: 'Coût estimé par l\'outil claude, et durée de la demande' }, claudeCost(m.claude)));
+    if (prev?.role === 'user' && !S.current.compare && !S.current.claudeAgent) acts.append(actionButton([icon('refresh-cw'), 'Régénérer'], 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
     if (m.versions?.length > 1) {
       const at = m.versions.indexOf(m.content);
       acts.append(h('span', { class: 'versions' },
@@ -1116,6 +1190,7 @@ function renderStatus() {
   else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), `${S.gen.side.toUpperCase()} · ${S.gen.session.compare[S.gen.side]} écrit…  Échap pour arrêter`);
   else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
   else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
+  else if (S.current?.claudeAgent) st.append(`Claude Agent · ${S.claudeStatus?.permissionMode === 'acceptEdits' ? 'modifications de fichiers acceptées' : 'rien d\'automatique'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else if (S.model.name) st.append(`${S.model.name} · ${S.model.device ?? 'CPU'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else st.append('aucun modèle chargé');
   if (S.server.port) st.append(h('span', { class: 'server-on', title: `Serveur local (API OpenAI) : http://127.0.0.1:${S.server.port}/v1` },
@@ -1127,6 +1202,7 @@ function refreshContext() {
   clearTimeout(contextTimer);
   contextTimer = setTimeout(async () => {
     const fill = $('context-fill');
+    if (S.current?.claudeAgent) { S.context = null; $('context-text').textContent = 'contexte géré par Claude Agent'; fill.style.width = '0'; return; }
     if (!S.model.name) { S.context = null; $('context-text').textContent = '— / — tokens'; fill.style.width = '0'; return; }
     if (S.model.remote) {
       // Pas de tokenizer pour un modèle distant : environ 4 caractères par token.
@@ -1157,6 +1233,7 @@ function refreshContext() {
 
 const COMMANDS = [
   { name: 'new', desc: 'Nouvelle conversation', run: () => startNew() },
+  { name: 'claude-agent', desc: 'Nouvelle conversation Claude Agent (outil claude d\'Anthropic)', run: () => startClaudeAgent() },
   { name: 'compare', desc: 'Conversation comparée entre deux modèles', run: () => openCompare() },
   { name: 'classement', desc: 'Classement du mode comparaison', run: () => openLeaderboard() },
   { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
@@ -1287,7 +1364,8 @@ async function openSettings() {
   const calc = await calcSection(s);
   body.push(calc.el);
   const srv = await serverSection(s);
-  body.push(srv.el, await providersSection());
+  const claude = await claudeSection();
+  body.push(srv.el, await providersSection(), claude.el);
   const allowedCommands = h('textarea', { class: 'text-input commands', rows: 2, spellcheck: 'false', placeholder: 'dotnet build\ndotnet test' });
   allowedCommands.value = (s.allowedCommands ?? []).join('\n');
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Commandes autorisées sans confirmation')), allowedCommands,
@@ -1305,10 +1383,11 @@ async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, commandTimeout: 120, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, commandTimeout: 120, claudePermissionMode: 'default', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
         serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
-        allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean) };
+        allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean),
+        claudePermissionMode: claude.mode.value, claudeAllowedTools: claude.tools.value.split('\n').map((l) => l.trim()).filter(Boolean) };
     const before = s.device ?? 'auto', limit = s.contextLimit;
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
     try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }
@@ -1337,6 +1416,11 @@ async function providersSection() {
   const draw = () => box.replaceChildren(...S.providers.map((p) => providerForm(p, draw)));
   draw();
   const add = h('button', { class: 'btn', onclick: () => { box.append(providerForm({ models: [] }, draw)); box.lastChild.querySelector('input').focus(); } }, icon('plus'), 'Ajouter un fournisseur');
+  // Le modèle « Claude » : l'API d'Anthropic (couche compatible OpenAI), sans temperature/top_p.
+  const claudeTemplate = h('button', { class: 'btn', title: 'API d\'Anthropic, clé API de la Console Anthropic', onclick: () => {
+    box.append(providerForm({ name: 'Claude', url: 'https://api.anthropic.com/v1/', kind: 'anthropic', omitSampling: true, models: [] }, draw));
+    box.lastChild.querySelector('.key').focus();
+  } }, icon('plus'), 'Ajouter Claude (Anthropic)');
   const qwen = h('button', { class: 'btn', onclick: async () => {
     try {
       const r = await invoke('import_qwen');
@@ -1344,7 +1428,7 @@ async function providersSection() {
       await refreshProviders(); draw();
     } catch (e) { toast('Import depuis Qwen Code : ' + errText(e), 'error', 8000); }
   } }, icon('download'), 'Importer depuis Qwen Code');
-  return h('div', { class: 'field providers-field' }, h('div', { class: 'row' }, h('span', {}, 'Fournisseurs (modèles distants)')), box, h('div', { class: 'row-btns' }, add, qwen),
+  return h('div', { class: 'field providers-field' }, h('div', { class: 'row' }, h('span', {}, 'Fournisseurs (modèles distants)')), box, h('div', { class: 'row-btns' }, add, claudeTemplate, qwen),
     h('div', { class: 'hint' }, 'Un serveur compatible avec l\'API OpenAI : llama.cpp, Ollama (http://hôte:11434/v1), LM Studio… Ses modèles apparaissent dans la liste avec le badge « réseau ». La clé va dans le Gestionnaire d\'identification de Windows, jamais dans settings.json.'));
 }
 
@@ -1354,6 +1438,7 @@ function providerForm(p, redraw) {
   const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)' });
   const warn = h('div', { class: 'warn-text http' }, icon('circle-alert'), 'Adresse en http : les messages passent en clair sur le réseau. Préfère https si le serveur le permet.');
   const status = h('div', { class: 'hint status' }, p.models?.length ? `${p.models.length} modèle(s) : ${p.models.map((m) => m.id).join(', ')}` : '');
+  const omit = h('input', { type: 'checkbox', class: 'omit-sampling', checked: !!p.omitSampling });
   const showWarn = () => (warn.hidden = !cleartext(url.value));
   url.addEventListener('input', showWarn);
   showWarn();
@@ -1361,7 +1446,7 @@ function providerForm(p, redraw) {
   const form = h('div', { class: 'provider', 'data-id': p.id ?? '', onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); save(); } } });
   const save = async (newKey = key.value || null) => {
     try {
-      const saved = await invoke('save_provider', { id: p.id ?? null, name: name.value, url: url.value, key: newKey });
+      const saved = await invoke('save_provider', { id: p.id ?? null, name: name.value, url: url.value, key: newKey, kind: p.kind ?? 'openai', omitSampling: omit.checked });
       Object.assign(p, saved);
       key.value = '';
       key.placeholder = p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)';
@@ -1389,7 +1474,8 @@ function providerForm(p, redraw) {
       if (S.model.remote?.provider === p.id) Object.assign(S.model, { name: null, remote: null, blockSize: null });
       await refreshProviders(); redraw(); renderStatus(); refreshContext();
     } }, 'Supprimer')),
-  url, h('div', { class: 'row-btns' }, key, p.hasKey ? h('button', { class: 'btn', onclick: () => save('').then(() => toast('Clé retirée.', 'success', 2000)) }, 'Retirer la clé') : null), warn, status);
+  url, h('div', { class: 'row-btns' }, key, p.hasKey ? h('button', { class: 'btn', onclick: () => save('').then(() => toast('Clé retirée.', 'success', 2000)) }, 'Retirer la clé') : null),
+  h('label', { class: 'check' }, omit, 'Ne pas envoyer temperature/top_p', p.kind === 'anthropic' ? h('span', { class: 'badge' }, 'Anthropic') : null), warn, status);
   return form;
 }
 
@@ -1551,7 +1637,7 @@ async function showInfo() {
 function openPalette() {
   if (closeOverlay) return;
   const actions = [
-    ['Nouvelle conversation', 'Ctrl+N', startNew], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard],
+    ['Nouvelle conversation', 'Ctrl+N', startNew], ['Nouvelle conversation Claude Agent', '', startClaudeAgent], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard],
     ['Mode transparence', '', toggleTransparency], ['Mode Agent', '', toggleAgent], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', openSettings],
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
@@ -1675,6 +1761,7 @@ $('input').addEventListener('keydown', (e) => {
 $('input').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('input')) $('suggest').hidden = true; }, 100));
 $('send').onclick = () => (S.gen ? stop() : submitInput());
 $('new-chat').onclick = startNew;
+$('claude-chat').onclick = startClaudeAgent;
 $('search').oninput = renderSessions;
 $('import-btn').onclick = () => importFlow();
 $('catalog-btn').onclick = () => openCatalog();

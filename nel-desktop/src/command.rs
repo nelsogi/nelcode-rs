@@ -126,10 +126,10 @@ impl Capture {
 }
 
 /// Le Job Object : tuer le job tue le processus et tous ses enfants ; le fermer (drop) tue ce qui reste.
-struct Job(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct Job(pub(crate) windows_sys::Win32::Foundation::HANDLE);
 
 impl Job {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         use windows_sys::Win32::System::JobObjects::*;
         unsafe {
             let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
@@ -143,7 +143,7 @@ impl Job {
         }
     }
 
-    fn kill(&self) {
+    pub(crate) fn kill(&self) {
         unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) };
     }
 }
@@ -159,7 +159,7 @@ unsafe impl Send for Job {}
 unsafe impl Sync for Job {}
 
 /// Reprend un processus créé suspendu (CREATE_SUSPENDED) : tous ses threads.
-fn resume(pid: u32) {
+pub(crate) fn resume(pid: u32) {
     use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
     use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
     unsafe {
