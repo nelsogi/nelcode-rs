@@ -15,7 +15,7 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 
 ## Installation
 
-1. Télécharge `Nel Code_0.8.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+1. Télécharge `Nel Code_0.9.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -135,6 +135,13 @@ refusée, pour ne rien perdre.
 **Sécurité** :
 - tout reste dans le dossier de travail : chemins relatifs normalisés ; `..`, chemins absolus, noms avec `:` et liens
   (symboliques ou jonctions) qui sortent du dossier sont refusés ; les fichiers trop gros aussi ;
+- les noms réservés de Windows (`CON`, `NUL`, `COM1`, `LPT1`…, avec ou sans extension) et les noms qui finissent par un
+  point ou une espace sont refusés ;
+- les **fichiers protégés** ne sont lus qu'avec ta confirmation explicite, à chaque fois (« Accepter tout » des
+  écritures ne compte pas pour eux), et `search` ne les parcourt jamais sans elle. Par défaut : `.env`, `.env.*`,
+  `.git/`, `*.pem`, `*.key`, `*.pfx`, `id_rsa`, `*.kdbx`, `appsettings.*.json`, `secrets.json` ; d'autres s'ajoutent
+  dans **Réglages → Fichiers protégés** (un motif par ligne : `*.secret`, `privé/` pour un dossier, `config/prod.yml`
+  pour un chemin) ;
 - pas d'exécution de commandes ;
 - ce qui est lu dans un fichier n'est **jamais une instruction pour Nel Code** : c'est renvoyé au modèle comme donnée
   (avec la consigne de ne pas y obéir), et seul le modèle peut demander un outil. Une écriture attend toujours ton accord,
@@ -144,8 +151,9 @@ refusée, pour ne rien perdre.
 
 Tape `@` dans la saisie : les fichiers du dossier de travail s'affichent (sans les dossiers cachés, `node_modules`,
 `target`…). Le fichier choisi (`@src/main.rs`) est lu et ajouté au message dans un bloc de code ; la barre de contexte le
-compte. Un fichier de plus de 100 Ko, binaire, ou hors du dossier est refusé ; si le message dépasse le contexte du modèle,
-Nel Code prévient avant de l'envoyer. **Lecture seule** : Nel Code ne modifie, ne crée et ne supprime jamais un fichier du
+compte. Un fichier de plus de 100 Ko, binaire, hors du dossier ou au nom réservé de Windows est refusé ; un fichier
+protégé (`.env`, `*.pem`… voir le mode Agent) n'est lu qu'après confirmation ; si le message dépasse le contexte du
+modèle, Nel Code prévient avant de l'envoyer. **Lecture seule** : Nel Code ne modifie, ne crée et ne supprime jamais un fichier du
 dossier de travail.
 
 Chaque conversation a son **dossier de travail** (en haut à droite) : l'export s'y ouvre, et `/import <fichier>` y cherche
@@ -350,7 +358,8 @@ modèles distants avec un faux serveur local : fournisseurs, avertissement http,
 badge « réseau », streaming, réflexion (trois formats), Stop, délai maximal, erreurs, import depuis Qwen Code.
 `e2e/agent.test.mjs` couvre le mode Agent avec un faux modèle qui appelle les outils : chaque outil, chaque refus (bac à
 sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Accepter / Refuser / Accepter tout, chaque
-annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart. Les fichiers de test se lancent
+annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart, fichiers protégés (lecture et
+recherche, motifs des réglages) et noms réservés de Windows. Les fichiers de test se lancent
 l'un après l'autre (`--test-concurrency=1`) : une seule fenêtre de Nel Code à la fois. `e2e/gguf.test.mjs` couvre le catalogue
 (servi en local : licence, empreinte refusée, téléchargement), une réponse de Qwen2.5-Coder, le contexte réglable et
 l'import d'un `.gguf` par glisser-déposer ; il est ignoré sans le `.gguf` de test. `e2e/gpu.test.mjs` (pack GPU, calcul sur GPU) est ignoré sans carte NVIDIA, sans

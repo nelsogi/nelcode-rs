@@ -34,6 +34,15 @@ const SCRIPTS = {
     call('write_file', { path: 'src/Program.cs', content: 'écrasé' }), call('run_command', { cmd: 'del *' }), { name: 'read_file', raw: '{"path": ' },
   ]],
   boucle: () => ['', [call('list_files', {})]],
+  // Fichiers protégés et noms réservés
+  protege: (n) => [['', [call('read_file', { path: '.env' })]], ['', [call('read_file', { path: 'certs/server.pem' })]], ['', [call('read_file', { path: '.git/config' })]], ['', [call('read_file', { path: 'notes.secret' })]]][n] ?? ['Lu ce qui était permis.', []],
+  'recherche-protegee': (n) => n ? ['Recherche faite.', []] : ['', [call('search', { query: 'motdepasse' })]],
+  'tout-puis-protege': (n) => n ? ['Fini.', []] : ['', [call('write_file', { path: 'p1.txt', content: 'p1' }), call('read_file', { path: 'config/appsettings.Production.json' })]],
+  'protege-stop': () => ['', [call('read_file', { path: 'k/private.key' })]],
+  reserves: (n) => n ? ['Aucun nom accepté.', []] : ['', [
+    call('read_file', { path: 'NUL' }), call('read_file', { path: 'con.txt' }), call('write_file', { path: 'COM1.log', content: 'x' }),
+    call('write_file', { path: 'notes./x.txt', content: 'x' }), call('write_file', { path: 'fin ', content: 'x' }), call('read_file', { path: 'src/Program.cs.' }),
+  ]],
 };
 
 function chat(req, res, body) {
@@ -303,4 +312,104 @@ test('modèle qui ne gère pas les outils : message clair', async () => {
   await finish();
   await A.waitFor(`T.toasts().includes('ne gère pas les outils (tool calling)')`, 5_000);
   assert.ok(await A.ev(`T.toasts().includes('llama.cpp lancé avec --jinja')`));
+});
+
+// --- Fichiers protégés et noms réservés ---------------------------------------------------------------------
+
+const SECRETS = {
+  '.env': 'DB_PASSWORD=hunter2-motdepasse',
+  '.git/config': '[remote] url=https://jeton-git@exemple.ch motdepasse',
+  'certs/server.pem': '-----BEGIN PRIVATE KEY----- motdepasse-pem',
+  'k/private.key': 'cle-privee motdepasse',
+  'config/appsettings.Production.json': '{ "ConnectionString": "motdepasse-prod" }',
+  'notes.secret': 'motdepasse personnel',
+  'src/app.cs': '// motdepasse : variable ordinaire',
+};
+const everything = () => JSON.stringify(chats);
+
+test('fichiers protégés : motif ajouté dans les réglages (« Fichiers protégés »)', async () => {
+  for (const [f, c] of Object.entries(SECRETS)) { fs.mkdirSync(path.dirname(path.join(DIR, f)), { recursive: true }); fs.writeFileSync(path.join(DIR, f), c); }
+  await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { agentMaxTurns: 10 } }).then((s) => (S.settings = s, true))`);
+  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
+  await A.waitFor(`T.dialog()?.querySelector('textarea.protected')`, 10_000);
+  assert.match(await A.ev(`T.dialog().textContent`), /Toujours protégés : \.env, \.env\.\*, \.git\/, \*\.pem/);
+  await A.ev(`T.setValue(T.dialog().querySelector('textarea.protected'), '*.secret\\n\\n  *.secret  \\nprivé/'); T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);   // pas celui du fournisseur
+  await A.waitFor(`JSON.stringify(S.settings.protectedFiles) === '["*.secret","privé/"]'`, 5_000, 'motifs enregistrés (sans vide ni doublon)');
+  assert.deepEqual(A.readJson('settings.json').protectedFiles, ['*.secret', 'privé/']);
+});
+
+test('read_file d\'un fichier protégé : confirmation explicite, Refuser ou Autoriser', async () => {
+  await start('protege', 'Lis les réglages');
+  // .env : refusé — le contenu ne part jamais.
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000, '.env à confirmer');
+  assert.match(await A.ev(`${stepEl(0)}.textContent`), /Lecture de \.env — fichier protégé.*\(\.env\)/s);
+  assert.deepEqual(await A.ev(`[...${stepEl(0)}.querySelectorAll('button')].map((b) => b.textContent)`), ['Autoriser la lecture', 'Refuser']);
+  await A.ev(`T.button('Refuser', ${stepEl(0)})`);
+  // certs/server.pem : autorisé.
+  await decide(1, 'Autoriser la lecture');
+  // .git/config et notes.secret (motif des réglages) : refusés.
+  await decide(2, 'Refuser');
+  await decide(3, 'Refuser');
+  await finish();
+  const m = await lastMsg();
+  assert.deepEqual(m.agent.steps.map((s) => [s.path, s.status]), [['.env', 'rejected'], ['certs/server.pem', 'done'], ['.git/config', 'rejected'], ['notes.secret', 'rejected']]);
+  assert.match(m.agent.steps[1].title, /autorisée$/);
+  const results = toolResults();
+  assert.match(results[0], /refusé par l'utilisateur : « \.env » est un fichier protégé, il n'a pas été lu/);
+  assert.match(results[1], /BEGIN PRIVATE KEY/);
+  for (const secret of ['hunter2', 'jeton-git', 'motdepasse personnel']) assert.ok(!everything().includes(secret), `« ${secret} » envoyé au modèle`);
+});
+
+test('« Accepter tout » des écritures ne vaut pas pour un fichier protégé', async () => {
+  await start('tout-puis-protege', 'Écris puis lis');
+  await decide(0, 'Accepter tout pour cette demande');
+  await A.waitFor(`${stepEl(1)}?.dataset.status === 'pending'`, 10_000, 'lecture protégée toujours à confirmer');
+  await A.ev(`T.button('Refuser', ${stepEl(1)})`);
+  await finish();
+  assert.deepEqual((await lastMsg()).agent.steps.map((s) => s.status), ['accepted', 'rejected']);
+  assert.ok(!everything().includes('motdepasse-prod'));
+  fs.rmSync(path.join(DIR, 'p1.txt'));
+});
+
+test('search ne parcourt jamais les fichiers protégés sans confirmation', async () => {
+  await start('recherche-protegee', 'Cherche motdepasse');
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000, 'recherche à confirmer');
+  const detail = await A.ev(`${stepEl(0)}.querySelector('.detail').textContent`);
+  for (const f of ['certs/server.pem', 'config/appsettings.Production.json', 'k/private.key', 'notes.secret']) assert.ok(detail.includes(f), f);
+  assert.ok(!detail.includes('.env') && !detail.includes('.git'), 'les dossiers et fichiers cachés ne sont même pas listés');
+  assert.match(await A.ev(`${stepEl(0)}.querySelector('.title').textContent`), /4 fichiers protégés à confirmer/);
+  await A.ev(`T.button('Refuser', ${stepEl(0)})`);
+  await finish();
+  let r = toolResults()[0];
+  assert.equal(r, 'src/app.cs:1: // motdepasse : variable ordinaire\n(4 fichiers protégés non parcourus : refusé par l\'utilisateur)');
+  assert.match((await lastMsg()).agent.steps[0].title, /— 1 résultat \(4 fichiers protégés non parcourus : refusé par l'utilisateur\)$/);
+  // Accepté : les fichiers protégés sont parcourus ; .env et .git/ restent hors de la recherche (cachés).
+  await start('recherche-protegee', 'Cherche encore');
+  await decide(0, 'Parcourir aussi ces fichiers');
+  await finish();
+  r = toolResults()[0];
+  assert.equal(r.split('\n').length, 5);
+  assert.ok(r.includes('certs/server.pem:1:') && r.includes('notes.secret:1:'));
+  assert.ok(!r.includes('hunter2') && !r.includes('jeton-git'));
+});
+
+test('Stop pendant la confirmation d\'un fichier protégé : rien n\'est lu', async () => {
+  const before = chats.length;   // (la recherche acceptée du test précédent a pu envoyer cette clé : seules les requêtes d'ici comptent)
+  await start('protege-stop', 'Lis la clé');
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000);
+  await A.ev(`T.key('Escape', {}, document)`);
+  await finish();
+  assert.equal((await lastMsg()).agent.steps[0].status, 'rejected');
+  assert.ok(!JSON.stringify(chats.slice(before)).includes('cle-privee'));
+});
+
+test('noms réservés de Windows et noms finissant par un point ou une espace : refusés', async () => {
+  await start('reserves', 'Essaie ces noms');
+  await finish();
+  const results = toolResults();
+  assert.equal(results.length, 6);
+  for (const r of results.slice(0, 3)) assert.match(r, /nom réservé de Windows/);
+  for (const r of results.slice(3)) assert.match(r, /finir par un point ou une espace/);
+  assert.ok((await lastMsg()).agent.steps.every((s) => s.status === 'error'), 'refusés sans rien demander');
+  for (const f of ['COM1.log', 'notes.', 'fin ']) assert.ok(!fs.readdirSync(DIR).includes(f), f);
 });

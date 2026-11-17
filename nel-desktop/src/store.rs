@@ -388,6 +388,14 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["serverPort"] = (num(&s["serverPort"], 8765.0).clamp(1024.0, 65535.0) as u64).into();
     // Mode Agent : le nombre maximal de tours (une demande d'outils et son résultat = un tour).
     s["agentMaxTurns"] = (num(&s["agentMaxTurns"], 10.0).clamp(1.0, 50.0) as u64).into();
+    // Fichiers protégés en plus de ceux par défaut : des motifs, sans vide ni doublon, 200 au plus.
+    let mut protected: Vec<String> = Vec::new();
+    for p in s["protectedFiles"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|p| p.trim().to_string()) {
+        if !p.is_empty() && !protected.contains(&p) && protected.len() < 200 {
+            protected.push(p);
+        }
+    }
+    s["protectedFiles"] = protected.into();
     s
 }
 

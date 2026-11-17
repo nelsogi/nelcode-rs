@@ -441,3 +441,4 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .diff .add { background: var(--sure-bg); color: var(--success); }
 .diff .del { background: var(--unsure-bg); color: var(--error); }
 .diff .skip { color: var(--faint); font-style: italic; }
+.field textarea.protected { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); }

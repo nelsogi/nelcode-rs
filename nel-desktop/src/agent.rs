@@ -34,8 +34,62 @@ const SKIPPED_DIRS: [&str; 8] = ["node_modules", "target", "bin", "obj", "dist",
 // ---------------------------------------------------------------------------------------------------------
 // Le dossier de travail
 
+/// Les fichiers protégés par défaut : lus ou parcourus seulement avec la confirmation de l'utilisateur. Un motif
+/// sans « / » vise le nom du fichier ; avec « / » final, un dossier (n'importe où dans le chemin) ; sinon tout le
+/// chemin relatif. « * » : n'importe quels caractères, « ? » : un caractère ; sans tenir compte de la casse.
+pub const DEFAULT_PROTECTED: [&str; 10] = [".env", ".env.*", ".git/", "*.pem", "*.key", "*.pfx", "id_rsa", "*.kdbx", "appsettings.*.json", "secrets.json"];
+
+/// Les noms que Windows réserve à des périphériques (« NUL », « con.txt »…) : jamais un fichier.
+const RESERVED: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+fn glob(pattern: &str, text: &str) -> bool {
+    fn go(p: &[char], t: &[char]) -> bool {
+        match p.split_first() {
+            None => t.is_empty(),
+            Some(('*', rest)) => (0..=t.len()).any(|i| go(rest, &t[i..])),
+            Some(('?', rest)) => !t.is_empty() && go(rest, &t[1..]),
+            Some((c, rest)) => t.first().is_some_and(|x| x == c) && go(rest, &t[1..]),
+        }
+    }
+    let (p, t): (Vec<char>, Vec<char>) = (pattern.to_lowercase().chars().collect(), text.to_lowercase().chars().collect());
+    go(&p, &t)
+}
+
+/// Le motif qui protège `rel` (chemin relatif avec des /), parmi les motifs par défaut et `extra` (réglages).
+pub fn protected_by(rel: &str, extra: &[String]) -> Option<String> {
+    let rel = rel.replace('\\', "/");
+    let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    let (name, dirs) = parts.split_last()?;
+    DEFAULT_PROTECTED.iter().map(|p| p.to_string()).chain(extra.iter().map(|p| p.trim().replace('\\', "/"))).filter(|p| !p.is_empty()).find(|pat| {
+        if let Some(dir) = pat.strip_suffix('/') {
+            dirs.iter().any(|d| glob(dir, d))
+        } else if pat.contains('/') {
+            glob(pat.trim_start_matches("./"), &parts.join("/"))
+        } else {
+            glob(pat, name)
+        }
+    })
+}
+
+/// Les motifs « Fichiers protégés » des réglages.
+pub fn extra_protected() -> Vec<String> {
+    store::load_settings()["protectedFiles"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+/// Un nom refusé par Windows : réservé (« NUL », « COM1.txt »), ou qui finit par un point ou une espace.
+fn bad_name(n: &str) -> Option<&'static str> {
+    if n.ends_with('.') || n.ends_with(' ') {
+        return Some("un nom de fichier ne peut pas finir par un point ou une espace sous Windows");
+    }
+    let base = n.split('.').next().unwrap_or(n).trim_end().to_uppercase();
+    RESERVED.contains(&base.as_str()).then_some("nom réservé de Windows (CON, NUL, COM1…)")
+}
+
 pub struct Sandbox {
     root: PathBuf, // canonique
+    protected: Vec<String>,
 }
 
 impl Sandbox {
@@ -44,23 +98,36 @@ impl Sandbox {
         if !root.is_dir() {
             return Err(format!("{dir} n'est pas un dossier"));
         }
-        Ok(Self { root })
+        Ok(Self { root, protected: extra_protected() })
+    }
+
+    /// Le motif qui protège ce chemin du dossier, s'il l'est.
+    pub fn protected(&self, abs: &Path) -> Option<String> {
+        protected_by(&self.rel(abs), &self.protected)
     }
 
     /// Le chemin absolu de `rel` dans le dossier. Refusés : chemin absolu ou de lecteur, « .. », flux NTFS (« : »),
-    /// et tout chemin dont la partie existante, une fois les liens résolus, sort du dossier.
+    /// noms réservés de Windows ou qui finissent par un point ou une espace, et tout chemin dont la partie existante,
+    /// une fois les liens résolus, sort du dossier.
     pub fn resolve(&self, rel: &str) -> Result<PathBuf> {
-        let rel = rel.trim();
+        // Seulement le début : une espace finale est refusée plus bas, pas effacée.
+        let rel = rel.trim_start();
         let mut clean = PathBuf::new();
         for c in Path::new(rel).components() {
             match c {
                 Component::Normal(n) => {
-                    if n.to_string_lossy().contains(':') {
+                    let n = n.to_string_lossy();
+                    if n.contains(':') || n.chars().any(char::is_control) {
                         return Err(format!("« {rel} » : nom de fichier invalide"));
                     }
-                    clean.push(n)
+                    if let Some(why) = bad_name(&n) {
+                        return Err(format!("« {rel} » : {why}, refusé"));
+                    }
+                    clean.push(n.as_ref())
                 }
-                Component::CurDir => {}
+                Component::CurDir => {
+                    // « . » seul est le dossier courant ; Path ignore déjà les « ./ » du milieu.
+                }
                 Component::ParentDir => return Err(format!("« {rel} » : « .. » est refusé, seulement des chemins dans le dossier de travail")),
                 Component::RootDir | Component::Prefix(_) => return Err(format!("« {rel} » : chemin absolu refusé, seulement des chemins relatifs au dossier de travail")),
             }
@@ -348,6 +415,11 @@ fn clip(s: &str) -> String {
     format!("{}\n… ({} octets de plus)", &s[..end], s.len() - end)
 }
 
+/// « 1 fichier protégé », « 4 fichiers protégés ».
+fn protected_files(n: usize) -> String {
+    format!("{} protégé{}", plural(n, "fichier"), if n > 1 { "s" } else { "" })
+}
+
 /// « 1 résultat », « 4 résultats ».
 fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n > 1 { "s" } else { "" })
@@ -386,6 +458,19 @@ impl Run<'_> {
     }
 }
 
+/// Attend la réponse de l'utilisateur à l'étape `id` : "accept", "accept_all", "reject", ou "stop" (Stop).
+async fn ask(run: &Run<'_>, id: &str, cancel: &Notify) -> String {
+    let key = format!("{}/{id}", run.request);
+    let (tx, rx) = oneshot::channel();
+    run.app.state::<AppState>().approvals.lock().unwrap().insert(key.clone(), tx);
+    let d = tokio::select! {
+        d = rx => d.unwrap_or_else(|_| "reject".into()),
+        _ = cancel.notified() => "stop".into(),
+    };
+    run.app.state::<AppState>().approvals.lock().unwrap().remove(&key);
+    d
+}
+
 enum Done {
     Result(String),
     Stopped(String),
@@ -415,20 +500,51 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
             }
         }
         "read_file" => {
-            let r = sb.resolve(path).and_then(|abs| {
-                let rel = sb.rel(&abs);
-                read_text(&abs, &rel).map(|t| (rel, t))
-            });
-            match r {
+            let abs = match sb.resolve(path) {
+                Ok(a) => a,
+                Err(e) => return fail(run, "read", format!("Lecture de {path}"), e),
+            };
+            let rel = sb.rel(&abs);
+            // Un fichier protégé (clés, mots de passe…) n'est lu qu'avec la confirmation explicite de l'utilisateur ;
+            // « Accepter tout » des écritures ne vaut pas pour lui.
+            let mut confirmed = None;
+            if let Some(pattern) = sb.protected(&abs) {
+                let id = run.step(json!({ "kind": "read", "title": format!("Lecture de {rel} — fichier protégé"), "path": rel, "protected": pattern, "status": "pending",
+                    "detail": format!("« {rel} » est protégé ({pattern}) : il peut contenir des mots de passe ou des clés. Le lire et l'envoyer au modèle ?") }));
+                match ask(run, &id, cancel).await.as_str() {
+                    "accept" => confirmed = Some(id),
+                    "stop" => {
+                        run.update(&id, json!({ "status": "rejected", "error": "arrêté" }));
+                        return Done::Stopped(format!("arrêté par l'utilisateur : « {rel} » n'a pas été lu"));
+                    }
+                    _ => {
+                        run.update(&id, json!({ "status": "rejected" }));
+                        return Done::Result(format!("refusé par l'utilisateur : « {rel} » est un fichier protégé, il n'a pas été lu. Ne le redemande pas sans lui demander pourquoi."));
+                    }
+                }
+            }
+            match read_text(&abs, &rel).map(|t| (rel.clone(), t)) {
                 Ok((rel, text)) => {
                     let start = args["start_line"].as_u64().unwrap_or(1).max(1) as usize;
                     let end = args["end_line"].as_u64().map_or(usize::MAX, |e| e as usize);
                     let numbered: Vec<String> = text.lines().enumerate().filter(|(i, _)| *i + 1 >= start && *i < end).map(|(i, l)| format!("{:>5}  {l}", i + 1)).collect();
                     let range = if start > 1 || end != usize::MAX { format!(" (lignes {start} à {})", end.min(text.lines().count())) } else { String::new() };
-                    run.step(json!({ "kind": "read", "title": format!("Lecture de {rel}{range}"), "path": rel, "detail": clip(&text), "status": "done" }));
+                    let step = json!({ "kind": "read", "title": format!("Lecture de {rel}{range}"), "path": rel, "detail": clip(&text), "status": "done" });
+                    match &confirmed {
+                        Some(id) => run.update(id, json!({ "title": format!("Lecture de {rel}{range} — fichier protégé, autorisée"), "detail": clip(&text), "status": "done" })),
+                        None => {
+                            run.step(step);
+                        }
+                    }
                     Done::Result(if numbered.is_empty() { "(fichier vide, ou lignes hors du fichier)".into() } else { numbered.join("\n") })
                 }
-                Err(e) => fail(run, "read", format!("Lecture de {path}"), e),
+                Err(e) => match &confirmed {
+                    Some(id) => {
+                        run.update(id, json!({ "status": "error", "detail": e.clone() }));
+                        Done::Result(format!("erreur : {e}"))
+                    }
+                    None => fail(run, "read", format!("Lecture de {rel}"), e),
+                },
             }
         }
         "search" => {
@@ -439,8 +555,29 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
             match sb.resolve(path) {
                 Ok(dir) => {
                     let q = query.to_lowercase();
+                    // Les fichiers protégés ne sont jamais parcourus sans la confirmation de l'utilisateur.
+                    let (protected, files): (Vec<String>, Vec<String>) = walk(&dir).into_iter().partition(|f| sb.protected(&dir.join(f)).is_some());
+                    let title = |n: usize, note: &str| format!("Recherche de \"{}\" — {}{note}", short(query, 60), plural(n, "résultat"));
+                    let mut skipped = String::new();
+                    let mut confirmed = None;
+                    let mut searched = files;
+                    if !protected.is_empty() {
+                        let names: Vec<String> = protected.iter().map(|f| sb.rel(&dir.join(f))).collect();
+                        let id = run.step(json!({ "kind": "search", "protected": true, "status": "pending",
+                            "title": format!("Recherche de \"{}\" — {} à confirmer", short(query, 60), protected_files(names.len())),
+                            "detail": format!("La recherche peut aussi parcourir ces fichiers protégés (clés, mots de passe…) :\n{}", names.join("\n")) }));
+                        match ask(run, &id, cancel).await.as_str() {
+                            "accept" => searched.extend(protected),
+                            "stop" => {
+                                run.update(&id, json!({ "status": "rejected", "error": "arrêté" }));
+                                return Done::Stopped("arrêté par l'utilisateur : la recherche n'a pas été faite".into());
+                            }
+                            _ => skipped = format!(" ({} non parcouru{} : refusé par l'utilisateur)", protected_files(names.len()), if names.len() > 1 { "s" } else { "" }),
+                        }
+                        confirmed = Some(id);
+                    }
                     let mut hits = Vec::new();
-                    for f in walk(&dir) {
+                    for f in searched {
                         let Ok(text) = read_text(&dir.join(&f), &f) else { continue };
                         for (i, line) in text.lines().enumerate() {
                             if line.to_lowercase().contains(&q) && hits.len() < MAX_MATCHES {
@@ -448,10 +585,20 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
                             }
                         }
                     }
+                    hits.sort();
                     let more = if hits.len() >= MAX_MATCHES { format!(" (au moins ; les {MAX_MATCHES} premiers)") } else { String::new() };
                     let text = hits.join("\n");
-                    run.step(json!({ "kind": "search", "title": format!("Recherche de \"{}\" — {}{more}", short(query, 60), plural(hits.len(), "résultat")), "detail": clip(&text), "status": "done" }));
-                    Done::Result(if hits.is_empty() { format!("aucun résultat pour \"{query}\"") } else { text })
+                    let done = json!({ "title": title(hits.len(), &format!("{more}{skipped}")), "detail": clip(&text), "status": "done" });
+                    match &confirmed {
+                        Some(id) => run.update(id, done),
+                        None => {
+                            let mut s = done;
+                            s["kind"] = "search".into();
+                            run.step(s);
+                        }
+                    }
+                    let found = if hits.is_empty() { format!("aucun résultat pour \"{query}\"") } else { text };
+                    Done::Result(if skipped.is_empty() { found } else { format!("{found}\n({})", skipped.trim().trim_matches(['(', ')'])) })
                 }
                 Err(e) => fail(run, "search", format!("Recherche de \"{}\"", short(query, 60)), e),
             }
@@ -477,18 +624,7 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
                 "status": if run.accept_all { "accepted" } else { "pending" },
             }));
             // L'accord de l'utilisateur : rien n'est écrit sans lui. « Accepter tout » ne vaut que pour cette demande.
-            let decision = if run.accept_all {
-                "accept".to_string()
-            } else {
-                let (tx, rx) = oneshot::channel();
-                run.app.state::<AppState>().approvals.lock().unwrap().insert(format!("{}/{id}", run.request), tx);
-                let d = tokio::select! {
-                    d = rx => d.unwrap_or_else(|_| "reject".into()),
-                    _ = cancel.notified() => "stop".into(),
-                };
-                run.app.state::<AppState>().approvals.lock().unwrap().remove(&format!("{}/{id}", run.request));
-                d
-            };
+            let decision = if run.accept_all { "accept".to_string() } else { ask(run, &id, cancel).await };
             match decision.as_str() {
                 "accept" | "accept_all" => {
                     run.accept_all |= decision == "accept_all";
@@ -628,6 +764,43 @@ mod tests {
         }
         fs::remove_dir_all(&d).unwrap();
         fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    fn fichiers_proteges() {
+        let none: Vec<String> = vec![];
+        for (path, pattern) in [
+            (".env", ".env"), ("app/.env", ".env"), (".env.local", ".env.*"), (".git/config", ".git/"), ("lib/.git/HEAD", ".git/"),
+            ("certs/server.pem", "*.pem"), ("CERT.PEM", "*.pem"), ("k/private.key", "*.key"), ("signe.pfx", "*.pfx"), ("home/.ssh/id_rsa", "id_rsa"),
+            ("coffre.kdbx", "*.kdbx"), ("config/appsettings.Production.json", "appsettings.*.json"), ("secrets.json", "secrets.json"),
+        ] {
+            assert_eq!(protected_by(path, &none).as_deref(), Some(pattern), "{path}");
+        }
+        for ok in ["src/environment.ts", "monkey.txt", "id_rsa.pub", "appsettings.json", "my.git/x", "notes/secrets.json.bak", "README.md"] {
+            assert_eq!(protected_by(ok, &none), None, "{ok}");
+        }
+        // Les motifs des réglages : nom, dossier, chemin.
+        let extra: Vec<String> = ["*.secret", "privé/", "config/prod.yml", "  "].iter().map(|s| s.to_string()).collect();
+        assert_eq!(protected_by("a/notes.SECRET", &extra).as_deref(), Some("*.secret"));
+        assert_eq!(protected_by("docs/privé/plan.md", &extra).as_deref(), Some("privé/"));
+        assert_eq!(protected_by("config/prod.yml", &extra).as_deref(), Some("config/prod.yml"));
+        assert_eq!(protected_by("autre/config/prod.yml", &extra), None);
+        assert_eq!(protected_by("src\\.env", &none).as_deref(), Some(".env"));
+    }
+
+    #[test]
+    fn noms_reserves_de_windows() {
+        let d = tmp();
+        let sb = Sandbox::new(d.to_str().unwrap()).unwrap();
+        for bad in ["CON", "nul", "NUL.txt", "com1", "COM9.log", "lpt1", "Aux.c", "src/prn/x.txt", "fin.", "fin ", "dossier./x.txt", "dossier /x.txt", "src/a.txt.", "a\tb"] {
+            assert!(sb.resolve(bad).is_err(), "{bad:?}");
+        }
+        for ok in ["CONsole.txt", "COM10.txt", "nullable.cs", "src/a.txt", " src/a.txt", ".env", "a.b.c"] {
+            assert!(sb.resolve(ok).is_ok(), "{ok:?}");
+        }
+        assert!(sb.resolve("fin ").unwrap_err().contains("point ou une espace"));
+        assert!(sb.resolve("NUL").unwrap_err().contains("nom réservé"));
+        fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

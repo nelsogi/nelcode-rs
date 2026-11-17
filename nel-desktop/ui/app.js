@@ -326,8 +326,9 @@ function workFiles() {
 
 const MENTION = /(^|\s)@([^\s@]+)/g;
 
-// Le message avec le contenu des fichiers cités. `quiet` : un fichier illisible est ignoré (barre de contexte) ;
-// sinon l'erreur est affichée et rien n'est rendu.
+// Le message avec le contenu des fichiers cités. `quiet` : un fichier illisible ou protégé est ignoré (barre de
+// contexte) ; sinon l'erreur est affichée et rien n'est rendu. Un fichier protégé (.env, *.pem…) n'est lu qu'après
+// une confirmation explicite.
 async function expandMentions(text, quiet = false) {
   const dir = S.current?.workingDirectory;
   const paths = [...new Set([...text.matchAll(MENTION)].map((m) => m[2]))];
@@ -335,14 +336,21 @@ async function expandMentions(text, quiet = false) {
   let out = text;
   for (const path of paths) {
     try {
-      const content = await invoke('read_file', { dir, path });
+      let content;
+      try { content = await invoke('read_file', { dir, path }); } catch (e) {
+        const [tag, pattern, rel] = errText(e).split('\t');
+        if (tag !== 'PROTECTED' || quiet) throw e;
+        const ok = await confirmDialog('Fichier protégé', `« ${rel} » est protégé (${pattern}) : il peut contenir des mots de passe ou des clés. Le lire et l'envoyer au modèle avec ce message ?`, 'Lire et envoyer', true);
+        if (!ok) { toast(`« ${rel} » n'a pas été lu : le message n'est pas envoyé.`, 'warning'); return null; }
+        content = await invoke('read_file', { dir, path, confirm: true });
+      }
       const lang = EXT_LANG[path.split('.').pop().toLowerCase()] ?? '';
       const fence = content.includes('```') ? '````' : '```';
       out += `\n\n${path} :\n${fence}${lang}\n${content.replace(/\n$/, '')}\n${fence}`;
     } catch (e) {
       if (quiet) continue;
-      // Un @ qui ne ressemble pas à un fichier (adresse, décorateur…) reste du texte.
-      if (!/[./\\]/.test(path)) continue;
+      // Un @ qui ne ressemble pas à un fichier (adresse, décorateur…) reste du texte ; un nom refusé (NUL…) non.
+      if (!/[./\\]/.test(path) && /introuvable/.test(errText(e))) continue;
       toast(errText(e), 'error', 6000);
       return null;
     }
@@ -519,7 +527,11 @@ function stepsEl(steps, m) {
     else if (st.detail) body.append(h('pre', { class: 'detail' }, st.detail));
     if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
     const decide = (decision) => invoke('agent_decide', { request: st.request, step: st.id, decision }).catch((e) => toast(errText(e), 'error'));
-    if (st.status === 'pending' && !m) body.append(h('div', { class: 'row-btns' },
+    // Un fichier protégé : une confirmation à chaque fois (jamais « Accepter tout »).
+    if (st.status === 'pending' && !m && st.protected) body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn danger', onclick: () => decide('accept') }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : 'Autoriser la lecture'),
+      h('button', { class: 'btn primary', onclick: () => decide('reject') }, 'Refuser')));
+    if (st.status === 'pending' && !m && !st.protected) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Accepter'),
       h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser'),
       h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));
@@ -1215,6 +1227,10 @@ async function openSettings() {
   body.push(calc.el);
   const srv = await serverSection(s);
   body.push(srv.el, await providersSection());
+  const protectedFiles = h('textarea', { class: 'text-input protected', rows: 3, spellcheck: 'false', placeholder: '*.secret\nprivé/\nconfig/prod.yml' });
+  protectedFiles.value = (s.protectedFiles ?? []).join('\n');
+  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Fichiers protégés')), protectedFiles,
+    h('div', { class: 'hint' }, 'Un motif par ligne (* et ?, « dossier/ » pour un dossier). Le mode Agent et les fichiers @ ne les lisent ou ne les parcourent qu\'après ta confirmation. Toujours protégés : .env, .env.*, .git/, *.pem, *.key, *.pfx, id_rsa, *.kdbx, appsettings.*.json, secrets.json.')));
   const auto = h('input', { type: 'checkbox', checked: s.autoUpdate !== false });
   body.push(h('div', { class: 'field updates' }, h('label', { class: 'check' }, auto, 'Rechercher les mises à jour au démarrage (une fois par jour)'),
     h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
@@ -1226,7 +1242,7 @@ async function openSettings() {
     const changes = choice === 'reset'
       ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
-        serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value) };
+        serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean) };
     const before = s.device ?? 'auto', limit = s.contextLimit;
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
     try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }

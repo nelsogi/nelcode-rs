@@ -2,6 +2,24 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.9.0] - 2026-11-17
+
+### Ajouté
+
+- **Fichiers protégés** (mode Agent et fichiers `@`) : `.env`, `.env.*`, `.git/`, `*.pem`, `*.key`, `*.pfx`, `id_rsa`,
+  `*.kdbx`, `appsettings.*.json`, `secrets.json`, et les motifs de **Réglages → Fichiers protégés** (un par ligne) ne
+  sont lus qu'après une confirmation explicite, à chaque fois (« Accepter tout » des écritures ne compte pas pour eux) ;
+  `search` ne les parcourt jamais sans confirmation, et dit au modèle combien il en a laissé de côté ; la barre de
+  contexte ne les lit pas.
+- Tests : chaque motif par défaut et des réglages (tests unitaires), confirmation refusée ou acceptée, « Accepter tout »
+  sans effet, recherche refusée puis acceptée, Stop, et les `@` (e2e).
+
+### Sécurité
+
+- Les noms réservés de Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`…`COM9`, `LPT1`…`LPT9`, avec ou sans extension) et
+  les noms qui finissent par un point ou une espace sont refusés (lecture, recherche, écriture, `@`). Une espace finale
+  n'est plus effacée silencieusement avant la vérification.
+
 ## [0.8.0] - 2026-11-16
 
 ### Ajouté

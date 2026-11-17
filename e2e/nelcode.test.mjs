@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ROOT, launch } from './harness.mjs';
+import { ROOT, launch, sleep } from './harness.mjs';
 
 const QUESTION = 'Bonjour, qui es-tu ?';
 let HOME, ev, waitFor, ask, importAs, readJson, close;
@@ -296,5 +296,44 @@ test('@ : fichiers du dossier de travail ajoutés au message, en lecture seule',
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(outside, { force: true });
+  }
+});
+
+test('@ : fichiers protégés lus seulement après confirmation ; noms réservés de Windows refusés', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nelcode-protege-'));
+  fs.writeFileSync(path.join(dir, '.env'), 'TOKEN=abc-123');
+  fs.mkdirSync(path.join(dir, 'certs'));
+  fs.writeFileSync(path.join(dir, 'certs', 'server.pem'), 'cle '.repeat(500));
+  try {
+    await ev(`T.key('n', { ctrlKey: true }, document)`);
+    await ev(`S.current.workingDirectory = ${JSON.stringify(dir)}; renderHeader(); true`);
+    // La barre de contexte ne lit pas un fichier protégé (2 000 caractères ne sont pas comptés).
+    await ev(`T.type('Lis @certs/server.pem')`);
+    await waitFor(`S.context && S.context.tokens > 0`, 10_000);
+    await sleep(500);
+    assert.ok((await ev(`S.context.tokens`)) < 40, 'contenu protégé non lu pour la barre de contexte');
+    // Envoi : confirmation explicite ; Annuler n'envoie rien et garde le message.
+    await ev(`T.submit('Lis @.env')`);
+    await waitFor(`T.dialog()?.textContent.includes('Fichier protégé')`, 10_000, 'confirmation');
+    assert.match(await ev(`T.dialog().textContent`), /« \.env » est protégé \(\.env\)/);
+    await ev(`T.button('Annuler', T.dialog())`);
+    await waitFor(`T.toasts().includes("« .env » n'a pas été lu")`, 5_000);
+    assert.equal(await ev(`S.current.messages.length`), 0);
+    assert.equal(await ev(`document.getElementById('input').value`), 'Lis @.env');
+    // Confirmé : le fichier est ajouté au message.
+    await ev(`T.submit('Lis @.env')`);
+    await waitFor(`T.dialog()?.textContent.includes('Fichier protégé')`, 10_000);
+    await ev(`T.button('Lire et envoyer', T.dialog())`);
+    await waitFor('!!S.gen', 10_000);
+    await waitFor('!S.gen', 120_000);
+    assert.ok((await ev(`S.current.messages[0].content`)).includes('TOKEN=abc-123'));
+    // Noms réservés de Windows, ou finissant par un point : refusés, rien n'est envoyé.
+    for (const [line, error] of [['Lis @NUL', 'nom réservé de Windows'], ['Lis @con.txt', 'nom réservé de Windows'], ['Lis @certs.', 'finir par un point ou une espace']]) {
+      await ev(`document.getElementById('toasts').replaceChildren(); T.submit(${JSON.stringify(line)})`);
+      await waitFor(`T.toasts().includes(${JSON.stringify(error)})`, 5_000, line);
+      assert.equal(await ev(`S.current.messages.length`), 2);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

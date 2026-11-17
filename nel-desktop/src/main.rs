@@ -655,11 +655,17 @@ fn list_files(dir: String) -> Result<Vec<String>> {
 }
 
 /// Lit un fichier texte du dossier de travail, sans pouvoir en sortir (« .. », lien, chemin absolu). Au plus
-/// 100 Ko, en UTF-8.
+/// 100 Ko, en UTF-8. Un fichier protégé (.env, *.pem, réglages…) n'est lu qu'avec `confirm` : sinon l'erreur
+/// « PROTECTED\t<motif>\t<chemin> » demande à l'interface de poser la question.
 #[tauri::command]
-fn read_file(dir: String, path: String) -> Result<String> {
+fn read_file(dir: String, path: String, confirm: Option<bool>) -> Result<String> {
     let sb = agent::Sandbox::new(&dir)?;
-    let abs = sb.resolve(&path).map_err(|e| if e.contains("refusé") { format!("« {path} » n'est pas un fichier du dossier de travail") } else { e })?;
+    let abs = sb.resolve(&path).map_err(|e| if e.contains("sort du dossier") || e.contains("« .. »") || e.contains("chemin absolu") { format!("« {path} » n'est pas un fichier du dossier de travail") } else { e })?;
+    if let Some(pattern) = sb.protected(&abs)
+        && confirm != Some(true)
+    {
+        return Err(format!("PROTECTED\t{pattern}\t{}", sb.rel(&abs)));
+    }
     agent::read_text(&abs, &path)
 }
 
