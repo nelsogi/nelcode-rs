@@ -415,6 +415,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["claudeAllowedTools"] = tools.into();
+    let model = s["claudeModel"].as_str().map(str::trim).filter(|m| crate::claude_agent::valid_model(m)).unwrap_or_default().to_string();
+    s["claudeModel"] = model.into();
     // Projets : les dossiers de travail récents (12 au plus, sans doublon à la casse près), le projet affiché.
     let mut recent: Vec<String> = Vec::new();
     for p in s["recentProjects"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|p| p.trim().trim_end_matches(['\\', '/']).to_string()) {

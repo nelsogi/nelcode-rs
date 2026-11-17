@@ -60,22 +60,30 @@ pub fn find_cli() -> Option<PathBuf> {
     local.is_file().then_some(local)
 }
 
-fn settings() -> (String, Vec<String>) {
+/// Un nom de modèle pour `--model` : alias (« opus », « sonnet ») ou id complet (« claude-opus-5-5[1m] »).
+pub fn valid_model(m: &str) -> bool {
+    !m.is_empty() && m.len() <= 100 && m.chars().all(|c| c.is_ascii_alphanumeric() || "-._[]".contains(c))
+}
+
+/// Mode de permission, outils autorisés, modèle (vide : celui de l'outil).
+fn settings() -> (String, Vec<String>, String) {
     let s = store::load_settings();
     let mode = s["claudePermissionMode"].as_str().unwrap_or("default").to_string();
     let tools = s["claudeAllowedTools"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-    (mode, tools)
+    let model = s["claudeModel"].as_str().unwrap_or_default().to_string();
+    (mode, tools, model)
 }
 
 /// Pour les réglages et le démarrage d'une conversation : l'outil trouvé, la clé, les réglages.
 pub fn status() -> Value {
-    let (mode, tools) = settings();
+    let (mode, tools, model) = settings();
     json!({
         "cli": find_cli().map(|p| p.to_string_lossy().into_owned()),
         "installUrl": INSTALL_URL,
         "hasKey": creds::read(KEY_ID).is_some(),
         "permissionMode": mode,
         "allowedTools": tools,
+        "model": model,
     })
 }
 
@@ -90,13 +98,17 @@ pub fn save_key(key: &str) -> Result<()> {
 }
 
 /// Les arguments de `claude` (le message part sur l'entrée standard).
-pub fn args(session: Option<&str>, mode: &str, allowed: &[String]) -> Vec<String> {
+pub fn args(session: Option<&str>, mode: &str, allowed: &[String], model: &str) -> Vec<String> {
     let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode"].iter().map(|s| s.to_string()).collect();
     a.push(if PERMISSION_MODES.contains(&mode) { mode.to_string() } else { "default".into() });
     let allowed: Vec<&str> = allowed.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
     if !allowed.is_empty() {
         a.push("--allowedTools".into());
         a.push(allowed.join(","));
+    }
+    if valid_model(model) {
+        a.push("--model".into());
+        a.push(model.to_string());
     }
     if let Some(s) = session.filter(|s| !s.is_empty()) {
         a.push("--resume".into());
@@ -424,13 +436,13 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
         Ok(r) if r.is_dir() => r,
         _ => return fail(format!("dossier de travail introuvable : {dir}")),
     };
-    let (mode, allowed) = settings();
+    let (mode, allowed, model) = settings();
     let resumed = session.is_some();
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_SUSPENDED: u32 = 0x0000_0004;
     let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().filter(|(k, _)| passed_var(&k.to_string_lossy())).collect();
     let mut cmd = Command::new(&cli);
-    cmd.args(args(session.as_deref(), &mode, &allowed))
+    cmd.args(args(session.as_deref(), &mode, &allowed, &model))
         .current_dir(&root)
         .env_clear()
         .envs(env)
@@ -540,11 +552,13 @@ mod tests {
 
     #[test]
     fn arguments() {
-        assert_eq!(args(None, "default", &[]), ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "default"]);
-        let a = args(Some("abc-123"), "acceptEdits", &["Read".into(), " Bash(git log *) ".into(), "".into()]);
+        assert_eq!(args(None, "default", &[], ""), ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "default"]);
+        let a = args(Some("abc-123"), "acceptEdits", &["Read".into(), " Bash(git log *) ".into(), "".into()], "");
         assert_eq!(a[6..], ["acceptEdits", "--allowedTools", "Read,Bash(git log *)", "--resume", "abc-123"]);
-        assert_eq!(args(None, "bypassPermissions", &[])[6], "default", "seuls default et acceptEdits");
-        assert!(!args(Some(""), "default", &[]).contains(&"--resume".to_string()));
+        assert_eq!(args(None, "bypassPermissions", &[], "")[6], "default", "seuls default et acceptEdits");
+        assert!(!args(Some(""), "default", &[], "").contains(&"--resume".to_string()));
+        assert_eq!(args(None, "default", &[], "claude-opus-5-5[1m]")[7..], ["--model", "claude-opus-5-5[1m]"]);
+        assert!(!args(None, "default", &[], "opus & calc").contains(&"--model".to_string()), "nom invalide : pas de --model");
         for v in ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "claude_code_use_vertex"] {
             assert!(!passed_var(v), "{v}");
         }

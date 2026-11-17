@@ -155,6 +155,8 @@ s'affichent dans l'étape « Sous-agent : … » qui l'a lancé (avec leur nombr
   tout ce qui demande un accord est refusé et l'étape s'affiche « refusée ») ; en option, **accepter les
   modifications de fichiers** (`acceptEdits`). **Outils autorisés** (`--allowedTools`), un par ligne :
   `Read`, `Bash(dotnet build *)`…
+- **Modèle** (`--model`) : un alias (`opus`, `sonnet`, `haiku`) ou un id complet (`claude-opus-5-5`) ; vide, le
+  modèle par défaut de l'outil. Il s'affiche dans la barre d'état de la conversation.
 - **Stop** envoie Ctrl+C à l'outil (son SIGINT sous Windows), puis attend qu'il finisse proprement (le début de la
   réponse est gardé) ; au-delà de 15 s, il est arrêté avec tous ses processus.
 - Le message part sur l'entrée standard de l'outil, jamais en argument. Pas de Régénérer ni de Modifier dans ces
@@ -206,11 +208,12 @@ demande**, remet les fichiers comme avant (un fichier créé est supprimé). Si 
 refusée, pour ne rien perdre.
 
 **Points de restauration** : si le dossier de travail est dans un dépôt git, Nel Code en prend l'état avant chaque
-demande (fichiers suivis et non suivis, sans ceux ignorés par `.gitignore`), dans un commit à part rangé sous
-`refs/nelcode/checkpoints/`, sans toucher à ton index, à HEAD, aux branches ni au stash. **Revenir à avant cette
+demande (fichiers suivis et non suivis, sans ceux ignorés par `.gitignore` ni les **fichiers protégés** — `.env`,
+clés… —, qui ne sont jamais copiés dans git), dans un commit à part rangé sous `refs/nelcode/checkpoints/`, sans toucher à ton index, à HEAD, aux branches ni au stash. **Revenir à avant cette
 demande** (sur la réponse, après confirmation) remet tous les fichiers du dossier dans cet état, y compris les
-modifications faites depuis, et supprime les fichiers créés depuis ; les fichiers ignorés ne sont pas touchés, la
-conversation reste. Sans dépôt git, pas de point (pas de `git init` automatique).
+modifications faites depuis, et supprime les fichiers créés depuis ; les fichiers ignorés et protégés ne sont pas
+touchés, la conversation reste. Seuls les **20 derniers points** de chaque dossier sont gardés, les plus anciens sont
+supprimés. Sans dépôt git, pas de point (pas de `git init` automatique).
 
 **Sécurité** :
 - tout reste dans le dossier de travail : chemins relatifs normalisés ; `..`, chemins absolus, noms avec `:` et liens

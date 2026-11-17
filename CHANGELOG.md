@@ -42,8 +42,12 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   leur texte ne va jamais dans la réponse, et leur plan ne remplace pas celui de l'agent principal.
 - Mode Agent, **points de restauration git** : avant chaque demande, si le dossier de travail est dans un dépôt git,
   son état est gardé dans un commit à part (`refs/nelcode/checkpoints/`), sans toucher à l'index, à HEAD, aux branches
-  ni au stash. **Revenir à avant cette demande** remet tous les fichiers du dossier dans cet état (les fichiers créés
-  depuis sont supprimés, ceux ignorés par `.gitignore` ne sont pas touchés) ; la conversation reste.
+  ni au stash. Les fichiers protégés (`.env`, clés…) n'y entrent jamais, même hors de `.gitignore`. Seuls les 20
+  derniers points de chaque dossier sont gardés. **Revenir à avant cette demande** remet tous les fichiers du dossier
+  dans cet état (les fichiers créés depuis sont supprimés, ceux ignorés par `.gitignore` et les fichiers protégés ne
+  sont pas touchés) ; la conversation reste.
+- Claude Agent, **choix du modèle** (`--model`) dans Réglages → Claude Agent : alias ou id complet, vide pour celui de
+  l'outil (la variable `ANTHROPIC_MODEL` du PC n'est pas transmise).
 
 - **Interface** :
   - **projets** : sélecteur des projets récents en haut de la barre latérale, conversations du projet affiché, ou toutes

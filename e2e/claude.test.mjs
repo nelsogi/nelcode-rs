@@ -108,12 +108,20 @@ test('conversation : texte au fil de l\'eau, outil Lecture en étape, coût et d
   assert.equal(saved.claudeAgent.sessionId, 'sess-neuve');
 });
 
-test('écriture avec diff, commande et plan ; réglages acceptEdits et outils autorisés', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.claude-field select.mode')`, 10_000);
-  await A.ev(`T.setValue(T.dialog().querySelector('.claude-field select.mode'), 'acceptEdits'); T.setValue(T.dialog().querySelector('.claude-field textarea.claude-tools'), 'Read\\n Bash(dotnet build *) \\n\\nRead'); T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);
-  await A.waitFor(`S.settings.claudePermissionMode === 'acceptEdits'`, 5_000);
+test('écriture avec diff, commande et plan ; réglages acceptEdits, outils autorisés et modèle', async () => {
+  const save = async (js) => {
+    await A.ev(`T.key(',', { ctrlKey: true }, document)`);
+    await A.waitFor(`T.dialog()?.querySelector('.claude-field input.model')`, 10_000);
+    await A.ev(`${js}; window.__saved = S.settings; T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);
+    await A.waitFor(`S.settings !== window.__saved`, 5_000, 'réglages enregistrés');
+  };
+  // Un nom de modèle invalide n'est pas gardé (jamais passé à claude).
+  await save(`T.setValue(T.dialog().querySelector('.claude-field input.model'), 'opus & calc')`);
+  assert.equal(A.readJson('settings.json').claudeModel, '');
+  await save(`T.setValue(T.dialog().querySelector('.claude-field select.mode'), 'acceptEdits'); T.setValue(T.dialog().querySelector('.claude-field textarea.claude-tools'), 'Read\\n Bash(dotnet build *) \\n\\nRead'); T.setValue(T.dialog().querySelector('.claude-field input.model'), ' sonnet ')`);
+  assert.equal(await A.ev(`S.settings.claudePermissionMode`), 'acceptEdits');
   assert.deepEqual(A.readJson('settings.json').claudeAllowedTools, ['Read', 'Bash(dotnet build *)']);
+  assert.equal(A.readJson('settings.json').claudeModel, 'sonnet');
   await newClaude();
   await A.ev(`T.submit('ecriture : renomme p et compile')`);
   // Le plan (TodoWrite) s'affiche pendant la demande.
@@ -130,7 +138,7 @@ test('écriture avec diff, commande et plan ; réglages acceptEdits et outils au
   const diff = await A.ev(`[...${msg}.querySelectorAll('.step.edit .diff > div')].map((d) => d.className + ':' + d.textContent)`);
   assert.deepEqual(diff, ['del:-var p = new Player();', 'add:+var joueur = new Player();']);
   assert.equal(await A.ev(`[...document.querySelectorAll('#plan .plan-tasks li')].map((li) => li.dataset.status).join()`), 'done,done');
-  assert.deepEqual(starts().at(-1).args, ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Bash(dotnet build *)']);
+  assert.deepEqual(starts().at(-1).args, ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Bash(dotnet build *)', '--model', 'sonnet']);
   // Aucune étape n'a de bouton Annuler : c'est claude qui écrit, pas Nel Code.
   assert.equal(await A.ev(`[...${msg}.querySelectorAll('button')].some((b) => b.textContent.includes('Annuler'))`), false);
 });

@@ -698,10 +698,12 @@ test('point de restauration git : « Revenir à avant cette demande » remet les
   await finish();
   assert.match(gread('src/Player.cs'), /class Joueur/);
   const { id } = (await lastMsg()).agent.checkpoint;
-  assert.equal(git('for-each-ref', '--format=%(refname)', 'refs/nelcode'), `refs/nelcode/checkpoints/${id}`);
-  // Après la demande : un fichier créé à la main, un fichier ignoré.
+  const ref = git('for-each-ref', '--format=%(refname)', 'refs/nelcode');
+  assert.match(ref, new RegExp(`^refs/nelcode/checkpoints/[0-9a-f]{16}/${id}$`), 'rangé par dossier');
+  // Après la demande : un fichier créé à la main, un fichier ignoré, un fichier protégé (pas dans .gitignore).
   fs.writeFileSync(path.join(GIT, 'neuf.txt'), 'neuf');
   fs.writeFileSync(path.join(GIT, 'trace.log'), 'journal');
+  fs.writeFileSync(path.join(GIT, '.env'), 'SECRET=1');
   // Pendant une génération, le bouton est désactivé.
   await start('ecrivain', 'Encore');
   await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000, 'écriture à valider');
@@ -717,12 +719,15 @@ test('point de restauration git : « Revenir à avant cette demande » remet les
   assert.equal(gread('src/Player.cs'), player);
   assert.equal(fs.existsSync(path.join(GIT, 'neuf.txt')), false, 'créé depuis : supprimé');
   assert.equal(gread('trace.log'), 'journal', 'ignoré : intact');
+  assert.equal(gread('.env'), 'SECRET=1', 'protégé : intact');
+  assert.equal(git('ls-tree', '-r', '--name-only', ref).includes('.env'), false);
+  fs.rmSync(path.join(GIT, '.env'));
   assert.equal(git('rev-parse', 'HEAD'), head);
   assert.equal(git('status', '--porcelain'), '', 'index de l\'utilisateur inchangé, fichiers comme au commit');
   assert.equal(await A.ev(`S.current.messages.at(-3).agent.steps[0].status`), 'undone');
   assert.equal(await A.ev(`S.current.messages.length`), 4, 'les messages restent');
   // Le point supprimé du dépôt : message clair.
-  git('update-ref', '-d', `refs/nelcode/checkpoints/${id}`);
+  git('update-ref', '-d', ref);
   await A.ev(`${restoreBtn(-2)}.click()`);
   await A.waitFor(`!!T.dialog()`, 5_000);
   await A.ev(`T.button('Revenir à avant cette demande', T.dialog())`);

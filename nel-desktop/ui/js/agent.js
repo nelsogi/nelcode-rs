@@ -38,7 +38,7 @@ export async function startClaudeAgent() {
   $('input').focus();
 }
 
-// La section Claude Agent des réglages : rend { el, mode, tools } (enregistrés avec les autres réglages ; la clé, tout de suite).
+// La section Claude Agent des réglages : rend { el, mode, tools, model } (enregistrés avec les autres réglages ; la clé, tout de suite).
 export async function claudeSection() {
   const st = S.claudeStatus = await invoke('claude_agent_status');
   const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: st.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…' });
@@ -56,15 +56,21 @@ export async function claudeSection() {
   mode.value = st.permissionMode;
   const tools = h('textarea', { class: 'text-input claude-tools', rows: 2, spellcheck: 'false', placeholder: 'Read\nBash(dotnet build *)' });
   tools.value = (st.allowedTools ?? []).join('\n');
+  // Le modèle (--model) : un alias de l'outil ou un id complet ; vide : celui de l'outil.
+  const model = h('input', { class: 'text-input model', list: 'claude-models', spellcheck: 'false', placeholder: 'celui de l\'outil (par défaut)' });
+  model.value = st.model ?? '';
+  const models = h('datalist', { id: 'claude-models' }, ...['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'].map((m) => h('option', { value: m })));
   const el = h('div', { class: 'field claude-field' }, h('div', { class: 'row' }, h('span', {}, 'Claude Agent')),
     h('div', { class: 'hint cli' }, st.cli ? `Outil « claude » : ${st.cli}` : [`Outil « claude » d'Anthropic introuvable : `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_claude_install'); } }, 'l\'installer')]),
     h('div', { class: 'row-btns' }, key, h('button', { class: 'btn', onclick: () => saveKey(key.value) }, 'Ranger la clé'),
       st.hasKey ? h('button', { class: 'btn', onclick: () => saveKey('') }, 'Retirer la clé') : null),
     h('div', { class: 'hint' }, 'Clé API Anthropic (Console Anthropic), rangée dans le Gestionnaire d\'identification de Windows et passée à l\'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.'),
+    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Modèle (--model)')), model, models,
+      h('div', { class: 'hint' }, 'Un alias (opus, sonnet, haiku) ou un id complet (claude-opus-5-5). Vide : le modèle par défaut de l\'outil.')),
     h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Mode de permission')), mode),
     h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Outils autorisés sans accord (--allowedTools)')), tools,
       h('div', { class: 'hint' }, 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.')));
-  return { el, mode, tools };
+  return { el, mode, tools, model };
 }
 
 export async function refreshNelcode() {

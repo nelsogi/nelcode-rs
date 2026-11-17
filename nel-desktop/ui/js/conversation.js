@@ -705,7 +705,7 @@ export async function restoreCheckpoint(i) {
   if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
   const s = S.current, c = s.messages[i].agent.checkpoint;
   if (!(await confirmDialog('Revenir à avant cette demande',
-    `Tous les fichiers du projet (${c.dir}) reviennent à leur état d'avant cette demande, y compris les modifications faites depuis (à la main ou par les demandes suivantes), et les fichiers créés depuis sont supprimés. Les fichiers ignorés par .gitignore ne sont pas touchés. La conversation reste telle quelle.`,
+    `Tous les fichiers du projet (${c.dir}) reviennent à leur état d'avant cette demande, y compris les modifications faites depuis (à la main ou par les demandes suivantes), et les fichiers créés depuis sont supprimés. Les fichiers ignorés par .gitignore et les fichiers protégés (.env, clés…) ne sont pas touchés. La conversation reste telle quelle.`,
     'Revenir à avant cette demande', true))) return;
   try { await invoke('agent_restore', { dir: c.dir, id: c.id }); } catch (e) { return toast('Restauration impossible : ' + errText(e), 'error', 8000); }
   for (const m of s.messages.slice(i)) for (const st of m.agent?.steps ?? []) if ((st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted') st.status = 'undone';
@@ -730,7 +730,7 @@ export function renderStatus() {
   else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), `${S.gen.side.toUpperCase()} · ${S.gen.session.compare[S.gen.side]} écrit…  Échap pour arrêter`);
   else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
   else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
-  else if (S.current?.claudeAgent) st.append(`Claude Agent · ${S.claudeStatus?.permissionMode === 'acceptEdits' ? 'modifications de fichiers acceptées' : 'rien d\'automatique'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
+  else if (S.current?.claudeAgent) st.append(`Claude Agent${S.claudeStatus?.model ? ' · ' + S.claudeStatus.model : ''} · ${S.claudeStatus?.permissionMode === 'acceptEdits' ? 'modifications de fichiers acceptées' : 'rien d\'automatique'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else if (S.model.name) st.append(`${S.model.name} · ${S.model.device ?? 'CPU'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
   else st.append('aucun modèle chargé');
   if (S.server.port) st.append(h('span', { class: 'server-on', title: `Serveur local (API OpenAI) : http://127.0.0.1:${S.server.port}/v1` },

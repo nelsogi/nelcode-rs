@@ -146,11 +146,11 @@ export async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, commandTimeout: 120, textSize: 100, claudePermissionMode: 'default', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, agentMaxTurns: 10, commandTimeout: 120, textSize: 100, claudePermissionMode: 'default', claudeModel: '', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765 }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
         serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
         allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean),
-        claudePermissionMode: claude.mode.value, claudeAllowedTools: claude.tools.value.split('\n').map((l) => l.trim()).filter(Boolean) };
+        claudePermissionMode: claude.mode.value, claudeModel: claude.model.value.trim(), claudeAllowedTools: claude.tools.value.split('\n').map((l) => l.trim()).filter(Boolean) };
     const before = s.device ?? 'auto', limit = s.contextLimit;
     try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
     applyTextSize();
