@@ -290,7 +290,8 @@ impl<'a> Translator<'a> {
             "WebFetch" => json!({ "kind": "note", "title": format!("Lecture web : {}", input["url"].as_str().unwrap_or_default()) }),
             "WebSearch" => json!({ "kind": "note", "title": format!("Recherche web : {}", input["query"].as_str().unwrap_or_default()) }),
             "Task" | "Agent" => json!({ "kind": "note", "title": format!("Sous-agent : {}", input["description"].as_str().unwrap_or_default()) }),
-            "TodoWrite" => {
+            // Le plan d'un sous-agent ne remplace pas celui de l'agent principal : il reste une étape (note).
+            "TodoWrite" if !sub => {
                 // Le plan de Claude : les mêmes états que le plan du mode Agent.
                 let tasks: Vec<Value> = input["todos"].as_array().into_iter().flatten().map(|t| {
                     let status = match t["status"].as_str().unwrap_or_default() { "completed" => "done", "in_progress" => "in_progress", _ => "todo" };
