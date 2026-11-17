@@ -37,6 +37,13 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   depuis le Gestionnaire d'identification, pas de connexion à un compte) ; mode de permission (rien d'automatique par
   défaut, ou acceptEdits) et outils autorisés (`--allowedTools`) dans les réglages ; Stop envoie Ctrl+C (SIGINT) puis
   attend la fin propre. Tests avec un faux exécutable qui rejoue des flux enregistrés.
+- Claude Agent, **sous-agents** : les étapes et les messages d'un sous-agent (`parent_tool_use_id`) s'affichent dans
+  l'étape « Sous-agent : … » qui l'a lancé, avec leur nombre, sur plusieurs niveaux, et le restent à la réouverture ;
+  leur texte ne va jamais dans la réponse, et leur plan ne remplace pas celui de l'agent principal.
+- Mode Agent, **points de restauration git** : avant chaque demande, si le dossier de travail est dans un dépôt git,
+  son état est gardé dans un commit à part (`refs/nelcode/checkpoints/`), sans toucher à l'index, à HEAD, aux branches
+  ni au stash. **Revenir à avant cette demande** remet tous les fichiers du dossier dans cet état (les fichiers créés
+  depuis sont supprimés, ceux ignorés par `.gitignore` ne sont pas touchés) ; la conversation reste.
 
 - **Interface** :
   - **projets** : sélecteur des projets récents en haut de la barre latérale, conversations du projet affiché, ou toutes
@@ -56,6 +63,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ### Corrigé
 
+- Claude Agent : un message de sous-agent ne double plus le texte de l'agent principal ni ne le coupe en étape ; les
+  variables `ANTHROPIC_*` et `CLAUDE_CODE_USE_*` du PC ne sont plus transmises (la clé ne part que vers Anthropic) ; un
+  dossier voisin au nom plus long n'est plus pris pour le dossier de travail ; la raison d'une modification refusée
+  s'affiche avec son diff.
 - Les tests de l'interface n'utilisent plus les vraies clés du Gestionnaire d'identification (espace à part pour les
   tests), et l'effacement d'un dossier de test bloqué n'attend plus 4 minutes.
 

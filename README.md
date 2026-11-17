@@ -144,11 +144,13 @@ mené par l'outil en ligne de commande `claude` d'Anthropic, installé sur le PC
 travail de la conversation ; Nel Code affiche son travail dans l'interface habituelle : le texte au fil de l'eau, la
 réflexion, chaque outil comme une étape dépliable (lecture, écriture et modification avec leur diff, commande avec sa
 sortie), son plan dans le panneau Plan, puis le **coût** (estimé par l'outil) et la **durée** de chaque demande. Le
-message suivant reprend la même session (`--resume`).
+message suivant reprend la même session (`--resume`). Quand l'outil lance un **sous-agent**, ses étapes et ses messages
+s'affichent dans l'étape « Sous-agent : … » qui l'a lancé (avec leur nombre), jamais dans la réponse.
 
 - **Clé API seulement** : dans **Réglages → Claude Agent**, une clé API de la Console Anthropic, rangée dans le
   Gestionnaire d'identification et passée à l'outil comme `ANTHROPIC_API_KEY`. Pas de connexion à un compte Claude.ai.
-  Les autres variables d'environnement qui contiennent `KEY`, `TOKEN` ou `SECRET` ne sont pas transmises.
+  Les autres variables d'environnement qui contiennent `KEY`, `TOKEN` ou `SECRET`, les `ANTHROPIC_*` (dont
+  `ANTHROPIC_BASE_URL`) et les `CLAUDE_CODE_USE_*` (autres authentifications) ne sont pas transmises.
 - **Mode de permission** : par défaut, rien d'automatique (`--permission-mode default` : sans personne pour répondre,
   tout ce qui demande un accord est refusé et l'étape s'affiche « refusée ») ; en option, **accepter les
   modifications de fichiers** (`acceptEdits`). **Outils autorisés** (`--allowedTools`), un par ligne :
@@ -202,6 +204,13 @@ et **tous ses processus enfants** sont tués (Job Object Windows). Les variables
 écriture acceptée est sauvegardée (`%APPDATA%\NelCode\agent-backups`) : **Annuler** sur l'étape, ou **Annuler toute la
 demande**, remet les fichiers comme avant (un fichier créé est supprimé). Si le fichier a changé depuis, l'annulation est
 refusée, pour ne rien perdre.
+
+**Points de restauration** : si le dossier de travail est dans un dépôt git, Nel Code en prend l'état avant chaque
+demande (fichiers suivis et non suivis, sans ceux ignorés par `.gitignore`), dans un commit à part rangé sous
+`refs/nelcode/checkpoints/`, sans toucher à ton index, à HEAD, aux branches ni au stash. **Revenir à avant cette
+demande** (sur la réponse, après confirmation) remet tous les fichiers du dossier dans cet état, y compris les
+modifications faites depuis, et supprime les fichiers créés depuis ; les fichiers ignorés ne sont pas touchés, la
+conversation reste. Sans dépôt git, pas de point (pas de `git init` automatique).
 
 **Sécurité** :
 - tout reste dans le dossier de travail : chemins relatifs normalisés ; `..`, chemins absolus, noms avec `:` et liens
