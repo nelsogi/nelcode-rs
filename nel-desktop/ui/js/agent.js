@@ -9,6 +9,30 @@ import { closeEdit, newSession, renderAll, renderHeader, renderMessages, saveSes
 import { openSettings } from './settings.js';
 import { refreshFiles } from './files.js';
 
+// Le NELCODE.md modèle créé par le bouton de l'en-tête (écrit tel quel par la partie Rust).
+const NELCODE_TEMPLATE = `# Instructions pour l'agent de Nel Code
+
+Ce fichier est ajouté au message système de chaque demande en mode Agent (ses 20 000 premiers octets).
+Écris ici ce que l'agent doit savoir sur ce projet.
+
+## Le projet
+
+- Langage et version : (par exemple C# 12, .NET 8)
+- Ce que fait le programme :
+- Dossiers importants : (par exemple \`src/\` pour le code, \`tests/\` pour les tests)
+
+## Règles
+
+- Style : (conventions de nommage, indentation…)
+- Toujours lancer les tests après une modification : (par exemple \`dotnet test\`)
+- Ne jamais modifier : (fichiers ou dossiers à laisser tels quels)
+
+## Commandes utiles
+
+- Compiler : \`dotnet build\`
+- Tester : \`dotnet test\`
+`;
+
 export const AGENT_LOCAL = 'Le mode Agent demande un modèle distant qui gère les outils (llama.cpp lancé avec --jinja, Ollama avec Qwen3…) : les .nelmodel et les modèles GGUF de ce PC n\'y ont pas accès.';
 
 // --- Claude Agent ---------------------------------------------------------------------------------------
@@ -92,7 +116,7 @@ export async function nelcodeChip() {
   const s = S.current;
   if ($('nelcode-chip').dataset.exists) return toast($('nelcode-chip').title, '', 6000);
   try {
-    await invoke('create_nelcode_md', { dir: s.workingDirectory });
+    await invoke('create_nelcode_md', { dir: s.workingDirectory, text: NELCODE_TEMPLATE });
     toast('NELCODE.md créé : complète-le, il sera ajouté à chaque demande Agent.', 'success', 6000);
   } catch (e) { toast(errText(e), 'error'); }
   refreshNelcode();

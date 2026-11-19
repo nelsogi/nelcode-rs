@@ -20,6 +20,9 @@ sha2 = "0.10"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 getrandom = "0.3"
 tokio = { version = "1", features = ["time", "macros", "sync"] }
+# Les images des messages : décodage (PNG, JPEG, WebP, GIF), redimensionnement, réencodage sans métadonnées.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+base64 = "0.23"
 
 [features]
 # GPU NVIDIA : voir nel-engine/src/gpu.rs et build.rs (DLL CUDA chargées en différé).
@@ -27,3 +30,7 @@ cuda = ["nel-engine/cuda"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+# Les tests des images : un PNG avec des textes (tEXt) à retirer.
+png = "0.18"

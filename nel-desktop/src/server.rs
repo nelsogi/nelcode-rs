@@ -1,6 +1,7 @@
 //! Le serveur local, compatible avec l'API OpenAI (désactivé par défaut) : GET /v1/models et POST /v1/chat/completions,
 //! avec ou sans streaming (SSE). Il n'écoute que sur 127.0.0.1, et chaque requête doit porter la clé d'accès
-//! (`Authorization: Bearer <clé>`, réglages). HTTP/1.1 minimal : une requête par connexion, puis fermeture.
+//! (`Authorization: Bearer <clé>`, réglages). Les erreurs sont en anglais, comme celles de l'API OpenAI (les clients
+//! et les outils les attendent ainsi). HTTP/1.1 minimal : une requête par connexion, puis fermeture.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -115,18 +116,18 @@ fn read_request(conn: &TcpStream) -> Result<Request, (u16, String)> {
     let bad = |m: &str| (400, m.to_string());
     let mut reader = BufReader::new(conn);
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|_| bad("requête illisible"))?;
+    reader.read_line(&mut line).map_err(|_| bad("unreadable request"))?;
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
     let (mut length, mut auth, mut seen) = (0usize, None, line.len());
     loop {
         let mut h = String::new();
-        if reader.read_line(&mut h).map_err(|_| bad("en-têtes illisibles"))? == 0 {
+        if reader.read_line(&mut h).map_err(|_| bad("unreadable headers"))? == 0 {
             break;
         }
         seen += h.len();
         if seen > MAX_HEADERS {
-            return Err((431, "en-têtes trop longs".into()));
+            return Err((431, "request headers too large".into()));
         }
         let h = h.trim_end();
         if h.is_empty() {
@@ -134,16 +135,16 @@ fn read_request(conn: &TcpStream) -> Result<Request, (u16, String)> {
         }
         let Some((k, v)) = h.split_once(':') else { continue };
         match k.trim().to_ascii_lowercase().as_str() {
-            "content-length" => length = v.trim().parse().map_err(|_| bad("Content-Length invalide"))?,
+            "content-length" => length = v.trim().parse().map_err(|_| bad("invalid Content-Length"))?,
             "authorization" => auth = Some(v.trim().to_string()),
             _ => {}
         }
     }
     if length > MAX_BODY {
-        return Err((413, "corps trop gros".into()));
+        return Err((413, "request body too large".into()));
     }
     let mut body = vec![0; length];
-    reader.read_exact(&mut body).map_err(|_| bad("corps incomplet"))?;
+    reader.read_exact(&mut body).map_err(|_| bad("incomplete request body"))?;
     Ok(Request { method, path: path.split('?').next().unwrap_or("").to_string(), auth, body })
 }
 
@@ -181,7 +182,7 @@ fn handle(app: &AppHandle, mut conn: TcpStream) {
     let key = store::load_settings()["serverKey"].as_str().unwrap_or_default().to_string();
     let given = req.auth.as_deref().and_then(|a| a.strip_prefix("Bearer ")).unwrap_or_default();
     if key.is_empty() || !same(given.trim(), &key) {
-        return error(&mut conn, 401, "clé d'accès absente ou incorrecte (Authorization: Bearer <clé des réglages de Nel Code>)", "invalid_api_key");
+        return error(&mut conn, 401, "missing or incorrect access key (Authorization: Bearer <key from the Nel Code settings>)", "invalid_api_key");
     }
     match (req.method.as_str(), req.path.trim_end_matches('/')) {
         ("GET", "/v1/models") => {
@@ -191,10 +192,10 @@ fn handle(app: &AppHandle, mut conn: TcpStream) {
         }
         ("POST", "/v1/chat/completions") => match serde_json::from_slice::<Value>(&req.body) {
             Ok(body) => chat(app, &mut conn, &body),
-            Err(e) => error(&mut conn, 400, &format!("JSON invalide : {e}"), "invalid_request_error"),
+            Err(e) => error(&mut conn, 400, &format!("invalid JSON: {e}"), "invalid_request_error"),
         },
-        (_, "/v1/models" | "/v1/chat/completions") => error(&mut conn, 405, "méthode non prise en charge", "invalid_request_error"),
-        _ => error(&mut conn, 404, &format!("{} inconnu (seulement /v1/models et /v1/chat/completions)", req.path), "invalid_request_error"),
+        (_, "/v1/models" | "/v1/chat/completions") => error(&mut conn, 405, "method not allowed", "invalid_request_error"),
+        _ => error(&mut conn, 404, &format!("unknown path {} (only /v1/models and /v1/chat/completions)", req.path), "invalid_request_error"),
     }
 }
 
@@ -217,9 +218,9 @@ fn content_of(m: &Value) -> String {
 pub fn conversation(messages: &[Value]) -> Result<(Vec<(String, String)>, String), String> {
     let system: Vec<String> = messages.iter().filter(|m| m["role"] == "system" || m["role"] == "developer").map(content_of).collect();
     let rest: Vec<&Value> = messages.iter().filter(|m| m["role"] == "user" || m["role"] == "assistant").collect();
-    let Some((last, before)) = rest.split_last() else { return Err("messages : aucun message de l'utilisateur".into()) };
+    let Some((last, before)) = rest.split_last() else { return Err("messages: no user message".into()) };
     if last["role"] != "user" {
-        return Err("messages : le dernier doit venir de l'utilisateur".into());
+        return Err("messages: the last message must come from the user".into());
     }
     let mut history = Vec::new();
     let mut question: Option<String> = None;
@@ -244,7 +245,7 @@ pub fn conversation(messages: &[Value]) -> Result<(Vec<(String, String)>, String
 
 fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
     let state = app.state::<AppState>();
-    let (history, message) = match body["messages"].as_array().ok_or("messages manque".to_string()).and_then(|m| conversation(m)) {
+    let (history, message) = match body["messages"].as_array().ok_or("messages is missing".to_string()).and_then(|m| conversation(m)) {
         Ok(c) => c,
         Err(e) => return error(conn, 400, &e, "invalid_request_error"),
     };
@@ -254,11 +255,11 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
     let model = if installed { compare_model(&state, asked).map(|m| (asked.to_string(), m)) } else { current(&state) };
     let (name, model) = match model {
         Ok(m) => m,
-        Err(e) => return error(conn, 400, &format!("{e} : charge un modèle dans Nel Code, ou demande un modèle de GET /v1/models"), "invalid_request_error"),
+        Err(e) => return error(conn, 400, &format!("no model available ({e}): load a model in Nel Code, or ask for one listed by GET /v1/models"), "invalid_request_error"),
     };
     // Un seul calcul à la fois, avec l'interface comme avec les autres requêtes.
     if state.generating.swap(true, Ordering::SeqCst) {
-        return error(conn, 503, "Nel Code écrit déjà une réponse : réessaie dans un instant", "server_error");
+        return error(conn, 503, "Nel Code is already writing a reply: try again in a moment", "server_error");
     }
     let settings = store::load_settings();
     let num = |k: &str| body[k].as_f64().or_else(|| settings[k].as_f64());
@@ -320,9 +321,9 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
         Err(e) => {
             log::error(&format!("serveur local, génération : {e}"));
             if stream {
-                let _ = write!(conn, "data: {}\n\n", json!({ "error": { "message": e.to_string(), "type": "server_error" } }));
+                let _ = write!(conn, "data: {}\n\n", json!({ "error": { "message": format!("generation failed: {e}"), "type": "server_error" } }));
             } else {
-                error(conn, 500, &e.to_string(), "server_error");
+                error(conn, 500, &format!("generation failed: {e}"), "server_error");
             }
         }
     }

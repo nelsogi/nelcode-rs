@@ -61,6 +61,7 @@ before(async () => {
     let data = '';
     req.on('data', (d) => (data += d));
     req.on('end', () => {
+      if (!req.url.startsWith('/v1/')) { res.writeHead(404); return res.end(); }   // détection des images (/api/show, /props) : pas d'Ollama ici
       if (req.url.startsWith('/v1/models')) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [] })); }
       chat(req, res, JSON.parse(data));
     });
@@ -363,6 +364,7 @@ test('/commands : liste avec origine, commande ignorée signalée ; Nouvelle com
   await A.waitFor(`T.toasts().includes('Commande créée')`, 5_000);
   const file = path.join(DIR, '.nelcode', 'commands', 'neuve.md');
   assert.match(fs.readFileSync(file, 'utf8'), /^---\ndescription: Ma commande\n---\n.*\$ARGUMENTS/s);
+  assert.match(fs.readFileSync(file, 'utf8'), /\nDécris ici ce que le modèle doit faire\./, 'modèle dans la langue de l\'interface');
   fs.writeFileSync(file, '---\ndescription: Ma commande\n---\nMon texte.\n');
   // Rien n'est écrasé, un nom invalide est refusé.
   await clearToasts();

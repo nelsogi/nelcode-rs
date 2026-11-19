@@ -427,30 +427,6 @@ pub fn nelcode_md(root: &Path) -> Option<(String, usize, bool)> {
     Some((text[..end].to_string(), bytes.len(), true))
 }
 
-/// Le NELCODE.md modèle créé par le bouton de l'en-tête.
-pub const NELCODE_TEMPLATE: &str = "# Instructions pour l'agent de Nel Code
-
-Ce fichier est ajouté au message système de chaque demande en mode Agent (ses 20 000 premiers octets).
-Écris ici ce que l'agent doit savoir sur ce projet.
-
-## Le projet
-
-- Langage et version : (par exemple C# 12, .NET 8)
-- Ce que fait le programme :
-- Dossiers importants : (par exemple `src/` pour le code, `tests/` pour les tests)
-
-## Règles
-
-- Style : (conventions de nommage, indentation…)
-- Toujours lancer les tests après une modification : (par exemple `dotnet test`)
-- Ne jamais modifier : (fichiers ou dossiers à laisser tels quels)
-
-## Commandes utiles
-
-- Compiler : `dotnet build`
-- Tester : `dotnet test`
-";
-
 /// Le système de la demande : les règles de l'agent, le dossier, et NELCODE.md s'il existe.
 pub fn system_prompt(sb: &Sandbox) -> (String, Option<Value>) {
     let mut sys = format!("{SYSTEM}\nDossier de travail : {}", sb.rel(&sb.root));
@@ -558,7 +534,9 @@ fn short(s: &str, n: usize) -> String {
 
 /// Une estimation du contexte pris par `messages` : environ 4 caractères par token, comme `remote::fit`.
 fn est_tokens(messages: &[Value]) -> u64 {
-    messages.iter().map(|m| m.to_string().chars().count() as u64 / 4 + 4).sum()
+    // Une image compte son estimation, pas la longueur de son base64.
+    let size = |m: &Value| if m["content"].is_array() { crate::images::content_tokens(&m["content"]) + m["tool_calls"].to_string().chars().count() as u64 / 4 } else { m.to_string().chars().count() as u64 / 4 };
+    messages.iter().map(|m| size(m) + 4).sum()
 }
 
 /// La ligne qui remplace le résultat d'un outil : « fichier lu : src/Player.cs, 120 lignes ».
@@ -924,7 +902,7 @@ fn fail(run: &mut Run<'_>, kind: &str, title: String, error: String) -> Done {
 /// La boucle : le modèle demande des outils, Nel Code les exécute et renvoie leurs résultats, jusqu'à la réponse
 /// finale ou `max_turns` tours. Rend le résumé pour « gen-done » (avec les étapes, même en cas d'erreur).
 #[allow(clippy::too_many_arguments)]
-pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(String, String)], message: &str, dir: &str, sampling: (f32, f32), max_turns: usize, cancel: Arc<Notify>) -> Value {
+pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(String, String)], message: &str, images: &crate::images::Attached, dir: &str, sampling: (f32, f32), max_turns: usize, cancel: Arc<Notify>) -> Value {
     let clock = Instant::now();
     let mut b = [0u8; 6];
     getrandom::fill(&mut b).expect("générateur aléatoire du système");
@@ -938,7 +916,7 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
         let (system, info) = system_prompt(&sb);
         nelcode = info;
         let mut messages = vec![json!({ "role": "system", "content": system })];
-        messages.extend(remote::fit(history, message, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024)));
+        messages.extend(remote::fit(history, message, images, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024)));
         let percent = store::load_settings()["summaryThreshold"].as_u64().unwrap_or(80);
         for turn_no in 0..max_turns {
             let shrunk = shrink_if_full(&mut messages, m["contextLength"].as_u64(), percent);

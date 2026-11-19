@@ -330,7 +330,8 @@ pub fn delete_model(name: &str) -> Result<()> {
 // ({ id, model, workingDirectory, title?, date, messages: [{ role, content, versions? }] }).
 // Gardées en JSON brut : un champ inconnu de cette version n'est jamais perdu.
 
-fn sessions_dir() -> PathBuf {
+/// Le dossier des conversations ; les images d'une conversation sont dans son sous-dossier `{id}\` (images.rs).
+pub fn sessions_dir() -> PathBuf {
     root().join("sessions")
 }
 
@@ -360,7 +361,11 @@ pub fn delete_session(id: &str) -> Result<()> {
     }
     match fs::remove_file(sessions_dir().join(format!("{id}.json"))) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-        _ => Ok(()),
+        // Ses images partent avec elle.
+        _ => match fs::remove_dir_all(sessions_dir().join(id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("images de la conversation : {e}")),
+            _ => Ok(()),
+        },
     }
 }
 
@@ -385,6 +390,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["contextLimit"] = ((num(&s["contextLimit"], 8192.0).clamp(512.0, 131072.0) as u64) / 256 * 256).into();
     // Résumé automatique : part du contexte (en %) à partir de laquelle les anciens échanges sont résumés ; 0 = jamais.
     s["summaryThreshold"] = (num(&s["summaryThreshold"], 80.0).clamp(0.0, 95.0) as u64).into();
+    // Images : le plus grand côté après préparation (images.rs).
+    s["imageMaxSide"] = (num(&s["imageMaxSide"], crate::images::DEFAULT_MAX_SIDE as f64).clamp(512.0, 4096.0) as u64).into();
     // Le serveur local : désactivé par défaut, port de 1024 à 65535.
     s["serverEnabled"] = s["serverEnabled"].as_bool().unwrap_or(false).into();
     s["serverPort"] = (num(&s["serverPort"], 8765.0).clamp(1024.0, 65535.0) as u64).into();
@@ -602,13 +609,50 @@ mod tests {
         path
     }
 
-    #[test]
-    fn import_nelmodel() {
-        let home = std::env::temp_dir().join(format!("nelcode-test-{}", std::process::id()));
+    /// Les tests qui changent NELCODE_HOME (et appellent root()) passent l'un après l'autre.
+    static HOME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn home(name: &str) -> (PathBuf, std::sync::MutexGuard<'static, ()>) {
+        let guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join(format!("nelcode-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         fs::create_dir_all(&home).unwrap();
-        // SAFETY : seul ce test lit NELCODE_HOME (les autres n'appellent pas root()).
+        // SAFETY : seuls les tests qui tiennent HOME lisent NELCODE_HOME (les autres n'appellent pas root()).
         unsafe { std::env::set_var("NELCODE_HOME", &home) };
+        (home, guard)
+    }
+
+    #[test]
+    fn images_de_la_conversation() {
+        let (home, _guard) = home("images");
+        let session = serde_json::json!({ "id": "2026-01-01_00-00-00-000", "model": "v3", "messages": [] });
+        save_session(&session).unwrap();
+        // Ses images : dans son dossier, jamais avec un chemin dans le nom, supprimées avec elle.
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(4, 3, image::Rgb([9, 9, 9])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let data = format!("data:image/png;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png));
+        let img = crate::images::prepare_data("2026-01-01_00-00-00-000", &data, "C:\\photos\\vacances.png").unwrap();
+        assert_eq!((img["name"].as_str(), img["width"].as_u64(), img["height"].as_u64()), (Some("vacances.png"), Some(4), Some(3)));
+        let file = img["file"].as_str().unwrap();
+        assert!(home.join("sessions/2026-01-01_00-00-00-000").join(file).is_file());
+        assert!(crate::images::data_url("2026-01-01_00-00-00-000", file).unwrap().starts_with("data:image/png;base64,iVBOR"));
+        assert_eq!(list_sessions(), vec![session], "le dossier d'images n'est pas une conversation");
+        delete_session("2026-01-01_00-00-00-000").unwrap();
+        assert!(list_sessions().is_empty());
+        assert!(!home.join("sessions/2026-01-01_00-00-00-000").exists(), "images supprimées avec la conversation");
+        // Une image ajoutée à une conversation jamais gardée : son dossier est retiré au démarrage.
+        crate::images::prepare_data("2026-01-02_00-00-00-000", &data, "x.png").unwrap();
+        fs::create_dir_all(home.join("sessions/autre")).unwrap();
+        fs::write(home.join("sessions/autre/notes.txt"), "à moi").unwrap();
+        crate::images::clean_orphans();
+        assert!(!home.join("sessions/2026-01-02_00-00-00-000").exists());
+        assert!(home.join("sessions/autre/notes.txt").exists(), "un dossier qui n'est pas à Nel Code n'est pas touché");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn import_nelmodel() {
+        let (home, _guard) = home("test");
         fs::write(home.join("settings.json"), r#"{"theme":"dark","window":{"x":1},"topK":7}"#).unwrap();
 
         // Le vrai .nelmodel s'installe, avec ses fichiers, et passe dans la liste.
@@ -646,7 +690,7 @@ mod tests {
         // Conversations : aller-retour sans perte d'un champ inconnu.
         let session = serde_json::json!({ "id": "2026-01-01_00-00-00-000", "model": "v3", "messages": [], "futur": 1 });
         save_session(&session).unwrap();
-        assert_eq!(list_sessions(), vec![session]);
+        assert_eq!(list_sessions(), vec![session.clone()]);
         delete_session("2026-01-01_00-00-00-000").unwrap();
         assert!(list_sessions().is_empty());
         assert!(save_session(&serde_json::json!({ "id": "../x", "messages": [] })).is_err());

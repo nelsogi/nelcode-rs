@@ -105,6 +105,7 @@ before(async () => {
     let data = '';
     req.on('data', (d) => (data += d));
     req.on('end', () => {
+      if (!req.url.startsWith('/v1/')) { res.writeHead(404); return res.end(); }   // détection des images (/api/show, /props) : pas d'Ollama ici
       if (req.url.startsWith('/v1/models')) { modelRequests.push({ url: req.url, headers: req.headers }); res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [...Object.keys(SCRIPTS), 'sans-outils'].map((id) => ({ id })) })); }
       chat(req, res, JSON.parse(data));
     });
@@ -487,7 +488,7 @@ test('NELCODE.md : le bouton crée un modèle, jamais par-dessus un fichier exis
   const created = fs.readFileSync(path.join(DIR, 'NELCODE.md'), 'utf8');
   assert.match(created, /^# Instructions pour l'agent de Nel Code/);
   fs.writeFileSync(path.join(DIR, 'NELCODE.md'), 'à moi');
-  assert.match(await A.ev(`window.__TAURI__.core.invoke('create_nelcode_md', { dir: S.current.workingDirectory }).catch((e) => String(e))`), /existe déjà/);
+  assert.match(await A.ev(`window.__TAURI__.core.invoke('create_nelcode_md', { dir: S.current.workingDirectory, text: 'autre' }).catch((e) => String(e))`), /existe déjà/);
   assert.equal(fs.readFileSync(path.join(DIR, 'NELCODE.md'), 'utf8'), 'à moi');
   fs.rmSync(path.join(DIR, 'NELCODE.md'));
   await A.ev(`renderHeader(); true`);

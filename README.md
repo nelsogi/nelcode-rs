@@ -107,6 +107,20 @@ même demande les anciens résultats d'outils sont réduits de la même façon q
 Dans les réponses, les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript, HTML, CSS, JSON) et ont
 un bouton **Copier**.
 
+**Images** (modèles distants qui voient les images, Claude compris, en chat et en mode Agent) : colle une image
+(**Ctrl+V**), glisse-la sur la fenêtre ou clique sur le bouton image de la saisie ; PNG, JPEG, WebP et GIF (sa première
+image), **5 au plus** par message. Les miniatures s'affichent au-dessus de la saisie (la croix en retire une). Avant
+l'envoi, Nel Code réduit chaque image pour que son plus grand côté ne dépasse pas **1 568 px** (réglable : **Réglages →
+Images**), la réencode et **retire toutes ses métadonnées** (EXIF, position GPS, profils, textes ; l'orientation de la
+photo est appliquée avant). Les images partent au format OpenAI (`content` en tableau, `image_url` en data URL base64)
+et sont rangées en fichiers dans le dossier de la conversation (`sessions\<id>\`), supprimées avec elle ; dans
+l'historique, un clic les agrandit. La barre de contexte ajoute une **estimation** des tokens de chaque image (environ
+largeur × hauteur / 750) ; le résumé automatique remplace les anciennes images par « [image : nom] ».
+
+Le bouton est désactivé, avec une explication, pour un modèle qui ne voit pas les images, pour les `.nelmodel`, les GGUF
+de ce PC et Claude Agent. Nel Code le détecte quand il le peut (modèles Claude ; `capabilities` d'Ollama ;
+`modalities` de llama.cpp) ; sinon, ou pour corriger, **Réglages → Fournisseurs → Images** règle chaque modèle à la main.
+
 ### Modèles distants (llama.cpp, Ollama, LM Studio…)
 
 Nel Code peut aussi discuter avec des modèles qui tournent sur une autre machine, par un serveur compatible avec
@@ -412,7 +426,8 @@ projet, fournisseur, modèle, tokens d'entrée et de sortie, durée, tokens/s et
 messages**. L'en-tête de chaque conversation montre ses tokens et son coût estimé ; l'icône **Suivi** de la barre
 latérale (ou `/suivi`, ou la palette Ctrl+K) ouvre les totaux du jour, de la semaine et du mois, des graphiques par jour,
 fournisseur, modèle et projet, le temps de réponse moyen et les tokens/s par modèle, et **Exporter en CSV** (séparateur
-`;`, pour Excel).
+`;`, pour Excel ; colonnes en anglais : `date;project;provider;model;kind;input_tokens;output_tokens;duration_s;
+tokens_per_s;estimated_cost_usd;responses`).
 
 Les coûts sont des **estimations** : **Réglages → Suivi** contient la table de prix (un modèle par ligne : nom, prix
 d'entrée et de sortie en dollars par million de tokens), préremplie avec les modèles Claude de la page officielle des
@@ -431,7 +446,7 @@ copie la version, Windows, le modèle actif et les 50 dernières lignes du journ
 ### Où sont les données
 
 Dans `%APPDATA%\NelCode`, comme pour Nel Code C# : les deux versions partagent les modèles (`models\`), les conversations
-(`sessions\`, un fichier JSON chacune) et `settings.json`. Les modèles installés par la version C# (poids `weights.dat`)
+(`sessions\`, un fichier JSON chacune, et les images d'une conversation dans `sessions\<id>\`) et `settings.json`. Les modèles installés par la version C# (poids `weights.dat`)
 se chargent aussi.
 
 ## Compiler depuis les sources
@@ -492,6 +507,9 @@ direct, liste autorisée, variables cachées, délai et Stop qui tuent les proce
 petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et la taille du texte.
 `e2e/usage.test.mjs` couvre le suivi (ligne sans texte, coût, en-tête, mode Agent, budget à 80 et 100 %, page Suivi,
 CSV, table de prix, regroupement des lignes de plus de 90 jours) avec un faux serveur qui renvoie `usage`.
+`e2e/images.test.mjs` couvre les images (coller, glisser-déposer, 5 au plus, métadonnées retirées, taille réglée, envoi
+en chat, en mode Agent et au fournisseur Claude, détection et réglage manuel, résumé, suppression) avec un faux serveur
+qui vérifie le contenu reçu.
 `e2e/claude.test.mjs` couvre Claude Agent avec un faux exécutable `claude` (`e2e/fake-claude/main.rs`, compilé par le
 test avec `rustc`) qui rejoue des flux stream-json enregistrés (`e2e/fake-claude/*.jsonl`). Les clés des tests sont
 rangées à part dans le Gestionnaire d'identification : les tests ne touchent jamais aux vraies clés. Les fichiers de test se lancent
@@ -537,7 +555,7 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | Dossier | Contenu |
 |---|---|
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, et `js/` : modules ES sans framework, voir ci-dessous) |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, images, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, et `js/` : modules ES sans framework, voir ci-dessous) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
 | `docs/` | Captures d'écran |
 
@@ -553,6 +571,7 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |
 | `palette.js` | Commandes `/`, palette Ctrl+K, aide et raccourcis |
 | `usage.js` | Page Suivi (totaux, graphiques SVG, CSV), tokens et coût de la conversation, budget, table de prix |
+| `images.js` | Images des messages : ajout (coller, glisser-déposer, bouton), miniatures, agrandir, modèles qui voient les images, estimation des tokens |
 | `projects.js` · `files.js` · `onboarding.js` | Projets · panneau Fichiers · assistant du premier lancement |
 | `main.js` | Écouteurs (Rust, clavier, boutons) et démarrage |
 

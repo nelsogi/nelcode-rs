@@ -65,9 +65,11 @@
 
     <div id="composer">
       <div id="suggest" class="suggest" hidden></div>
+      <div id="attachments" class="attachments" hidden aria-label="Images du message"></div>
       <div class="input-box">
         <span class="prompt-char"><span data-icon="chevron-right"></span></span>
         <textarea id="input" rows="1" placeholder="Écris un message…  (/ pour les commandes, @ pour un fichier)" spellcheck="false"></textarea>
+        <button id="image-btn" class="attach" title="Ajouter une image" aria-label="Ajouter une image"><span data-icon="image"></span></button>
         <button id="send" class="send" title="Envoyer (Entrée)" aria-label="Envoyer"><span data-icon="arrow-up"></span></button>
       </div>
       <div id="statusbar">
@@ -84,7 +86,7 @@
   <aside id="files" class="files" hidden aria-label="Fichiers du dossier de travail"></aside>
 </div>
 
-<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer</div></div>
+<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer, ou des images pour le message</div></div>
 <div id="overlay" class="overlay" hidden></div>
 <div id="menu" class="menu" hidden></div>
 <div id="toasts" class="toasts"></div>

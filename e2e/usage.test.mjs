@@ -43,6 +43,7 @@ before(async () => {
     let data = '';
     req.on('data', (d) => (data += d));
     req.on('end', () => {
+      if (!req.url.startsWith('/v1/')) { res.writeHead(404); return res.end(); }   // détection des images (/api/show, /props) : pas d'Ollama ici
       if (req.url.startsWith('/v1/models')) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [{ id: 'claude-sonnet-5-5' }, { id: 'outil-gratuit' }] })); }
       const body = JSON.parse(data);
       chats.push(body);
@@ -161,7 +162,7 @@ test('page Suivi : totaux, graphiques par jour, fournisseur, modèle, projet, te
   // CSV : séparateur « ; », une ligne par entrée, la ligne regroupée compte ses réponses.
   const csv = await A.ev(`window.__TAURI__.core.invoke('usage_csv')`);
   const rows = csv.replace(/^\uFEFF/, '').trim().split('\r\n');
-  assert.equal(rows[0], 'date;projet;fournisseur;modèle;type;tokens_entrée;tokens_sortie;durée_s;tokens_par_s;coût_estimé_usd;réponses');
+  assert.equal(rows[0], 'date;project;provider;model;kind;input_tokens;output_tokens;duration_s;tokens_per_s;estimated_cost_usd;responses');
   assert.equal(rows.length, 1 + usage().length);
   assert.ok(rows[1].endsWith(';2'));
   await A.ev(`T.key('Escape', {}, document)`);

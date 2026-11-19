@@ -37,6 +37,7 @@ before(async () => {
     let data = '';
     req.on('data', (d) => (data += d));
     req.on('end', () => {
+      if (!req.url.startsWith('/v1/')) { res.writeHead(404); return res.end(); }   // détection des images (/api/show, /props) : pas d'Ollama ici
       if (req.url.startsWith('/v1/models')) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [{ id: 'ecrit' }] })); }
       chat(req, res, JSON.parse(data));
     });

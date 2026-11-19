@@ -243,7 +243,8 @@ pub fn budget(model: Option<&str>, claude: bool) -> Value {
         "percent": if budget > 0.0 { 100.0 * spent / budget } else { 0.0 } })
 }
 
-/// L'export CSV (séparateur « ; », pour Excel en français ; points décimaux), avec un BOM UTF-8.
+/// L'export CSV (séparateur « ; », pour Excel en français ; points décimaux ; noms de colonnes en anglais, pour les
+/// outils qui le reliront), avec un BOM UTF-8.
 pub fn csv(entries: &[Value]) -> String {
     let field = |v: &Value| {
         let s = match v {
@@ -254,7 +255,7 @@ pub fn csv(entries: &[Value]) -> String {
         if s.contains([';', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s }
     };
     let cols = ["date", "project", "provider", "model", "kind", "input", "output", "seconds", "tps", "cost", "n"];
-    let mut out = String::from("\u{feff}date;projet;fournisseur;modèle;type;tokens_entrée;tokens_sortie;durée_s;tokens_par_s;coût_estimé_usd;réponses\r\n");
+    let mut out = String::from("\u{feff}date;project;provider;model;kind;input_tokens;output_tokens;duration_s;tokens_per_s;estimated_cost_usd;responses\r\n");
     for e in entries {
         let mut row: Vec<String> = cols.iter().map(|k| field(&e[*k])).collect();
         if row[10].is_empty() {
@@ -330,7 +331,7 @@ mod tests {
     fn export_csv() {
         let c = csv(&[json!({ "date": "2026-11-19T10:00:00", "project": "C:\\mon;projet", "provider": "local", "model": "m\"x", "kind": "chat", "input": 3, "output": 4, "seconds": 1.5, "tps": 2.67, "cost": 0.0 })]);
         let lines: Vec<&str> = c.split("\r\n").collect();
-        assert!(lines[0].starts_with("\u{feff}date;projet;"));
+        assert!(lines[0].starts_with("\u{feff}date;project;provider;model;kind;input_tokens;output_tokens;"));
         assert_eq!(lines[1], "2026-11-19T10:00:00;\"C:\\mon;projet\";local;\"m\"\"x\";chat;3;4;1.5;2.67;0.0;1");
     }
 

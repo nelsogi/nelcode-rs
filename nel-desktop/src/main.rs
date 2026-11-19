@@ -10,6 +10,7 @@ mod custom_commands;
 #[cfg(feature = "cuda")]
 mod delayload;
 mod gpu;
+mod images;
 mod log;
 mod remote;
 mod server;
@@ -673,8 +674,8 @@ fn custom_commands(dir: String) -> Vec<Value> {
 
 /// Crée un modèle de commande (`scope` : "project" ou "global"), jamais par-dessus un fichier existant ; rend son chemin.
 #[tauri::command]
-fn create_custom_command(dir: String, scope: String, name: String, description: String) -> Result<String> {
-    custom_commands::create(&dir, &scope, &name, &description)
+fn create_custom_command(dir: String, scope: String, name: String, description: String, body: String) -> Result<String> {
+    custom_commands::create(&dir, &scope, &name, &description, &body)
 }
 
 /// Lit un fichier texte du dossier de travail, sans pouvoir en sortir (« .. », lien, chemin absolu). Au plus
@@ -753,7 +754,7 @@ fn import_qwen() -> Result<Value> {
 /// puis « gen-done » ({ text, reasoning, reasoningSeconds, … } ou { error }).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, options: GenOptions, project: Option<String>) -> Result<()> {
+fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, images: Option<images::Attached>, options: GenOptions, project: Option<String>) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
         return Err("une réponse est déjà en cours".into());
     }
@@ -764,7 +765,7 @@ fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, mod
     tauri::async_runtime::spawn(async move {
         let clock = Instant::now();
         let s = options.sampling();
-        let done = match remote::generate(&app, &provider, &model, &history, &message, (s.temperature, s.top_p), cancel).await {
+        let done = match remote::generate(&app, &provider, &model, &history, &message, &images.unwrap_or_default(), (s.temperature, s.top_p), cancel).await {
             Ok(r) => {
                 let seconds = clock.elapsed().as_secs_f64();
                 let usage = usage::record(usage::Rec {
@@ -793,6 +794,48 @@ fn provider_name(id: &str, model: &str) -> String {
     remote::provider(id, model).ok().and_then(|(_, _, _, p)| p["name"].as_str().map(str::to_string)).unwrap_or_else(|| id.to_string())
 }
 
+// --- Images des messages (images.rs) ----------------------------------------------------------------------
+
+/// Une image collée (data URL) : préparée et rangée dans le dossier de la conversation `session`.
+#[tauri::command]
+async fn image_prepare_data(session: String, data: String, name: String) -> Result<Value> {
+    tauri::async_runtime::spawn_blocking(move || images::prepare_data(&session, &data, &name)).await.map_err(|e| e.to_string())?
+}
+
+/// Une image du PC (glisser-déposer, bouton).
+#[tauri::command]
+async fn image_prepare_path(session: String, path: String) -> Result<Value> {
+    tauri::async_runtime::spawn_blocking(move || images::prepare_path(&session, &path)).await.map_err(|e| e.to_string())?
+}
+
+/// Le bouton Image : choisir une ou plusieurs images.
+#[tauri::command]
+async fn pick_images(app: AppHandle) -> Vec<String> {
+    let files = app.dialog().file().set_title("Ajouter des images").add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif"]).blocking_pick_files();
+    files.unwrap_or_default().into_iter().filter_map(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned()).collect()
+}
+
+#[tauri::command]
+fn image_data(session: String, file: String) -> Result<String> {
+    images::data_url(&session, &file)
+}
+
+#[tauri::command]
+fn image_delete(session: String, file: String) -> Result<()> {
+    images::delete(&session, &file)
+}
+
+/// Le modèle distant voit-il les images ? { vision, detected, manual } (détection faite une fois, ou `again`).
+#[tauri::command]
+async fn model_vision(provider: String, model: String, again: Option<bool>) -> Result<Value> {
+    remote::vision(&provider, &model, again.unwrap_or(false)).await
+}
+
+#[tauri::command]
+fn set_model_vision(provider: String, model: String, value: Option<bool>) -> Result<()> {
+    remote::set_vision(&provider, &model, value)
+}
+
 // --- Mode Agent -------------------------------------------------------------------------------------------
 
 /// Comme `remote_generate`, avec les outils de l'agent dans le dossier de travail `dir` : les étapes partent dans
@@ -800,7 +843,7 @@ fn provider_name(id: &str, model: &str) -> String {
 /// un point de restauration est pris avant (checkpoint : { id, dir }) ; sans git ou en cas d'échec, la demande part sans.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, dir: String, options: GenOptions) -> Result<()> {
+fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, images: Option<images::Attached>, dir: String, options: GenOptions) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
         return Err("une réponse est déjà en cours".into());
     }
@@ -816,7 +859,7 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
             log::error(&format!("point de restauration impossible : {e}"));
             None
         });
-        let mut done = agent::run(&app, &provider, &model, &history, &message, &dir, (s.temperature, s.top_p), max_turns, cancel).await;
+        let mut done = agent::run(&app, &provider, &model, &history, &message, &images.unwrap_or_default(), &dir, (s.temperature, s.top_p), max_turns, cancel).await;
         let (input, output) = (done["promptTokens"].as_u64().unwrap_or(0), done["tokens"].as_u64().unwrap_or(0));
         if input + output > 0 {
             done["usage"] = usage::record(usage::Rec {
@@ -853,15 +896,16 @@ fn nelcode_md_info(dir: String) -> Value {
     }
 }
 
-/// Crée un NELCODE.md modèle à la racine du dossier de travail (jamais par-dessus un fichier existant).
+/// Crée un NELCODE.md modèle à la racine du dossier de travail (jamais par-dessus un fichier existant). Le texte vient
+/// de l'interface, dans sa langue.
 #[tauri::command]
-fn create_nelcode_md(dir: String) -> Result<()> {
+fn create_nelcode_md(dir: String, text: String) -> Result<()> {
     let sb = agent::Sandbox::new(&dir)?;
     let path = sb.resolve(agent::NELCODE_MD)?;
     let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists { "NELCODE.md existe déjà : il n'est pas remplacé".to_string() } else { format!("NELCODE.md : {e}") }
     })?;
-    std::io::Write::write_all(&mut f, agent::NELCODE_TEMPLATE.as_bytes()).map_err(|e| e.to_string())?;
+    std::io::Write::write_all(&mut f, text.as_bytes()).map_err(|e| e.to_string())?;
     log::info("NELCODE.md modèle créé");
     Ok(())
 }
@@ -998,6 +1042,7 @@ fn main() {
         .setup(|app| {
             log::prune();
             usage::prune();
+            images::clean_orphans();
             gpu::startup();
             log::info(&format!("démarrage de Nel Code {}", env!("CARGO_PKG_VERSION")));
             let config = app.config().app.windows[0].clone();
@@ -1079,6 +1124,13 @@ fn main() {
             budget_status,
             usage_csv,
             save_usage_csv,
+            image_prepare_data,
+            image_prepare_path,
+            pick_images,
+            image_data,
+            image_delete,
+            model_vision,
+            set_model_vision,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");

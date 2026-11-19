@@ -13,6 +13,7 @@ import { projectName, rememberProject, renderProject, sameProject, sessionsByPro
 import { refreshFiles } from './files.js';
 import { autoSummarize, summaryEl } from './summary.js';
 import { addUsage, afterPaid, budgetOk, renderUsageChip } from './usage.js';
+import { addPaths, attached, giveBack, imageLines, imageTokens, isImagePath, messageImages, pendingOf, refreshVision, renderAttach, takePending, vision } from './images.js';
 
 export const TITLE_LENGTH = 40;
 
@@ -111,7 +112,8 @@ export async function exportSession(s, markdown) {
   for (const m of s.messages) {
     const user = m.role === 'user';
     if (m.compare) { text += `● [${m.model}] ${m.content}\n\n● [${m.compare.model}] ${m.compare.content}\n\n`; continue; }
-    text += markdown ? `${user ? '**Moi**' : '**MiniChat**'}\n\n${m.content}\n\n` : `${user ? '>' : '●'} ${m.content}\n\n`;
+    const content = [imageLines(m), m.content].filter(Boolean).join('\n');
+    text += markdown ? `${user ? '**Moi**' : '**MiniChat**'}\n\n${content}\n\n` : `${user ? '>' : '●'} ${content}\n\n`;
   }
   const fileName = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + (markdown ? '.md' : '.txt');
   try {
@@ -142,8 +144,9 @@ export async function refreshModels() {
 // Un modèle distant devient le modèle actif (rien à charger : les appels partent au fournisseur).
 export async function selectRemote(p, m) {
   if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
-  Object.assign(S.model, { name: m.id, blockSize: m.contextLength ?? null, device: `réseau · ${p.name}`, remote: { provider: p.id, model: m.id } });
+  Object.assign(S.model, { name: m.id, blockSize: m.contextLength ?? null, device: `réseau · ${p.name}`, remote: { provider: p.id, model: m.id }, vision: null, visionManual: null });
   S.lastSpeed = '';
+  refreshVision();
   renderModels(); renderStatus(); refreshContext();
   try { S.settings = await invoke('save_settings', { changes: { lastModel: `remote:${p.id}/${m.id}` } }); } catch { /* sans gravité */ }
   toast(`${m.id} (${p.name}) : modèle distant.`, 'success', 2500);
@@ -279,15 +282,21 @@ export function canGenerate() {
   return true;
 }
 
-export async function send(text) {
+// images : celles du message (modifier un message garde les siennes) ; absent, les images en attente de la saisie.
+export async function send(text, images) {
   text = text.trim();
-  if (!text || !canGenerate()) return false;
   const s = S.current;
+  const fromPending = images === undefined;
+  if (fromPending) images = pendingOf(s).slice();
+  if ((!text && !images.length) || !canGenerate()) return false;
+  if (images.length && !vision(s).ok) { toast(vision(s).why, 'warning', 8000); return false; }
   if (!s.compare && !(await autoSummarize(s, text))) return false;
   const history = historyOf(s);
-  s.messages.push({ role: 'user', content: text });
+  const sent = attached(s, s.messages.length, images);
+  if (fromPending) takePending(s);
+  s.messages.push({ role: 'user', content: text, images: images.length ? images : undefined });
   if (s.compare) return startGen(s, { kind: 'compare', question: text, history, historyB: turnsOf(s.messages.map((m) => m.compare ? { role: 'assistant', content: m.compare.content } : m), s.messages.length - 1), a: { text: '', tokens: [] }, b: { text: '', tokens: [] }, side: 'a' });
-  return startGen(s, { kind: 'send', index: s.messages.length, question: text, history });
+  return startGen(s, { kind: 'send', index: s.messages.length, question: text, history, images: sent });
 }
 
 export async function regenerate(index) {
@@ -297,7 +306,7 @@ export async function regenerate(index) {
   s.messages.splice(index + 1);          // la suite de la conversation est retirée
   dropStaleSummary(s);
   await saveSession(s);
-  return startGen(s, { kind: 'regen', index, question, history: historyOf(s, index - 1), old: s.messages[index] });
+  return startGen(s, { kind: 'regen', index, question, history: historyOf(s, index - 1), images: attached(s, index - 1, s.messages[index - 1].images), old: s.messages[index] });
 }
 
 export async function startGen(s, g) {
@@ -311,7 +320,7 @@ export async function startGen(s, g) {
   const paid = g.kind !== 'compare' && g.kind !== 'summary' && (s.claudeAgent ? { claude: true } : S.model.remote ? { model: S.model.remote.model } : null);
   if (paid && !(await budgetOk(paid))) {
     S.gen = null;
-    if (g.kind === 'send') s.messages.pop();
+    if (g.kind === 'send') giveBack(s, s.messages.pop().images);
     renderAll();
     return false;
   }
@@ -327,14 +336,14 @@ export async function startGen(s, g) {
       // Le mode Agent : seulement un modèle distant qui gère les outils ; jamais un .nelmodel ni un GGUF local.
       if (!r) throw new Error(AGENT_LOCAL);
       if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
-      await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, dir: s.workingDirectory, options: genOptions() });
-    } else if (r) await invoke('remote_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
+      await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, images: g.images ?? null, dir: s.workingDirectory, options: genOptions() });
+    } else if (r) await invoke('remote_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, images: g.images ?? null, options: genOptions(), project: s.workingDirectory || '' });
     else await invoke('generate', { history: g.history, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
     return true;
   } catch (e) {
     S.gen = null;
     U.idle?.();
-    if (g.kind !== 'regen' && g.kind !== 'summary') s.messages.pop();
+    if (g.kind !== 'regen' && g.kind !== 'summary') giveBack(s, s.messages.pop()?.images);
     toast(errText(e), 'error');
     renderAll();
     return false;
@@ -377,7 +386,7 @@ export async function onDone(p) {
   }
   if (p.limit) toast(`Agent : nombre maximal de tours atteint (${p.limit}). Augmente-le dans les Réglages si besoin.`, 'warning', 8000);
   if (p.error || !text) {
-    if (g.kind === 'send') { s.messages.pop(); if (S.current === s) $('input').value ||= g.question; }
+    if (g.kind === 'send') { giveBack(s, s.messages.pop().images); if (S.current === s) $('input').value ||= g.question; }
     toast(p.error ? 'Erreur pendant la réponse : ' + p.error : 'Le modèle n\'a rien répondu.', p.error ? 'error' : 'warning');
   } else {
     // La réflexion d'un modèle distant : gardée avec la réponse, jamais renvoyée au modèle (turnsOf ne prend que content).
@@ -582,16 +591,18 @@ export function closeEdit() { UI.editing = null; }
 export async function submitEdit(index, text) {
   if (!text.trim() || !canGenerate()) return;
   const s = S.current;
+  const images = s.messages[index].images ?? [];   // le message modifié garde ses images
+  if (images.length && !vision(s).ok) return toast(vision(s).why, 'warning', 8000);
   s.messages.splice(index);   // la conversation repart de ce message
   dropStaleSummary(s);
   UI.editing = null;
-  await send(text);
+  await send(text, images);
 }
 
 // --- Affichage -------------------------------------------------------------------------------------------
 
 export function renderAll() {
-  renderSessions(); renderModels(); renderHeader(); renderMessages(); renderComposer(); renderStatus(); refreshContext(); renderPlan();
+  renderSessions(); renderModels(); renderHeader(); renderMessages(); renderComposer(); renderStatus(); refreshContext(); renderPlan(); renderAttach();
   renderProject(); refreshFiles();
 }
 
@@ -721,6 +732,7 @@ export function messageEl(m, i, faded) {
   }
   if (!user && m.reasoning) el.append(reasoningEl(m.reasoning, m.reasoningSeconds, false));
   if (!user && m.agent?.steps?.length) el.append(stepsEl(m.agent.steps, m));
+  if (user && m.images?.length) el.append(messageImages(S.current.id, m));
   el.append(user ? h('div', { class: 'body' }, richText(m.content)) : bodyEl(m.content, m.tokens));
   const busy = !!S.gen;
   const acts = h('div', { class: 'actions' });
@@ -798,14 +810,15 @@ export function refreshContext() {
     if (S.current?.claudeAgent) { S.context = null; $('context-text').textContent = 'contexte géré par Claude Agent'; fill.style.width = '0'; return; }
     if (!S.model.name) { S.context = null; $('context-text').textContent = '— / — tokens'; fill.style.width = '0'; return; }
     if (S.model.remote) {
-      // Pas de tokenizer pour un modèle distant : environ 4 caractères par token.
+      // Pas de tokenizer pour un modèle distant : environ 4 caractères par token, et l'estimation de chaque image.
       const chars = historyOf(S.current).flat().join('').length + (await expandMentions($('input').value, true)).length;
-      const n = Math.ceil(chars / 4), ctx = S.model.blockSize;
+      const [pics, count, detail] = vision().ok ? imageTokens() : [0, 0, []];
+      const n = Math.ceil(chars / 4) + pics, ctx = S.model.blockSize;
       S.context = null;
       fill.style.width = ctx ? Math.min(100, 100 * n / ctx) + '%' : '0';
       fill.className = ctx && n > ctx ? 'full' : ctx && n > 0.8 * ctx ? 'warn' : '';
-      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (summaryOf(S.current) ? ' · résumé' : '');
-      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.' + summaryNote();
+      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (count ? ` · ${count} image${count > 1 ? 's' : ''} ≈ ${pics} (estimation)` : '') + (summaryOf(S.current) ? ' · résumé' : '');
+      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.' + (count ? '\nImages (estimation, environ largeur × hauteur / 750) :\n' + detail.join('\n') : '') + summaryNote();
       return;
     }
     try {
@@ -853,7 +866,7 @@ export function autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.
 export async function submitInput() {
   const input = $('input');
   const line = input.value.trim();
-  if (!line) return;
+  if (!line && !pendingOf().length) return;
   if (line.startsWith('/')) {
     input.value = ''; autoGrow(input); updateSuggest();
     return runCommand(line);
@@ -874,6 +887,8 @@ export async function submitInput() {
 export function onDrop(paths) {
   $('drop').hidden = true;
   const pkg = paths.find((p) => /\.(nelmodel|gguf)$/i.test(p));
+  const pictures = paths.filter(isImagePath);
   if (pkg) importFlow(pkg);
-  else if (paths.length) toast('Seuls les fichiers .nelmodel et .gguf peuvent être importés.', 'warning');
+  else if (pictures.length) addPaths(pictures);
+  else if (paths.length) toast('Seuls les images (PNG, JPEG, WebP, GIF), les .nelmodel et les .gguf peuvent être déposés.', 'warning');
 }

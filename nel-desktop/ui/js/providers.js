@@ -8,6 +8,7 @@
 import { errText, h, invoke, toast } from './util.js';
 import { S } from './state.js';
 import { refreshContext, renderModels, renderStatus } from './conversation.js';
+import { refreshVision } from './images.js';
 
 export const cleartext = (url) => /^http:\/\//i.test(url.trim()) && !/^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:|\/|$)/i.test(url.trim());
 
@@ -82,6 +83,27 @@ export function providerForm(p, redraw) {
       await refreshProviders(); redraw(); renderStatus(); refreshContext();
     } }, 'Supprimer')),
   url, h('div', { class: 'row-btns' }, key, p.hasKey ? h('button', { class: 'btn', onclick: () => save('').then(() => toast('Clé retirée.', 'success', 2000)) }, 'Retirer la clé') : null),
-  h('label', { class: 'check' }, omit, 'Ne pas envoyer temperature/top_p', p.kind === 'anthropic' ? h('span', { class: 'badge' }, 'Anthropic') : null), warn, status);
+  h('label', { class: 'check' }, omit, 'Ne pas envoyer temperature/top_p', p.kind === 'anthropic' ? h('span', { class: 'badge' }, 'Anthropic') : null), warn, status,
+  p.id && p.models?.length ? visionTable(p) : null);
   return form;
+}
+
+// Images : chaque modèle, détecté automatiquement (Claude, Ollama, llama.cpp) ou réglé à la main.
+function visionTable(p) {
+  const detected = (m) => ({ true: 'voit les images', false: 'ne les voit pas' })[m.visionDetected] ?? 'inconnu';
+  const rows = p.models.map((m) => {
+    const sel = h('select', { class: 'text-input vision', 'data-model': m.id },
+      h('option', { value: 'auto' }, `Automatique (${detected(m)})`), h('option', { value: 'yes' }, 'Voit les images'), h('option', { value: 'no' }, 'Ne voit pas les images'));
+    sel.value = m.vision === true ? 'yes' : m.vision === false ? 'no' : 'auto';
+    sel.addEventListener('change', async () => {
+      try {
+        await invoke('set_model_vision', { provider: p.id, model: m.id, value: { yes: true, no: false }[sel.value] ?? null });
+        await refreshProviders();
+        if (S.model.remote?.provider === p.id && S.model.remote.model === m.id) { await refreshVision(); refreshContext(); }
+      } catch (e) { toast(errText(e), 'error'); }
+    });
+    return h('tr', {}, h('td', {}, m.id), h('td', {}, sel));
+  });
+  return h('details', { class: 'vision-models' }, h('summary', {}, icon('image'), 'Images'),
+    h('table', {}, rows), h('div', { class: 'hint' }, 'Automatique : les modèles Claude voient les images ; pour Ollama et llama.cpp, Nel Code le demande au serveur quand le modèle est choisi. Les autres serveurs ne le disent pas : règle-le ici.'));
 }

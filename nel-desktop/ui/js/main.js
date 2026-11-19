@@ -13,6 +13,7 @@ import { projectMenu } from './projects.js';
 import { refreshFiles, toggleFiles } from './files.js';
 import { maybeOnboard } from './onboarding.js';
 import * as USAGE from './usage.js';
+import * as IMG from './images.js';
 
 listen('catalog-progress', (e) => { if (e.payload.tag === C.name) { Object.assign(C, e.payload); catalogProgress(); } });
 
@@ -115,6 +116,11 @@ $('input').addEventListener('blur', () => setTimeout(() => { if (document.active
 
 $('send').onclick = () => (S.gen ? stop() : submitInput());
 
+// Les images : Ctrl+V d'une image dans la saisie, ou le bouton (le glisser-déposer passe par onDrop).
+$('input').addEventListener('paste', (e) => { if (IMG.addFiles(e.clipboardData?.files ?? [])) e.preventDefault(); });
+
+$('image-btn').onclick = () => IMG.pickImages();
+
 $('new-chat').onclick = startNew;
 
 $('claude-chat').onclick = startClaudeAgent;
@@ -190,9 +196,9 @@ listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payl
 listen('model-loading', (e) => { S.model.loading = e.payload; renderModels(); renderStatus(); });
 
 listen('model-loaded', (e) => {
-  Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, device: e.payload.device, loading: null, remote: null });
+  Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, device: e.payload.device, loading: null, remote: null, vision: false, visionManual: null });
   S.lastSpeed = '';
-  renderModels(); renderStatus(); refreshContext();
+  renderModels(); renderStatus(); refreshContext(); IMG.renderAttach();
   toast(`Modèle ${e.payload.name} chargé sur ${e.payload.device} (${e.payload.seconds.toFixed(1)} s).`, 'success', 2500);
 });
 
@@ -219,7 +225,7 @@ listen('import-error', (e) => {
   toast('Import impossible : ' + err, 'error', 10000);
 });
 
-// Glisser-déposer d'un .nelmodel ou d'un .gguf sur la fenêtre.
+// Glisser-déposer d'un .nelmodel, d'un .gguf ou d'images sur la fenêtre.
 listen('tauri://drag-enter', () => ($('drop').hidden = false));
 
 listen('tauri://drag-leave', () => ($('drop').hidden = true));
@@ -258,4 +264,4 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 })().catch((e) => toast('Démarrage : ' + errText(e), 'error', 0));
 
 // Les tests de l'interface (e2e/) lisent l'état et appellent ces fonctions depuis la page.
-Object.assign(window, { S, F, C, USAGE, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });
+Object.assign(window, { S, F, C, USAGE, IMG, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });

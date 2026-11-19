@@ -96,8 +96,39 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   - les lignes de plus de 90 jours sont **regroupées par jour** au démarrage : le fichier ne grossit pas sans fin ;
   - tests unitaires (prix, table nettoyée, ligne sans texte, regroupement, CSV, tokens de Claude Agent) et de l'interface
     (`e2e/usage.test.mjs`, et Claude Agent dans `e2e/claude.test.mjs`).
+- **Images dans les messages** (modèles distants qui voient les images, fournisseur Claude compris, en chat et en mode
+  Agent) :
+  - ajout par **Ctrl+V**, glisser-déposer sur la fenêtre ou le bouton image de la saisie ; PNG, JPEG, WebP et GIF (sa
+    première image), **5 au plus** par message ; miniatures au-dessus de la saisie, avec une croix pour retirer ;
+  - **préparées par la partie Rust** : plus grand côté ramené à **1 568 px** (réglable : Réglages → Images, 512 à
+    4 096), orientation EXIF appliquée, puis réencodage (JPEG pour les photos, PNG pour les captures, les GIF et la
+    transparence) **sans aucune métadonnée** (EXIF, position GPS, profils, textes), avant l'envoi et l'enregistrement ;
+  - envoyées au **format OpenAI** (`content` en tableau, images d'abord, `image_url` en data URL base64) ; les images de
+    l'historique repartent avec lui tant qu'elles tiennent dans le contexte ;
+  - **modèles qui voient les images** : détectés quand c'est possible (modèles Claude ; `capabilities` d'Ollama par
+    `/api/show` ; `modalities` de llama.cpp par `/props`), une fois par modèle et à nouveau après « Tester » ; réglage
+    manuel par modèle dans **Réglages → Fournisseurs → Images** (automatique, voit, ne voit pas). Pour un modèle qui ne
+    les voit pas (ou dont on ne sait rien), pour les `.nelmodel`, les GGUF de ce PC et Claude Agent, le bouton est
+    désactivé et explique pourquoi ;
+  - **enregistrées en fichiers** dans le dossier de la conversation (`sessions\<id>\img-….jpg|png`, jamais en base64
+    dans le JSON : le message garde nom, taille et estimation), affichées dans l'historique (clic : agrandie),
+    supprimées avec la conversation ; un dossier d'images sans conversation est retiré au démarrage ;
+  - **contexte** : la barre ajoute une estimation des tokens de chaque image (environ largeur × hauteur / 750, marquée
+    « estimation », détail dans l'infobulle), et les tokens d'entrée estimés (sans `usage` du serveur) comptent l'image,
+    pas son base64 ; le résumé automatique et `/compact` remplacent les anciennes images par « [image : nom] » ;
+  - la CSP ne change pas (images : seulement `self` et `data:`) ;
+  - tests unitaires (redimensionnement, métadonnées retirées et orientation, formats refusés, GIF, noms de fichiers,
+    estimation, dossier de la conversation) et de l'interface (`e2e/images.test.mjs`, le faux serveur vérifie le contenu
+    reçu).
 
 ### Modifié
+
+- Serveur local : les messages d'erreur sont **en anglais**, comme ceux de l'API OpenAI (« missing or incorrect access
+  key », « unknown path… », « invalid JSON… ») : les clients et les outils les attendent ainsi.
+- Suivi : les colonnes de l'**export CSV** sont en anglais (`date;project;provider;model;kind;input_tokens;
+  output_tokens;duration_s;tokens_per_s;estimated_cost_usd;responses`), pour les outils qui le relisent.
+- Les modèles de **NELCODE.md** et de **commande personnalisée** viennent de l'interface, dans sa langue (la partie Rust
+  écrit le texte reçu, toujours sans écraser un fichier existant).
 
 - `app.js` (1870 lignes) est découpé en modules ES (`nel-desktop/ui/js/` : utilitaires, état, conversation, agent,
   réglages, catalogue, fournisseurs, palette, et les nouveaux projets, fichiers, premier lancement), sans changer le

@@ -8,6 +8,7 @@
 import { h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { historyOf, startGen, summaryOf } from './conversation.js';
+import { imageLines, imageTokens, vision } from './images.js';
 
 export const KEEP_TURNS = 4;
 const PROMPT = 'Résume les échanges ci-dessous pour qu\'une conversation puisse continuer sans eux. Garde : les décisions prises, les fichiers modifiés, le plan en cours et les erreurs non résolues. Écris seulement le résumé (une liste courte, sans introduction), dans la langue des échanges.';
@@ -47,7 +48,8 @@ function transcript(s, { from, to }) {
   if (prev) parts.push('Résumé précédent :\n' + prev.text);
   for (let i = from; i < to; i++) {
     const m = s.messages[i];
-    if (m.role === 'user') { parts.push('Utilisateur : ' + clip(m.content, 3000)); continue; }
+    // Une image n'entre pas dans le résumé : seulement « [image : nom] ».
+    if (m.role === 'user') { parts.push('Utilisateur : ' + [imageLines(m), clip(m.content, 3000)].filter(Boolean).join('\n')); continue; }
     const steps = (m.agent?.steps ?? []).map(stepLine).filter(Boolean).slice(0, 30);
     parts.push('Assistant : ' + steps.map((l) => `[${l}]\n`).join('') + clip(m.content, 3000));
   }
@@ -58,7 +60,7 @@ function transcript(s, { from, to }) {
 // Les tokens du prochain envoi (réserve de la réponse comprise) et la taille du contexte (null si inconnue).
 async function usage(s, text) {
   const history = historyOf(s);
-  if (S.model.remote) return { used: Math.ceil((history.flat().join('').length + text.length) / 4), size: S.model.blockSize };
+  if (S.model.remote) return { used: Math.ceil((history.flat().join('').length + text.length) / 4) + (vision().ok ? imageTokens(s)[0] : 0), size: S.model.blockSize };
   const c = await invoke('context_info', { history, message: text });
   return { used: c.tokens + c.reserve, size: c.blockSize };
 }

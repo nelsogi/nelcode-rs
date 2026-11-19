@@ -112,8 +112,13 @@ test('erreurs au format OpenAI', async () => {
   for (const [req, status] of cases) {
     const r = await req;
     assert.equal(r.status, status);
-    assert.ok((await r.json()).error.message);
+    // En anglais, comme l'API OpenAI : pas d'accents, pas de « : » à la française.
+    const message = (await r.json()).error.message;
+    assert.match(message, /^[\x20-\x7e]+$/, message);
+    assert.doesNotMatch(message, / :/, message);
   }
+  assert.match((await (await call('/inconnu')).json()).error.message, /^unknown path \/v1\/inconnu/);
+  assert.match((await (await call('/models', { key: null })).json()).error.message, /^missing or incorrect access key/);
   // Un modèle inconnu : celui chargé dans Nel Code répond.
   const r = await call('/chat/completions', { body: { model: 'gpt-4o', max_tokens: 4, messages: [{ role: 'user', content: 'Salut' }] } });
   assert.equal((await r.json()).model, 'mini');

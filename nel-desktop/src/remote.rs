@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
+use crate::images::{self, Attached};
 use crate::store::{self, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -286,11 +287,48 @@ pub async fn test(id: &str) -> Result<Vec<String>> {
     let mut list = providers();
     if let Some(p) = list.iter_mut().find(|p| p["id"] == id) {
         let old = p["models"].as_array().cloned().unwrap_or_default();
-        p["models"] = ids.iter().map(|m| old.iter().find(|o| o["id"] == m.as_str()).cloned().unwrap_or_else(|| json!({ "id": m }))).collect();
+        // La détection des images est refaite au prochain choix du modèle ; le réglage manuel reste.
+        p["models"] = ids
+            .iter()
+            .map(|m| old.iter().find(|o| o["id"] == m.as_str()).cloned().map(|mut o| { o.as_object_mut().map(|x| x.remove("visionDetected")); o }).unwrap_or_else(|| json!({ "id": m })))
+            .collect();
     }
     save_providers(list)?;
     crate::log::info(&format!("fournisseur {host} : {} modèle(s)", ids.len()));
     Ok(ids)
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Modèles qui voient les images (images.rs) : la détection est gardée (`visionDetected`), le réglage manuel (`vision`)
+// passe avant.
+
+/// Détecte (si ce n'est pas déjà fait, ou `again`) si `model` voit les images. Rend { vision, detected, manual }.
+pub async fn vision(provider_id: &str, model: &str, again: bool) -> Result<Value> {
+    let (_, _, mut m, p) = provider(provider_id, model)?;
+    let mut detected = m["visionDetected"].as_bool();
+    if (again || m.get("visionDetected").is_none()) && p["models"].as_array().is_some_and(|ms| ms.iter().any(|x| x["id"] == model)) {
+        detected = images::detect(&p, model, &client()?, creds::read(provider_id)).await;
+        let mut list = providers();
+        if let Some(x) = list.iter_mut().find(|q| q["id"] == provider_id).and_then(|q| q["models"].as_array_mut()).and_then(|ms| ms.iter_mut().find(|x| x["id"] == model)) {
+            x["visionDetected"] = detected.into();
+        }
+        save_providers(list)?;
+        m["visionDetected"] = detected.into();
+    }
+    Ok(json!({ "vision": images::effective(&m), "detected": detected, "manual": m["vision"].as_bool() }))
+}
+
+/// Le réglage manuel d'un modèle : voit les images (true), ne les voit pas (false), ou automatique (None).
+pub fn set_vision(provider_id: &str, model: &str, value: Option<bool>) -> Result<()> {
+    let mut list = providers();
+    let x = list.iter_mut().find(|q| q["id"] == provider_id).and_then(|q| q["models"].as_array_mut()).and_then(|ms| ms.iter_mut().find(|x| x["id"] == model)).ok_or_else(|| format!("modèle inconnu : {model}"))?;
+    match value {
+        Some(v) => x["vision"] = v.into(),
+        None => {
+            x.as_object_mut().map(|o| o.remove("vision"));
+        }
+    }
+    save_providers(list)
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -436,22 +474,28 @@ impl ThinkSplit {
 // ---------------------------------------------------------------------------------------------------------
 // Génération
 
-/// Les tours précédents qui tiennent dans `context` tokens (estimés à 4 caractères par token), les plus récents.
-pub fn fit(history: &[(String, String)], message: &str, context: Option<u64>, reserve: u64) -> Vec<Value> {
+/// Les tours précédents qui tiennent dans `context` tokens (estimés à 4 caractères par token, et l'estimation de
+/// chaque image), les plus récents. Les messages avec des images ont un `content` en tableau (images.rs).
+pub fn fit(history: &[(String, String)], message: &str, images: &Attached, context: Option<u64>, reserve: u64) -> Vec<Value> {
     let est = |s: &str| s.chars().count() as u64 / 4 + 4;
+    let pictures = |files: &[String]| files.iter().take(images::MAX_PER_MESSAGE).map(|f| images::file_tokens(&images.session, f)).sum::<u64>();
     let budget = context.map_or(u64::MAX, |c| c.saturating_sub(reserve));
-    let mut used = est(message);
+    let mut used = est(message) + pictures(&images.message);
     let mut turns = Vec::new();
-    for (q, a) in history.iter().rev() {
-        let n = est(q) + est(a);
+    for (i, (q, a)) in history.iter().enumerate().rev() {
+        let n = est(q) + est(a) + pictures(images.of_turn(i));
         if used + n > budget {
             break;
         }
         used += n;
-        turns.push((q, a));
+        turns.push((i, q, a));
     }
-    let mut msgs: Vec<Value> = turns.into_iter().rev().flat_map(|(q, a)| [json!({ "role": "user", "content": q }), json!({ "role": "assistant", "content": a })]).collect();
-    msgs.push(json!({ "role": "user", "content": message }));
+    let mut msgs: Vec<Value> = turns
+        .into_iter()
+        .rev()
+        .flat_map(|(i, q, a)| [json!({ "role": "user", "content": images::user_content(&images.session, q, images.of_turn(i)) }), json!({ "role": "assistant", "content": a })])
+        .collect();
+    msgs.push(json!({ "role": "user", "content": images::user_content(&images.session, message, &images.message) }));
     msgs
 }
 
@@ -469,15 +513,17 @@ pub struct Turn {
     pub stopped: bool,
 }
 
-/// Les tokens d'entrée estimés d'un corps de requête (4 caractères par token), quand le serveur ne donne pas `usage`.
+/// Les tokens d'entrée estimés d'un corps de requête (4 caractères par token, et l'estimation de chaque image), quand
+/// le serveur ne donne pas `usage`.
 pub fn estimate_prompt(body: &Value) -> usize {
     let len = |v: &Value| match v {
         Value::Null => 0,
         Value::String(s) => s.chars().count(),
         v => v.to_string().chars().count(),
     };
-    let chars: usize = body["messages"].as_array().into_iter().flatten().map(|m| len(&m["content"]) + len(&m["tool_calls"])).sum::<usize>() + len(&body["tools"]);
-    chars.div_ceil(4)
+    let chars: usize = body["messages"].as_array().into_iter().flatten().map(|m| if m["content"].is_array() { 0 } else { len(&m["content"]) } + len(&m["tool_calls"])).sum::<usize>() + len(&body["tools"]);
+    let parts: u64 = body["messages"].as_array().into_iter().flatten().filter(|m| m["content"].is_array()).map(|m| images::content_tokens(&m["content"])).sum();
+    chars.div_ceil(4) + parts as usize
 }
 
 /// Le fournisseur `provider_id` : (hôte pour les messages, adresse, modèle et ses réglages, le fournisseur).
@@ -664,9 +710,10 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
 }
 
 /// Écrit la réponse de `model` chez le fournisseur `provider_id` (une conversation simple, sans outils).
-pub async fn generate(app: &AppHandle, provider_id: &str, model: &str, history: &[(String, String)], message: &str, sampling: (f32, f32), cancel: Arc<Notify>) -> Result<Turn> {
+#[allow(clippy::too_many_arguments)]
+pub async fn generate(app: &AppHandle, provider_id: &str, model: &str, history: &[(String, String)], message: &str, images: &Attached, sampling: (f32, f32), cancel: Arc<Notify>) -> Result<Turn> {
     let (_, url, m, p) = provider(provider_id, model)?;
-    let messages = fit(history, message, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024));
+    let messages = fit(history, message, images, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024));
     stream_chat(app, provider_id, &url, &chat_body(&p, model, &m, messages, sampling), &cancel).await
 }
 
@@ -713,9 +760,10 @@ mod tests {
     #[test]
     fn messages_dans_le_contexte() {
         let h: Vec<(String, String)> = (0..10).map(|i| (format!("q{i} {}", "x".repeat(400)), "r".repeat(400))).collect();
-        let all = fit(&h, "dernier", None, 0);
+        let none = Attached::default();
+        let all = fit(&h, "dernier", &none, None, 0);
         assert_eq!(all.len(), 21);
-        let few = fit(&h, "dernier", Some(300), 50); // un tour ≈ 209 tokens estimés
+        let few = fit(&h, "dernier", &none, Some(300), 50); // un tour ≈ 209 tokens estimés
         assert_eq!(few.len(), 3, "un seul tour tient");
         assert_eq!(few[0]["content"].as_str().unwrap()[..2], *"q9");
         assert_eq!(few.last().unwrap()["content"], "dernier");

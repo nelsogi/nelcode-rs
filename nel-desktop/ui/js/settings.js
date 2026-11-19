@@ -113,6 +113,7 @@ export async function openSettings() {
     { key: 'commandTimeout', label: 'Mode Agent : durée max d\'une commande (s)', min: 5, max: 600, step: 5, hint: 'Au-delà, la commande et tous ses processus sont arrêtés (120 s par défaut).' },
     { key: 'textSize', label: 'Taille du texte (%)', min: 80, max: 150, step: 10, hint: 'Toute l\'interface grandit ou rapetisse (Ctrl + = / Ctrl + - ; Ctrl + 0 : 100 %).' },
     { key: 'summaryThreshold', label: 'Résumé automatique à (% du contexte)', min: 0, max: 95, step: 5, hint: 'Quand la conversation dépasse cette part du contexte du modèle (distant ou GGUF), les anciens échanges sont résumés par le modèle actif ; les 4 derniers restent tels quels. 0 : jamais (/compact résume à la main).' },
+    { key: 'imageMaxSide', label: 'Images : plus grand côté (px)', min: 512, max: 4096, step: 32, hint: 'Avant l\'envoi, chaque image est réduite à cette taille (1568 par défaut, ce que les modèles Claude lisent sans la réduire encore) et réencodée sans ses métadonnées (EXIF, position GPS…).' },
     { key: 'contextLimit', label: 'Contexte des modèles GGUF', min: 512, max: 32768, step: 512, hint: 'Au plus ce nombre de tokens de conversation (le modèle peut en gérer plus, mais la mémoire et le temps de réponse montent vite). Les .nelmodel gardent leur taille.' },
   ];
   const inputs = {};
@@ -149,7 +150,7 @@ export async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, agentMaxTurns: 10, commandTimeout: 120, textSize: 100, claudePermissionMode: 'default', claudeModel: '', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, imageMaxSide: 1568, agentMaxTurns: 10, commandTimeout: 120, textSize: 100, claudePermissionMode: 'default', claudeModel: '', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
       : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
         serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
         allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean),

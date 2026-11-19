@@ -67,9 +67,9 @@ pub fn list(dir: &str) -> Vec<Value> {
     merge(project, scan(&store::root().join("commands"), "global"))
 }
 
-/// Crée `<name>.md` dans le projet (`scope` = "project") ou en global, avec un modèle ; jamais par-dessus un fichier.
-/// Rend le chemin du fichier.
-pub fn create(dir: &str, scope: &str, name: &str, description: &str) -> Result<String> {
+/// Crée `<name>.md` dans le projet (`scope` = "project") ou en global : la description en front matter, puis `body`
+/// (le modèle de l'interface, dans sa langue) ; jamais par-dessus un fichier. Rend le chemin du fichier.
+pub fn create(dir: &str, scope: &str, name: &str, description: &str, body: &str) -> Result<String> {
     let name = name.trim().trim_start_matches('/').to_lowercase();
     if !valid_name(&name) {
         return Err("nom invalide : lettres minuscules, chiffres, « - » et « _ », 40 caractères au plus".into());
@@ -82,7 +82,7 @@ pub fn create(dir: &str, scope: &str, name: &str, description: &str) -> Result<S
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let file = folder.join(format!("{name}.md"));
     let description = description.lines().next().unwrap_or_default().trim();
-    let text = format!("---\ndescription: {description}\n---\nDécris ici ce que le modèle doit faire. $ARGUMENTS est remplacé par le texte tapé après la commande.\n\n$ARGUMENTS\n");
+    let text = format!("---\ndescription: {description}\n---\n{body}");
     fs::OpenOptions::new().write(true).create_new(true).open(&file).and_then(|mut f| f.write_all(text.as_bytes())).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists { format!("la commande /{name} existe déjà : {}", file.display()) } else { e.to_string() }
     })?;
@@ -141,13 +141,14 @@ mod tests {
     fn creation_sans_ecraser() {
         let d = tmp();
         let dir = d.to_str().unwrap();
-        let file = create(dir, "project", "/Relire", "Relire le code\nsuite ignorée").unwrap();
+        let file = create(dir, "project", "/Relire", "Relire le code\nsuite ignorée", "Relis.\n\n$ARGUMENTS\n").unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "---\ndescription: Relire le code\n---\nRelis.\n\n$ARGUMENTS\n");
         assert!(file.replace('\\', "/").ends_with(".nelcode/commands/relire.md"));
         let projet: Vec<_> = list(dir).into_iter().filter(|c| c["origin"] == "project").collect();
         assert_eq!((projet[0]["name"].as_str(), projet[0]["description"].as_str()), (Some("relire"), Some("Relire le code")));
-        assert!(create(dir, "project", "relire", "autre").unwrap_err().contains("existe déjà"));
+        assert!(create(dir, "project", "relire", "autre", "").unwrap_err().contains("existe déjà"));
         assert!(fs::read_to_string(&file).unwrap().contains("Relire le code"), "le fichier existant n'est pas touché");
-        assert!(create(dir, "project", "../x", "").unwrap_err().contains("nom invalide"));
-        assert!(create(dir, "ailleurs", "x", "").is_err());
+        assert!(create(dir, "project", "../x", "", "").unwrap_err().contains("nom invalide"));
+        assert!(create(dir, "ailleurs", "x", "", "").is_err());
     }
 }

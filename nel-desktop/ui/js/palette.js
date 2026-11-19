@@ -106,6 +106,9 @@ export async function showCommands() {
   if (await dialog('Commandes personnalisées', body, [{ label: 'Fermer', value: null }, { label: 'Nouvelle commande…', value: 'new', primary: true }]) === 'new') await newCommand();
 }
 
+// Le corps d'une nouvelle commande, sous son front matter (écrit tel quel par la partie Rust).
+const COMMAND_TEMPLATE = 'Décris ici ce que le modèle doit faire. $ARGUMENTS est remplacé par le texte tapé après la commande.\n\n$ARGUMENTS\n';
+
 async function newCommand() {
   const name = h('input', { class: 'text-input', spellcheck: 'false', placeholder: 'review' });
   const description = h('input', { class: 'text-input', spellcheck: 'false', placeholder: 'Relire le code modifié' });
@@ -114,7 +117,7 @@ async function newCommand() {
   const body = [h('label', { class: 'field' }, h('div', { class: 'row' }, 'Nom (sans /)'), name), h('label', { class: 'field' }, h('div', { class: 'row' }, 'Description'), description), h('label', { class: 'field' }, h('div', { class: 'row' }, 'Où'), scope)];
   if (!(await dialog('Nouvelle commande', body, [{ label: 'Annuler', value: false }, { label: 'Créer', value: true, primary: true }], name))) return;
   try {
-    const path = await invoke('create_custom_command', { dir: dir || '', scope: scope.value, name: name.value, description: description.value });
+    const path = await invoke('create_custom_command', { dir: dir || '', scope: scope.value, name: name.value, description: description.value, body: COMMAND_TEMPLATE });
     toast('Commande créée : ' + path + ' (modifie ce fichier pour écrire la commande)', 'success', 10000);
     await refreshCustom();
   } catch (e) { toast(errText(e), 'error', 8000); }
