@@ -30,6 +30,7 @@
     <ul id="models" class="list models"></ul>
     <div class="sidebar-foot">
       <button id="settings-btn" class="ghost" title="Réglages (Ctrl+,)"><span data-icon="settings"></span> Réglages</button>
+      <button id="usage-btn" class="ghost" title="Suivi : tokens, coûts estimés, temps de réponse" aria-label="Suivi"><span data-icon="chart-column"></span></button>
       <button id="arena-btn" class="ghost" title="Classement du mode comparaison" aria-label="Classement"><span data-icon="trophy"></span></button>
       <button id="palette-btn" class="ghost" title="Palette de commandes"><kbd>Ctrl K</kbd></button>
     </div>
@@ -40,6 +41,7 @@
       <div id="title" class="title" title="Double-clic pour renommer (F2)">Nouvelle conversation</div>
       <div class="chips">
         <span id="claude-chip" class="chip claude" hidden></span>
+        <button id="usage-chip" class="chip usage" hidden></button>
         <span id="compare-chip" class="chip" hidden title="Conversation comparée : chaque message part aux deux modèles"></span>
         <button id="nelcode-chip" class="chip" hidden></button>
         <button id="agent-btn" class="chip" title="Mode Agent : le modèle lit et modifie les fichiers du dossier de travail (avec ton accord). Modèles distants qui gèrent les outils seulement."><span data-icon="bot"></span><span>Agent</span></button>

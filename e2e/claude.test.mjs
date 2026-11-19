@@ -236,3 +236,13 @@ test('sous-agents : étapes regroupées dans l\'étape Sous-agent, texte du sous
   await A.waitFor(`S.current.id === ${JSON.stringify(id)} && ${msg}?.querySelector('.substeps')`, 5_000, 'conversation rouverte');
   await check();
 });
+
+test('suivi : tokens et coût de l\'événement result dans usage.jsonl (type claude-agent), et dans l\'en-tête', async () => {
+  await newClaude();
+  await A.ev(`T.submit('bonjour')`);
+  await A.waitFor('!!S.gen', 10_000);
+  await A.waitFor('!S.gen', 30_000, 'fin');
+  const u = fs.readFileSync(path.join(A.home, 'usage.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
+  assert.deepEqual([u.kind, u.provider, u.model, u.input, u.output, u.cost, u.project], ['claude-agent', 'Claude Agent', 'claude-sonnet-5-5', 1312, 25, 0.0031, DIR]);
+  assert.match(await A.ev(`document.getElementById('usage-chip').textContent`), /tokens · ≈ 0,0031 \$/);
+});

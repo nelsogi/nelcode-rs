@@ -464,7 +464,20 @@ pub struct Turn {
     pub reasoning_seconds: Option<f64>,
     pub tool_calls: Vec<Value>,
     pub tokens: usize,
+    /// Les tokens d'entrée (`usage.prompt_tokens`, sinon estimés à 4 caractères par token).
+    pub prompt_tokens: usize,
     pub stopped: bool,
+}
+
+/// Les tokens d'entrée estimés d'un corps de requête (4 caractères par token), quand le serveur ne donne pas `usage`.
+pub fn estimate_prompt(body: &Value) -> usize {
+    let len = |v: &Value| match v {
+        Value::Null => 0,
+        Value::String(s) => s.chars().count(),
+        v => v.to_string().chars().count(),
+    };
+    let chars: usize = body["messages"].as_array().into_iter().flatten().map(|m| len(&m["content"]) + len(&m["tool_calls"])).sum::<usize>() + len(&body["tools"]);
+    chars.div_ceil(4)
 }
 
 /// Le fournisseur `provider_id` : (hôte pour les messages, adresse, modèle et ses réglages, le fournisseur).
@@ -604,6 +617,9 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
             if let Some(n) = v["usage"]["completion_tokens"].as_u64() {
                 turn.tokens = n as usize;
             }
+            if let Some(n) = v["usage"]["prompt_tokens"].as_u64() {
+                turn.prompt_tokens = n as usize;
+            }
             let d = &v["choices"][0]["delta"];
             add_calls(&d["tool_calls"]);
             let reasoning = d["reasoning_content"].as_str().or(d["reasoning"].as_str()).unwrap_or_default();
@@ -623,6 +639,7 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
         let full: Vec<Value> = msg["tool_calls"].as_array().cloned().unwrap_or_default().into_iter().enumerate().map(|(i, mut c)| { c["index"] = i.into(); c }).collect();
         add_calls(&Value::Array(full));
         turn.tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
+        turn.prompt_tokens = v["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize;
     }
     let (t, a) = split.finish();
     if !t.is_empty() {
@@ -638,6 +655,9 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
     }
     if turn.tokens == 0 {
         turn.tokens = pieces;
+    }
+    if turn.prompt_tokens == 0 {
+        turn.prompt_tokens = estimate_prompt(body);
     }
     turn.tool_calls = calls.into_iter().filter(|c| !c["function"]["name"].as_str().unwrap_or_default().is_empty()).collect();
     Ok(turn)
@@ -724,6 +744,13 @@ mod tests {
         assert_eq!(claude["max_tokens"], 64_000);
         let reglé = chat_body(&json!({ "kind": "anthropic", "omitSampling": true }), "m", &json!({ "maxTokens": 500 }), msgs, (0.7, 0.9));
         assert_eq!(reglé["max_tokens"], 500);
+    }
+
+    #[test]
+    fn tokens_d_entree_estimes() {
+        let body = json!({ "messages": [{ "role": "user", "content": "x".repeat(40) }, { "role": "assistant", "content": null }] });
+        assert_eq!(estimate_prompt(&body), 10);
+        assert_eq!(estimate_prompt(&json!({})), 0);
     }
 
     #[test]

@@ -12,6 +12,7 @@ import { runCommand, updateSuggest } from './palette.js';
 import { projectName, rememberProject, renderProject, sameProject, sessionsByProject } from './projects.js';
 import { refreshFiles } from './files.js';
 import { autoSummarize, summaryEl } from './summary.js';
+import { addUsage, afterPaid, budgetOk, renderUsageChip } from './usage.js';
 
 export const TITLE_LENGTH = 40;
 
@@ -300,14 +301,24 @@ export async function regenerate(index) {
 }
 
 export async function startGen(s, g) {
+  // Une demande payante (Claude Agent, ou un modèle distant avec un prix) : le budget du mois d'abord. Le résumé
+  // automatique n'est pas vérifié : le message qui le suit l'est.
+  // S.gen est posé avant : rien d'autre ne part pendant la question.
   S.gen = { ...g, session: s, text: '', tokens: [], reasoning: '', thinkStart: null, thinkEnd: null, steps: [] };
   renderMessages();
   renderComposer();
   renderStatus();
+  const paid = g.kind !== 'compare' && g.kind !== 'summary' && (s.claudeAgent ? { claude: true } : S.model.remote ? { model: S.model.remote.model } : null);
+  if (paid && !(await budgetOk(paid))) {
+    S.gen = null;
+    if (g.kind === 'send') s.messages.pop();
+    renderAll();
+    return false;
+  }
   try {
     const r = S.model.remote;
     if (g.kind === 'compare')
-      await invoke('compare_generate', { a: s.compare.a, b: s.compare.b, historyA: g.history, historyB: g.historyB, message: g.question, options: genOptions() });
+      await invoke('compare_generate', { a: s.compare.a, b: s.compare.b, historyA: g.history, historyB: g.historyB, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
     else if (s.claudeAgent) {
       // Claude Agent : l'outil claude reprend sa propre session ; l'historique n'est pas renvoyé.
       if (!s.workingDirectory) throw new Error('Claude Agent : choisis d\'abord un dossier de travail (/dir).');
@@ -317,8 +328,8 @@ export async function startGen(s, g) {
       if (!r) throw new Error(AGENT_LOCAL);
       if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
       await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, dir: s.workingDirectory, options: genOptions() });
-    } else if (r) await invoke('remote_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, options: genOptions() });
-    else await invoke('generate', { history: g.history, message: g.question, options: genOptions() });
+    } else if (r) await invoke('remote_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
+    else await invoke('generate', { history: g.history, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
     return true;
   } catch (e) {
     S.gen = null;
@@ -352,6 +363,9 @@ export async function onDone(p) {
   if (!g) return;
   S.gen = null;
   const s = g.session;
+  // Les tokens et le coût estimé de la conversation (gardés avec elle), et le budget du mois.
+  for (const u of g.kind === 'compare' ? [p.a?.usage, p.b?.usage] : [p.usage]) addUsage(s, u);
+  afterPaid(p.usage);
   if (g.kind === 'compare') return onCompareDone(g, s, p);
   if (g.kind === 'summary') return onSummaryDone(g, s, p);
   let text = (p.text ?? '').trim();
@@ -638,6 +652,7 @@ export function renderHeader() {
   $('claude-chip').hidden = !s.claudeAgent;
   if (s.claudeAgent) $('claude-chip').replaceChildren(icon('bot'), h('span', {}, `Claude Agent${s.claudeAgent.cost ? ' · ' + money(s.claudeAgent.cost) : ''}`));
   $('agent-btn').hidden = !!s.claudeAgent;
+  renderUsageChip();
   if (s.compare) $('compare-chip').replaceChildren(`A ${s.compare.a}`, icon('arrow-left-right'), h('span', {}, `B ${s.compare.b}`));
   $('transp-btn').classList.toggle('on', !!S.settings.transparency);
   $('agent-btn').classList.toggle('on', !!s.agent);

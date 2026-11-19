@@ -76,6 +76,26 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   - **notifications discrètes** (en bas à droite, quatre au plus, croix, durée selon le genre), **aide des raccourcis**
     avec « ? », **taille du texte** réglable (80 à 150 %, Ctrl+= / Ctrl+- / Ctrl+0) ;
   - tests de l'interface : `e2e/ux.test.mjs`.
+- **Suivi de l'utilisation** :
+  - chaque réponse (chat, mode Agent, Claude Agent, serveur local) ajoute une ligne à `%APPDATA%\NelCode\usage.jsonl` :
+    date, projet (dossier de travail), fournisseur, modèle, tokens d'entrée et de sortie, durée, tokens/s, type, coût
+    estimé — jamais le texte des messages. Tokens : champ `usage` des réponses (`stream_options.include_usage` en
+    streaming ; estimés à 4 caractères par token si le serveur ne le donne pas), tokenizer du modèle pour les modèles de
+    ce PC, événement `result` (tokens, cache compris, et `total_cost_usd`) pour Claude Agent ; en mode Agent, les tokens
+    d'entrée de chaque tour s'additionnent ;
+  - **coûts estimés** avec une table de prix par modèle (dollars par million de tokens d'entrée et de sortie),
+    modifiable dans **Réglages → Suivi**, préremplie avec les prix des modèles Claude de la page officielle des tarifs
+    d'Anthropic (vérifiés le 19 novembre 2026, date affichée) ; un nom couvre ses variantes datées ; 0 pour les modèles de
+    ce PC et ceux sans prix ;
+  - **page Suivi** (icône de la barre latérale, `/suivi`, palette Ctrl+K) : totaux du jour, de la semaine et du mois,
+    graphiques en barres SVG (faits à la main) par jour, par fournisseur, par modèle et par projet (tokens ou coût, 7, 30
+    ou 90 jours), temps de réponse moyen et tokens/s par modèle, export CSV ;
+  - **budget mensuel** facultatif (fournisseurs payants) : avertissement discret à 80 %, et à 100 % une confirmation
+    avant chaque nouvelle demande payante (désactivable) ;
+  - **tokens et coût estimé de la conversation** dans son en-tête (gardés avec elle) ;
+  - les lignes de plus de 90 jours sont **regroupées par jour** au démarrage : le fichier ne grossit pas sans fin ;
+  - tests unitaires (prix, table nettoyée, ligne sans texte, regroupement, CSV, tokens de Claude Agent) et de l'interface
+    (`e2e/usage.test.mjs`, et Claude Agent dans `e2e/claude.test.mjs`).
 
 ### Modifié
 

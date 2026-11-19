@@ -13,11 +13,13 @@ import { openCatalog } from './catalog.js';
 import { projectName, recentProjects, selectProject } from './projects.js';
 import { toggleFiles } from './files.js';
 import { openWizard } from './onboarding.js';
+import { openUsage } from './usage.js';
 
 export const COMMANDS = [
   { name: 'new', desc: 'Nouvelle conversation', run: () => startNew() },
   { name: 'claude-agent', desc: 'Nouvelle conversation Claude Agent (outil claude d\'Anthropic)', run: () => startClaudeAgent() },
   { name: 'compare', desc: 'Conversation comparée entre deux modèles', run: () => openCompare() },
+  { name: 'suivi', desc: 'Suivi : tokens, coûts estimés, temps de réponse, export CSV', run: () => openUsage() },
   { name: 'classement', desc: 'Classement du mode comparaison', run: () => openLeaderboard() },
   { name: 'compact', args: '[consigne]', desc: 'Résumer les anciens échanges (les 4 derniers restent tels quels) ; ex. /compact garde surtout les tests', run: (a) => compactNow(a) },
   { name: 'commands', desc: 'Commandes personnalisées (.md) : liste, et création', run: () => showCommands() },
@@ -185,7 +187,7 @@ export async function openPalette() {
   await refreshCustom();
   if (UI.closeOverlay) return;
   const actions = [
-    ['Nouvelle conversation', 'Ctrl+N', startNew], ['Nouvelle conversation Claude Agent', '', startClaudeAgent], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard],
+    ['Nouvelle conversation', 'Ctrl+N', startNew], ['Nouvelle conversation Claude Agent', '', startClaudeAgent], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard], ['Suivi (tokens, coûts, temps de réponse)', '', openUsage],
     ['Mode transparence', '', toggleTransparency], ['Mode Agent', '', toggleAgent], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', openSettings],
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],

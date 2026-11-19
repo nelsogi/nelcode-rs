@@ -12,7 +12,9 @@ export const UI = {
   nelcodeAsk: 0,
   importToast: null,
   preparing: false,     // un résumé automatique se prépare avant l'envoi
-};export const S = {
+  budgetWarned: null,   // le mois (« 2026-11 ») déjà averti à 80 % du budget
+};
+export const S = {
   info: {},            // app_info : dossiers
   settings: {},        // settings.json
   sessions: [],        // toutes les conversations (format de Nel Code C#)

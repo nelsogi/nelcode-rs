@@ -14,6 +14,7 @@ mod log;
 mod remote;
 mod server;
 mod store;
+mod usage;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -362,7 +363,7 @@ fn text_stream(model: &dyn ChatModel, prompt: &[u32], max: usize, sampling: &Sam
 /// Écrit une réponse. Chaque token part dans « gen-token » : { text, side, choices? } (choices : [[texte, p] ×5]
 /// en mode transparence). Rend le résumé pour « gen-done ».
 #[allow(clippy::too_many_arguments)]
-fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(String, String)], message: &str, options: &GenOptions, stop: &AtomicBool, side: &str) -> Value {
+fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(String, String)], message: &str, options: &GenOptions, stop: &AtomicBool, side: &str, project: &str) -> Value {
     let clock = Instant::now();
     let (prompt, _) = model.chat(history, message);
     let max = model.max_reply(options.max_reply_tokens);
@@ -375,14 +376,20 @@ fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(S
         !stop.load(Ordering::SeqCst)
     });
     match result {
-        Ok(out) => json!({
-            "text": model.decode(&out),
-            "model": name,
-            "tokens": out.len(),
-            "promptTokens": prompt.len(),
-            "seconds": clock.elapsed().as_secs_f64(),
-            "stopped": stop.load(Ordering::SeqCst),
-        }),
+        Ok(out) => {
+            let seconds = clock.elapsed().as_secs_f64();
+            // Les tokens comptés avec le tokenizer du modèle ; un modèle de ce PC ne coûte rien.
+            let usage = usage::record(usage::Rec { project, provider: "local", model: name, kind: "chat", input: prompt.len() as u64, output: out.len() as u64, seconds, cost: None, local: true });
+            json!({
+                "text": model.decode(&out),
+                "model": name,
+                "tokens": out.len(),
+                "promptTokens": prompt.len(),
+                "seconds": seconds,
+                "stopped": stop.load(Ordering::SeqCst),
+                "usage": usage,
+            })
+        }
         Err(e) => {
             log::error(&format!("génération avec « {name} » : {e}"));
             json!({ "error": e.to_string() })
@@ -393,7 +400,7 @@ fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(S
 /// Lance la réponse à `message` (après les tours `history`) dans un thread à part : l'interface ne se fige
 /// jamais. Les tokens partent dans « gen-token », la fin dans « gen-done » (texte complet, arrêtée ou non, ou erreur).
 #[tauri::command]
-fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String)>, message: String, options: GenOptions) -> Result<()> {
+fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String)>, message: String, options: GenOptions, project: Option<String>) -> Result<()> {
     let (name, model) = current(&state)?;
     if state.generating.swap(true, Ordering::SeqCst) {
         return Err("une réponse est déjà en cours".into());
@@ -401,7 +408,7 @@ fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String
     state.stop.store(false, Ordering::SeqCst);
     let (generating, stop) = (state.generating.clone(), state.stop.clone());
     std::thread::spawn(move || {
-        let done = write_reply(&app, &*model, &name, &history, &message, &options, &stop, "");
+        let done = write_reply(&app, &*model, &name, &history, &message, &options, &stop, "", project.as_deref().unwrap_or_default());
         generating.store(false, Ordering::SeqCst);
         let _ = app.emit("gen-done", done);
     });
@@ -429,7 +436,7 @@ fn compare_model(state: &AppState, name: &str) -> Result<Arc<dyn ChatModel>> {
 /// n'est pas partagé). Tokens dans « gen-token » (side "a" ou "b"), fin dans « gen-done » : { compare, a, b }.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn compare_generate(app: AppHandle, state: State<AppState>, a: String, b: String, history_a: Vec<(String, String)>, history_b: Vec<(String, String)>, message: String, options: GenOptions) -> Result<()> {
+fn compare_generate(app: AppHandle, state: State<AppState>, a: String, b: String, history_a: Vec<(String, String)>, history_b: Vec<(String, String)>, message: String, options: GenOptions, project: Option<String>) -> Result<()> {
     if !store::valid_name(&a) || !store::valid_name(&b) {
         return Err("nom de modèle invalide".into());
     }
@@ -448,7 +455,7 @@ fn compare_generate(app: AppHandle, state: State<AppState>, a: String, b: String
             }
             let _ = app.emit("gen-side", side);
             match compare_model(&state, name) {
-                Ok(model) => write_reply(&app, &*model, name, history, &message, &options, &stop, side),
+                Ok(model) => write_reply(&app, &*model, name, history, &message, &options, &stop, side, project.as_deref().unwrap_or_default()),
                 Err(e) => json!({ "error": format!("{name} : {e}") }),
             }
         };
@@ -745,7 +752,8 @@ fn import_qwen() -> Result<Value> {
 /// Comme `generate`, avec le modèle `model` du fournisseur `provider` : « gen-token », « gen-reasoning » (la réflexion),
 /// puis « gen-done » ({ text, reasoning, reasoningSeconds, … } ou { error }).
 #[tauri::command]
-fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, options: GenOptions) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, options: GenOptions, project: Option<String>) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
         return Err("une réponse est déjà en cours".into());
     }
@@ -757,10 +765,17 @@ fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, mod
         let clock = Instant::now();
         let s = options.sampling();
         let done = match remote::generate(&app, &provider, &model, &history, &message, (s.temperature, s.top_p), cancel).await {
-            Ok(r) => json!({
-                "text": r.content, "reasoning": r.reasoning, "reasoningSeconds": r.reasoning_seconds, "model": model,
-                "tokens": r.tokens, "seconds": clock.elapsed().as_secs_f64(), "stopped": r.stopped,
-            }),
+            Ok(r) => {
+                let seconds = clock.elapsed().as_secs_f64();
+                let usage = usage::record(usage::Rec {
+                    project: project.as_deref().unwrap_or_default(), provider: &provider_name(&provider, &model), model: &model, kind: "chat",
+                    input: r.prompt_tokens as u64, output: r.tokens as u64, seconds, cost: None, local: false,
+                });
+                json!({
+                    "text": r.content, "reasoning": r.reasoning, "reasoningSeconds": r.reasoning_seconds, "model": model,
+                    "tokens": r.tokens, "promptTokens": r.prompt_tokens, "seconds": seconds, "stopped": r.stopped, "usage": usage,
+                })
+            }
             Err(e) => {
                 log::error(&format!("modèle distant « {model} » : {e}"));
                 json!({ "error": e })
@@ -771,6 +786,11 @@ fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, mod
         let _ = app.emit("gen-done", done);
     });
     Ok(())
+}
+
+/// Le nom affiché du fournisseur `id` (son identifiant s'il n'existe plus).
+fn provider_name(id: &str, model: &str) -> String {
+    remote::provider(id, model).ok().and_then(|(_, _, _, p)| p["name"].as_str().map(str::to_string)).unwrap_or_else(|| id.to_string())
 }
 
 // --- Mode Agent -------------------------------------------------------------------------------------------
@@ -797,6 +817,13 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
             None
         });
         let mut done = agent::run(&app, &provider, &model, &history, &message, &dir, (s.temperature, s.top_p), max_turns, cancel).await;
+        let (input, output) = (done["promptTokens"].as_u64().unwrap_or(0), done["tokens"].as_u64().unwrap_or(0));
+        if input + output > 0 {
+            done["usage"] = usage::record(usage::Rec {
+                project: &dir, provider: &provider_name(&provider, &model), model: &model, kind: "agent", input, output,
+                seconds: done["seconds"].as_f64().unwrap_or(0.0), cost: None, local: false,
+            });
+        }
         if let Some(id) = checkpoint {
             done["agent"]["checkpoint"] = json!({ "id": id, "dir": dir });
         }
@@ -910,6 +937,44 @@ fn claude_agent_send(app: AppHandle, state: State<AppState>, session_id: Option<
     Ok(())
 }
 
+// --- Suivi (usage.jsonl) ------------------------------------------------------------------------------------
+
+/// Toutes les lignes de usage.jsonl (l'interface fait les totaux et les graphiques).
+#[tauri::command]
+fn usage_entries() -> Vec<Value> {
+    usage::load()
+}
+
+/// La table de prix en vigueur, celle par défaut, sa source et sa date de vérification.
+#[tauri::command]
+fn usage_prices() -> Value {
+    let s = store::load_settings();
+    json!({ "prices": usage::prices(), "custom": s["prices"].is_array(), "defaults": usage::default_prices(), "source": usage::PRICES_SOURCE, "checked": usage::PRICES_CHECKED })
+}
+
+/// Avant une demande : payante ou non, et le budget du mois (voir usage::budget).
+#[tauri::command]
+fn budget_status(model: Option<String>, claude: Option<bool>) -> Value {
+    usage::budget(model.as_deref(), claude.unwrap_or(false))
+}
+
+#[tauri::command]
+fn usage_csv() -> String {
+    usage::csv(&usage::load())
+}
+
+/// « Exporter en CSV » : demande où enregistrer ; rend le chemin, ou rien si l'utilisateur annule.
+#[tauri::command]
+async fn save_usage_csv(app: AppHandle) -> Result<Option<String>> {
+    let (_, date) = usage::local_now();
+    let Some(file) = app.dialog().file().set_title("Exporter le suivi").set_file_name(format!("nelcode-suivi-{}.csv", &date[..10])).add_filter("CSV", &["csv"]).blocking_save_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, usage::csv(&usage::load())).map_err(|e| format!("export impossible : {e}"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 /// Stop / Échap : le thread de génération s'arrête après le token en cours ; une réponse distante ferme sa connexion.
 #[tauri::command]
 fn stop_generation(state: State<AppState>) {
@@ -932,6 +997,7 @@ fn main() {
         .manage(AppState::default())
         .setup(|app| {
             log::prune();
+            usage::prune();
             gpu::startup();
             log::info(&format!("démarrage de Nel Code {}", env!("CARGO_PKG_VERSION")));
             let config = app.config().app.windows[0].clone();
@@ -1008,6 +1074,11 @@ fn main() {
             claude_agent_save_key,
             open_claude_install,
             claude_agent_send,
+            usage_entries,
+            usage_prices,
+            budget_status,
+            usage_csv,
+            save_usage_csv,
         ])
         .run(tauri::generate_context!())
         .expect("impossible de lancer Nel Code");

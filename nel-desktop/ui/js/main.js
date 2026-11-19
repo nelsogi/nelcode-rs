@@ -12,6 +12,7 @@ import { openPalette, pickSuggest, showShortcuts, updateSuggest } from './palett
 import { projectMenu } from './projects.js';
 import { refreshFiles, toggleFiles } from './files.js';
 import { maybeOnboard } from './onboarding.js';
+import * as USAGE from './usage.js';
 
 listen('catalog-progress', (e) => { if (e.payload.tag === C.name) { Object.assign(C, e.payload); catalogProgress(); } });
 
@@ -127,6 +128,10 @@ $('catalog-btn').onclick = () => openCatalog();
 $('settings-btn').onclick = openSettings;
 
 $('arena-btn').onclick = openLeaderboard;
+
+$('usage-btn').onclick = () => USAGE.openUsage();
+
+$('usage-chip').onclick = () => USAGE.openUsage();
 
 $('transp-btn').onclick = toggleTransparency;
 
@@ -253,4 +258,4 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 })().catch((e) => toast('Démarrage : ' + errText(e), 'error', 0));
 
 // Les tests de l'interface (e2e/) lisent l'état et appellent ces fonctions depuis la page.
-Object.assign(window, { S, F, C, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });
+Object.assign(window, { S, F, C, USAGE, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });

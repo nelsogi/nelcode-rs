@@ -280,6 +280,7 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
     let stream = body["stream"].as_bool().unwrap_or(false);
     let (id, created) = (format!("chatcmpl-{:x}", crate::seed()), now());
     let _ = app.emit("server-busy", true);
+    let clock = std::time::Instant::now();
     log::info(&format!("serveur local : réponse avec « {name} » ({} tokens de prompt{})", prompt.len(), if stream { ", streaming" } else { "" }));
 
     let chunk = |delta: Value, finish: Value| {
@@ -301,6 +302,10 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
     let _ = app.emit("server-busy", false);
     match result {
         Ok(ids) => {
+            crate::usage::record(crate::usage::Rec {
+                project: "", provider: "local", model: &name, kind: "api", input: prompt.len() as u64, output: ids.len() as u64,
+                seconds: clock.elapsed().as_secs_f64(), cost: None, local: true,
+            });
             let finish = if ids.len() >= max { "length" } else { "stop" };
             if stream {
                 let _ = write!(conn, "data: {}\n\ndata: [DONE]\n\n", chunk(json!({}), finish.into()));

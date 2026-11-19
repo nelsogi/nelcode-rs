@@ -568,3 +568,41 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 /* --- Aide des raccourcis --- */
 .shortcuts dt { white-space: nowrap; }
 .shortcuts kbd { font: 11.5px var(--mono); background: var(--surface-2); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+
+/* --- Suivi (usage.js) : totaux, graphiques en barres SVG, budget --------------------------------------- */
+.dialog:has(.usage) { width: min(920px, 94vw); }
+.usage .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+.usage .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.usage .tile-name { font-size: 12px; color: var(--dim); }
+.usage .tile-value { font-size: 22px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.usage .tile-value span { font-size: 12px; font-weight: 400; color: var(--dim); }
+.usage .tile-meta { font: 12px var(--mono); color: var(--text-2); }
+.usage .filters { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 4px; }
+.usage .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.usage .seg button { padding: 4px 10px; font-size: 12px; color: var(--text-2); border-right: 1px solid var(--border); }
+.usage .seg button:last-child { border-right: 0; }
+.usage .seg button.on { background: var(--surface-2); color: var(--text); }
+.usage .chart-box { margin: 12px 0; }
+.usage .chart-box h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.usage .chart { width: 100%; height: auto; display: block; overflow: visible; }
+.usage .chart .bar { fill: var(--accent); }
+.usage .chart .mark:hover .bar { fill: var(--accent-hover); }
+.usage .chart .hit { fill: transparent; }
+.usage .chart .mark:hover .hit { fill: var(--hover); }
+.usage .chart .grid { stroke: var(--border); stroke-dasharray: 3 4; }
+.usage .chart .baseline { stroke: var(--border-strong); }
+.usage .chart text { font: 12px var(--sans); fill: var(--text-2); }
+.usage .chart text.axis { font: 11px var(--mono); fill: var(--faint); }
+.usage .chart text.value { font: 12px var(--mono); fill: var(--text-2); }
+.usage .chart-empty { font-size: 12.5px; color: var(--dim); padding: 6px 0; }
+.usage .budget { margin: 4px 0 10px; font-size: 13px; color: var(--text-2); display: flex; align-items: center; gap: 12px; }
+.usage .budget .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.usage .budget .bar div { height: 100%; background: var(--success); }
+.usage .budget.warn .bar div { background: var(--warning); }
+.usage .budget.over .bar div { background: var(--error); }
+.usage .budget.warn span::before, .usage .budget.over span::before { content: "⚠ "; }
+.usage .board.speed td:not(:first-child), .usage .board.speed th:not(:first-child) { text-align: right; }
+.chip.usage { font-variant-numeric: tabular-nums; }
+.field textarea.prices { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); }
+.field .budget { width: 110px; }
+@media (max-width: 640px) { .usage .tiles { grid-template-columns: 1fr; } }

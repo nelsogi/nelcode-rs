@@ -931,7 +931,7 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
     let request = format!("r{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
     let mut run = Run { app, request: request.clone(), steps: Vec::new(), accept_all: false, plan: Value::Null };
     let (mut text, mut reasoning, mut seconds, mut tokens, mut stopped, mut error, mut limit) = (String::new(), String::new(), 0.0, 0, false, None, false);
-    let mut nelcode = None;
+    let (mut nelcode, mut prompt_tokens) = (None, 0);
     let result: Result<()> = async {
         let sb = Sandbox::new(dir)?;
         let (_, url, m, p) = remote::provider(provider_id, model)?;
@@ -951,6 +951,7 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
             reasoning += &t.reasoning;
             seconds += t.reasoning_seconds.unwrap_or(0.0);
             tokens += t.tokens;
+            prompt_tokens += t.prompt_tokens; // chaque tour renvoie tout le contexte : c'est ce qui est facturé
             if t.stopped || t.tool_calls.is_empty() {
                 (text, stopped) = (t.content, t.stopped);
                 return Ok(());
@@ -991,7 +992,7 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
     crate::log::info(&format!("agent : demande {request} finie, {} étape(s)", run.steps.len()));
     json!({
         "text": text, "reasoning": reasoning, "reasoningSeconds": if reasoning.is_empty() { Value::Null } else { seconds.into() },
-        "model": model, "tokens": tokens, "seconds": clock.elapsed().as_secs_f64(), "stopped": stopped,
+        "model": model, "tokens": tokens, "promptTokens": prompt_tokens, "seconds": clock.elapsed().as_secs_f64(), "stopped": stopped,
         "error": error, "limit": if limit { Some(max_turns) } else { None },
         "agent": { "request": request, "steps": run.steps, "nelcode": nelcode },
         "plan": run.plan,

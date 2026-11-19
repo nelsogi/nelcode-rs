@@ -434,6 +434,16 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["textSize"] = ((num(&s["textSize"], 100.0).clamp(80.0, 150.0) / 10.0).round() as u64 * 10).into();
     s["filesPanel"] = s["filesPanel"].as_bool().unwrap_or(false).into();
     s["onboarded"] = s["onboarded"].as_bool().unwrap_or(false).into();
+    // Suivi : la table de prix modifiée (absente : celle par défaut, voir usage.rs), le budget mensuel en dollars
+    // (0 : aucun) et la confirmation à 100 % (activée par défaut).
+    match crate::usage::clean_prices(&s["prices"]) {
+        Some(p) => s["prices"] = p,
+        None => {
+            s.as_object_mut().unwrap().remove("prices");
+        }
+    }
+    s["budgetMonthly"] = ((num(&s["budgetMonthly"], 0.0).clamp(0.0, 1e6) * 100.0).round() / 100.0).into();
+    s["budgetConfirm"] = s["budgetConfirm"].as_bool().unwrap_or(true).into();
     s
 }
 

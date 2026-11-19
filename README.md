@@ -279,6 +279,7 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/commands` | Commandes personnalisées : liste, et création d'une nouvelle |
 | `/settings` | Réglages de génération |
 | `/info` | Modèle, réglages, dossiers |
+| `/suivi` | Suivi : tokens, coûts estimés, temps de réponse, export CSV |
 | `/help` | Liste des commandes et des raccourcis |
 
 Sans valeur, `/temp`, `/topk`, `/topp` et `/max` affichent le réglage actuel.
@@ -404,6 +405,22 @@ ne contient aucune bibliothèque CUDA : elles ne viennent que du pack, et ne son
 prompt, tokens/s sur 200 tokens. Les résultats sont gardés par modèle. Sur une NVIDIA T400 : 348 tokens/s, contre
 134 sur le processeur.
 
+### Suivi : tokens, coûts et budget
+
+Chaque réponse (chat, mode Agent, Claude Agent, serveur local) est notée dans `%APPDATA%\NelCode\usage.jsonl` : date,
+projet, fournisseur, modèle, tokens d'entrée et de sortie, durée, tokens/s et coût estimé, **jamais le texte des
+messages**. L'en-tête de chaque conversation montre ses tokens et son coût estimé ; l'icône **Suivi** de la barre
+latérale (ou `/suivi`, ou la palette Ctrl+K) ouvre les totaux du jour, de la semaine et du mois, des graphiques par jour,
+fournisseur, modèle et projet, le temps de réponse moyen et les tokens/s par modèle, et **Exporter en CSV** (séparateur
+`;`, pour Excel).
+
+Les coûts sont des **estimations** : **Réglages → Suivi** contient la table de prix (un modèle par ligne : nom, prix
+d'entrée et de sortie en dollars par million de tokens), préremplie avec les modèles Claude de la page officielle des
+tarifs d'Anthropic (date de vérification affichée) ; « Prix par défaut » la remet. Les modèles de ce PC et ceux sans prix
+comptent 0 ; Claude Agent donne son propre coût. Un **budget mensuel** facultatif (fournisseurs payants) affiche un
+avertissement à 80 %, puis demande confirmation avant chaque demande payante à 100 % (case à décocher pour ne plus
+demander). Au-delà de 90 jours, les lignes sont regroupées par jour.
+
 ### En cas de problème
 
 Nel Code tient un journal dans `%APPDATA%\NelCode\logs` (un fichier par jour, 7 jours gardés) : démarrage, modèles,
@@ -473,6 +490,8 @@ recherche, motifs des réglages), noms réservés de Windows, NELCODE.md, plan e
 direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants), et le fournisseur Claude.
 `e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
 petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et la taille du texte.
+`e2e/usage.test.mjs` couvre le suivi (ligne sans texte, coût, en-tête, mode Agent, budget à 80 et 100 %, page Suivi,
+CSV, table de prix, regroupement des lignes de plus de 90 jours) avec un faux serveur qui renvoie `usage`.
 `e2e/claude.test.mjs` couvre Claude Agent avec un faux exécutable `claude` (`e2e/fake-claude/main.rs`, compilé par le
 test avec `rustc`) qui rejoue des flux stream-json enregistrés (`e2e/fake-claude/*.jsonl`). Les clés des tests sont
 rangées à part dans le Gestionnaire d'identification : les tests ne touchent jamais aux vraies clés. Les fichiers de test se lancent
@@ -533,6 +552,7 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `settings.js` | Réglages, mises à jour, serveur local, calcul (GPU, test de vitesse), taille du texte |
 | `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |
 | `palette.js` | Commandes `/`, palette Ctrl+K, aide et raccourcis |
+| `usage.js` | Page Suivi (totaux, graphiques SVG, CSV), tokens et coût de la conversation, budget, table de prix |
 | `projects.js` · `files.js` · `onboarding.js` | Projets · panneau Fichiers · assistant du premier lancement |
 | `main.js` | Écouteurs (Rust, clavier, boutons) et démarrage |
 

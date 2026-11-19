@@ -412,6 +412,18 @@ impl<'a> Translator<'a> {
     }
 }
 
+/// Les tokens de l'événement `result` : (entrée, cache compris ; sortie ; le modèle qui a coûté le plus dans
+/// `modelUsage`, s'il y est).
+pub fn result_usage(result: &Value) -> (u64, u64, Option<String>) {
+    let u = &result["usage"];
+    let n = |k: &str| u[k].as_u64().unwrap_or(0);
+    let input = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+    let model = result["modelUsage"].as_object().and_then(|m| {
+        m.iter().max_by(|a, b| a.1["costUSD"].as_f64().unwrap_or(0.0).total_cmp(&b.1["costUSD"].as_f64().unwrap_or(0.0))).map(|(k, _)| k.clone())
+    });
+    (input, n("output_tokens"), model)
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // La demande
 
@@ -537,10 +549,16 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
         None
     };
     let cost = result["total_cost_usd"].as_f64();
+    let (input, output, used) = result_usage(&result);
+    let model = used.or_else(|| Some(model.clone()).filter(|m| !m.is_empty())).unwrap_or_else(|| "claude".into());
+    let usage = crate::usage::record(crate::usage::Rec {
+        project: &dir, provider: "Claude Agent", model: &model, kind: "claude-agent", input, output,
+        seconds: clock.elapsed().as_secs_f64(), cost: Some(cost.unwrap_or(0.0)), local: false,
+    });
     crate::log::info(&format!("Claude Agent : demande finie{}{}", cost.map(|c| format!(", {c:.4} $")).unwrap_or_default(), if killed { " (processus tué)" } else if stopped { " (arrêtée)" } else { "" }));
     json!({
         "text": final_text, "reasoning": tr.reasoning, "reasoningSeconds": tr.reasoning_seconds(),
-        "model": "Claude Agent", "tokens": 0, "seconds": clock.elapsed().as_secs_f64(), "stopped": stopped, "error": error,
+        "model": "Claude Agent", "tokens": output, "promptTokens": input, "usage": usage, "seconds": clock.elapsed().as_secs_f64(), "stopped": stopped, "error": error,
         "agent": { "request": request, "steps": tr.steps }, "plan": tr.plan,
         "claude": { "sessionId": tr.session_id, "cost": cost, "durationMs": result["duration_ms"], "turns": result["num_turns"], "killed": killed },
     })
@@ -549,6 +567,13 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tokens_du_resultat() {
+        let r = json!({ "type": "result", "usage": { "input_tokens": 10, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 1000, "output_tokens": 42 },
+            "modelUsage": { "claude-haiku-5-5": { "costUSD": 0.001 }, "claude-opus-5-5": { "costUSD": 0.05 } } });
+        assert_eq!(result_usage(&r), (1110, 42, Some("claude-opus-5-5".into())));
+    }
 
     #[test]
     fn arguments() {
@@ -590,6 +615,7 @@ mod tests {
         assert_eq!(t.plan, json!([{ "title": "Lire", "status": "done" }, { "title": "Corriger", "status": "in_progress" }]));
         assert_eq!(t.text, "Fini.", "le texte sans flux partiel est repris du message entier");
         assert_eq!(t.result.as_ref().unwrap()["total_cost_usd"], 0.0123);
+        assert_eq!(result_usage(t.result.as_ref().unwrap()), (0, 0, None), "pas de usage : 0");
     }
 
     #[test]

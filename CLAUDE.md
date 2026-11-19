@@ -28,16 +28,17 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 - `catalog.rs` : catalogue de modèles Hugging Face (révision fixe, SHA-256 vérifié)
 - `gpu.rs`, `delayload.rs` : pack GPU téléchargé à la demande, chargement différé des DLL CUDA
 - `log.rs` : journal quotidien (7 jours), jamais le texte des conversations
+- `usage.rs` : suivi `usage.jsonl` (tokens, coût estimé, table de prix, budget, regroupement à 90 jours), jamais le texte
 
 ### nel-desktop/ui (modules ES, `js/main.js` charge le reste)
 `util.js` (appels Rust, DOM, fenêtres) · `state.js` (état partagé `S`, `UI`) · `conversation.js` (conversations,
 génération, saisie) · `agent.js` (mode Agent, étapes, plan, confirmations) · `files.js` (panneau Fichiers, diff) ·
-`projects.js` · `providers.js` (modèles distants) · `catalog.js` · `settings.js` · `onboarding.js` · `palette.js`
+`projects.js` · `providers.js` (modèles distants) · `catalog.js` · `settings.js` · `usage.js` (page Suivi, budget, prix) · `onboarding.js` · `palette.js`
 (Ctrl+K). Aussi `index.html`, `style.css`, `icons.js`.
 
 ### e2e/
 `harness.mjs` lance l'exe debug avec dossiers de données temporaires et le pilote par le port de débogage WebView2.
-Fichiers : `nelcode`, `ux`, `agent`, `remote`, `server`, `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
+Fichiers : `nelcode`, `ux`, `agent`, `remote`, `server`, `usage`, `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
 `gguf` et `gpu` (ignorés sans modèle / sans carte NVIDIA).
 
 ## Tests
