@@ -371,10 +371,81 @@ pub fn delete_session(id: &str) -> Result<()> {
 
 // ---------------------------------------------------------------------------------------------------------
 // settings.json, partagé avec Nel Code C# : on ne change que nos clés, le reste (window, theme...) est gardé.
+//
+// Plusieurs fils l'écrivent (interface, détection des images, clé du serveur, chargement d'un modèle) : chaque
+// modification lit, change et réécrit le fichier sous le verrou SETTINGS, et l'écriture remplace le fichier d'un coup
+// (fichier temporaire renommé). Sans cela, une lecture pouvait tomber sur le fichier vidé par une écriture en cours,
+// repartir de {} et réécrire les réglages sans les fournisseurs.
+
+static SETTINGS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn settings_lock() -> std::sync::MutexGuard<'static, ()> {
+    SETTINGS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Le contenu de settings.json : Ok(None) s'il n'existe pas, Err s'il est illisible (après quelques essais : un autre
+/// programme, comme Nel Code C#, peut être en train de l'écrire).
+fn read_settings() -> Result<Option<serde_json::Value>> {
+    let path = root().join("settings.json");
+    let mut last = String::new();
+    for attempt in 0..5 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        match fs::read(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => last = e.to_string(),
+            Ok(b) => match serde_json::from_slice::<serde_json::Value>(&b) {
+                Ok(v) if v.is_object() => return Ok(Some(v)),
+                _ => last = "pas un objet JSON".into(),
+            },
+        }
+    }
+    Err(format!("settings.json illisible ({last})"))
+}
 
 pub fn load_settings() -> serde_json::Value {
-    let s = fs::read(root().join("settings.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
-    normalize(s.filter(|v: &serde_json::Value| v.is_object()).unwrap_or_else(|| serde_json::json!({})))
+    let s = {
+        let _guard = settings_lock();
+        read_settings()
+    };
+    normalize(s.ok().flatten().unwrap_or_else(|| serde_json::json!({})))
+}
+
+/// Modifie les réglages sous le verrou : `change` reçoit les réglages actuels (normalisés). Rend les réglages
+/// enregistrés et ce que rend `change`. `change` ne doit pas appeler load_settings ni save_settings (même verrou).
+pub fn update_settings<T>(change: impl FnOnce(&mut serde_json::Value) -> Result<T>) -> Result<(serde_json::Value, T)> {
+    let _guard = settings_lock();
+    let path = root().join("settings.json");
+    let current = match read_settings() {
+        Ok(s) => s,
+        Err(e) => {
+            // Jamais écraser des réglages qu'on n'a pas su lire : le fichier est mis de côté.
+            fs::rename(&path, root().join("settings.illisible.json")).map_err(|r| format!("{e} ; réglages non enregistrés ({r})"))?;
+            crate::log::error(&format!("{e} : mis de côté dans settings.illisible.json"));
+            None
+        }
+    };
+    let mut s = normalize(current.unwrap_or_else(|| serde_json::json!({})));
+    let out = change(&mut s)?;
+    let s = normalize(s);
+    fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+    let tmp = root().join("settings.json.tmp");
+    fs::write(&tmp, serde_json::to_string_pretty(&s).unwrap()).map_err(|e| e.to_string())?;
+    // Le remplacement peut être refusé un instant si un autre programme lit le fichier.
+    let mut renamed = fs::rename(&tmp, &path);
+    for _ in 0..10 {
+        if renamed.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        renamed = fs::rename(&tmp, &path);
+    }
+    if let Err(e) = renamed {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("réglages non enregistrés : {e}"));
+    }
+    Ok((s, out))
 }
 
 /// Les bornes de Nel Code C# (Settings.Clamp*), valeurs par défaut si absentes ou pas des nombres finis.
@@ -455,14 +526,13 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
 }
 
 pub fn save_settings(changes: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value> {
-    let mut s = load_settings();
-    for (k, v) in changes {
-        s[k] = v.clone();
-    }
-    let s = normalize(s);
-    fs::create_dir_all(root()).map_err(|e| e.to_string())?;
-    fs::write(root().join("settings.json"), serde_json::to_string_pretty(&s).unwrap()).map_err(|e| e.to_string())?;
-    Ok(s)
+    update_settings(|s| {
+        for (k, v) in changes {
+            s[k] = v.clone();
+        }
+        Ok(())
+    })
+    .map(|(s, ())| s)
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -647,6 +717,51 @@ mod tests {
         crate::images::clean_orphans();
         assert!(!home.join("sessions/2026-01-02_00-00-00-000").exists());
         assert!(home.join("sessions/autre/notes.txt").exists(), "un dossier qui n'est pas à Nel Code n'est pas touché");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn reglages_ecrits_en_meme_temps() {
+        let (home, _guard) = home("reglages");
+        fs::write(home.join("settings.json"), r#"{"theme":"dark","providers":[{"id":"p1","models":[]}]}"#).unwrap();
+        // Des fils qui modifient chacun leur clé, d'autres qui ajoutent un modèle au fournisseur, d'autres qui lisent :
+        // aucune lecture ne voit les réglages sans le fournisseur, aucune modification n'en efface une autre.
+        std::thread::scope(|t| {
+            for i in 0..8 {
+                t.spawn(move || {
+                    for j in 0..10 {
+                        let mut c = serde_json::Map::new();
+                        c.insert(format!("k{i}"), j.into());
+                        save_settings(&c).unwrap();
+                        update_settings(|s| {
+                            s["providers"][0]["models"].as_array_mut().unwrap().push(format!("m{i}-{j}").into());
+                            Ok(())
+                        })
+                        .unwrap();
+                    }
+                });
+                t.spawn(|| {
+                    for _ in 0..30 {
+                        let s = load_settings();
+                        assert_eq!(s["providers"][0]["id"], "p1", "réglages lus à moitié écrits");
+                        assert_eq!(s["theme"], "dark");
+                    }
+                });
+            }
+        });
+        let s = load_settings();
+        for i in 0..8 {
+            assert_eq!(s[format!("k{i}")], 9);
+        }
+        assert_eq!(s["providers"][0]["models"].as_array().unwrap().len(), 80);
+        assert!(!home.join("settings.json.tmp").exists());
+
+        // Un fichier illisible n'est jamais écrasé : il est mis de côté.
+        fs::write(home.join("settings.json"), "{ pas du json").unwrap();
+        let mut c = serde_json::Map::new();
+        c.insert("topK".into(), 5.into());
+        assert_eq!(save_settings(&c).unwrap()["topK"], 5);
+        assert_eq!(fs::read_to_string(home.join("settings.illisible.json")).unwrap(), "{ pas du json");
         let _ = fs::remove_dir_all(&home);
     }
 

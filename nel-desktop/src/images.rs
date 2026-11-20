@@ -9,6 +9,7 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use base64::Engine;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
@@ -69,7 +70,28 @@ pub fn estimate_tokens(width: u32, height: u32) -> u64 {
 }
 
 /// Décode, oriente, réduit et réencode `bytes`. Rend (octets, extension, largeur, hauteur).
+#[cfg(test)]
 pub fn convert(bytes: &[u8], max_side: u32) -> Result<(Vec<u8>, &'static str, u32, u32)> {
+    convert_timed(bytes, max_side).map(|(c, _)| c)
+}
+
+/// Durées (ms) de la préparation d'une image : décodage, réduction, encodage.
+#[derive(Default, Debug)]
+pub struct Timings {
+    pub decode: u128,
+    pub resize: u128,
+    pub encode: u128,
+}
+
+/// `convert`, avec la durée de chaque étape (pour le journal).
+fn convert_timed(bytes: &[u8], max_side: u32) -> Result<((Vec<u8>, &'static str, u32, u32), Timings)> {
+    let mut t = Timings::default();
+    let mut clock = Instant::now();
+    let mut lap = || {
+        let ms = clock.elapsed().as_millis();
+        clock = Instant::now();
+        ms
+    };
     if bytes.len() > MAX_INPUT {
         return Err(format!("image trop grosse ({} Mo, {} Mo au plus)", bytes.len() >> 20, MAX_INPUT >> 20));
     }
@@ -86,9 +108,11 @@ pub fn convert(bytes: &[u8], max_side: u32) -> Result<(Vec<u8>, &'static str, u3
     let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| format!("image illisible : {e}"))?;
     img.apply_orientation(orientation);
+    t.decode = lap();
     if img.width().max(img.height()) > max_side {
         img = img.resize(max_side, max_side, image::imageops::FilterType::Lanczos3);
     }
+    t.resize = lap();
     // Les photos restent en JPEG ; les captures (PNG, GIF) et la transparence en PNG, sans perte.
     let png = format != Some(ImageFormat::Jpeg) && (format != Some(ImageFormat::WebP) || img.color().has_alpha());
     let mut out = Vec::new();
@@ -100,22 +124,37 @@ pub fn convert(bytes: &[u8], max_side: u32) -> Result<(Vec<u8>, &'static str, u3
         let rgb = img.to_rgb8();
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY).encode_image(&rgb).map_err(|e| e.to_string())?;
     }
-    Ok((out, if png { "png" } else { "jpg" }, w, h))
+    t.encode = lap();
+    Ok(((out, if png { "png" } else { "jpg" }, w, h), t))
 }
 
 /// Prépare une image et la range dans le dossier de la conversation. Rend { file, name, width, height, bytes, tokens }.
 pub fn prepare(session: &str, bytes: &[u8], name: &str) -> Result<Value> {
-    let (out, ext, w, h) = convert(bytes, max_side())?;
+    let start = Instant::now();
+    let max = max_side();
+    let settings = start.elapsed().as_millis();
+    let ((out, ext, w, h), t) = convert_timed(bytes, max)?;
+    let saving = Instant::now();
     let folder = dir(session)?;
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let mut b = [0u8; 8];
     getrandom::fill(&mut b).expect("générateur aléatoire du système");
     let file = format!("img-{}.{ext}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
     fs::write(folder.join(&file), &out).map_err(|e| format!("image non enregistrée : {e}"))?;
+    let saving = saving.elapsed().as_millis();
     // Le nom affiché : celui du fichier d'origine, sans dossier (jamais un chemin).
     let name = Path::new(name).file_name().and_then(|n| n.to_str()).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("image");
     let name: String = name.chars().filter(|c| !c.is_control()).take(80).collect();
-    crate::log::info(&format!("image préparée : {w} × {h}, {} Ko", out.len() / 1024));
+    crate::log::info(&format!(
+        "image préparée : {w} × {h}, {} Ko en {} ms (réglages {} ms, décodage {} ms, réduction {} ms, encodage {} ms, enregistrement {} ms)",
+        out.len() / 1024,
+        start.elapsed().as_millis(),
+        settings,
+        t.decode,
+        t.resize,
+        t.encode,
+        saving
+    ));
     Ok(json!({ "file": file, "name": name, "width": w, "height": h, "bytes": out.len(), "tokens": estimate_tokens(w, h) }))
 }
 

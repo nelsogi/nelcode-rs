@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
@@ -105,10 +105,16 @@ fn providers() -> Vec<Value> {
     store::load_settings()["providers"].as_array().cloned().unwrap_or_default()
 }
 
-fn save_providers(list: Vec<Value>) -> Result<()> {
-    let mut change = Map::new();
-    change.insert("providers".into(), list.into());
-    store::save_settings(&change).map(|_| ())
+/// Modifie la liste des fournisseurs sous le verrou des réglages (lue, changée et réécrite d'un coup : deux
+/// modifications en même temps ne s'écrasent pas).
+fn update_providers<T>(change: impl FnOnce(&mut Vec<Value>) -> Result<T>) -> Result<T> {
+    store::update_settings(|s| {
+        let mut list = s["providers"].as_array().cloned().unwrap_or_default();
+        let out = change(&mut list)?;
+        s["providers"] = list.into();
+        Ok(out)
+    })
+    .map(|(_, out)| out)
 }
 
 fn find(id: &str) -> Result<Value> {
@@ -166,19 +172,20 @@ pub fn is_anthropic(p: &Value) -> bool {
 pub fn save_with(id: Option<String>, name: &str, url: &str, key: Option<&str>, kind: Option<&str>, omit_sampling: Option<bool>) -> Result<Value> {
     let p = save(id, name, url, key)?;
     let pid = p["id"].as_str().unwrap_or_default().to_string();
-    let mut list = providers();
-    if let Some(q) = list.iter_mut().find(|q| q["id"] == pid.as_str()) {
-        if let Some(k) = kind {
-            q["kind"] = if k == "anthropic" { "anthropic".into() } else { Value::Null };
-            if k != "anthropic" {
-                q.as_object_mut().unwrap().remove("kind");
+    update_providers(|list| {
+        if let Some(q) = list.iter_mut().find(|q| q["id"] == pid.as_str()) {
+            if let Some(k) = kind {
+                q["kind"] = if k == "anthropic" { "anthropic".into() } else { Value::Null };
+                if k != "anthropic" {
+                    q.as_object_mut().unwrap().remove("kind");
+                }
+            }
+            if let Some(o) = omit_sampling {
+                q["omitSampling"] = o.into();
             }
         }
-        if let Some(o) = omit_sampling {
-            q["omitSampling"] = o.into();
-        }
-    }
-    save_providers(list)?;
+        Ok(())
+    })?;
     let mut p = find(&pid)?;
     p["hasKey"] = creds::read(&pid).is_some().into();
     Ok(p)
@@ -190,21 +197,22 @@ pub fn save(id: Option<String>, name: &str, url: &str, key: Option<&str>) -> Res
         return Err("donne un nom au fournisseur".into());
     }
     let url = normalize_url(url)?;
-    let mut list = providers();
-    let id = id.filter(|i| list.iter().any(|p| p["id"] == i.as_str())).unwrap_or_else(new_id);
-    match list.iter_mut().find(|p| p["id"] == id.as_str()) {
-        Some(p) => {
-            p["name"] = name.into();
-            p["url"] = url.into();
+    let id = update_providers(|list| {
+        let id = id.filter(|i| list.iter().any(|p| p["id"] == i.as_str())).unwrap_or_else(new_id);
+        match list.iter_mut().find(|p| p["id"] == id.as_str()) {
+            Some(p) => {
+                p["name"] = name.into();
+                p["url"] = url.into();
+            }
+            None => list.push(json!({ "id": id, "name": name, "url": url, "models": [] })),
         }
-        None => list.push(json!({ "id": id, "name": name, "url": url, "models": [] })),
-    }
-    match key.map(str::trim) {
-        Some("") => creds::delete(&id),
-        Some(k) => creds::write(&id, k)?,
-        None => {}
-    }
-    save_providers(list)?;
+        match key.map(str::trim) {
+            Some("") => creds::delete(&id),
+            Some(k) => creds::write(&id, k)?,
+            None => {}
+        }
+        Ok(id)
+    })?;
     crate::log::info(&format!("fournisseur « {name} » enregistré"));
     let mut p = find(&id)?;
     p["hasKey"] = creds::read(&id).is_some().into();
@@ -212,10 +220,12 @@ pub fn save(id: Option<String>, name: &str, url: &str, key: Option<&str>) -> Res
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let mut list = providers();
-    list.retain(|p| p["id"] != id);
+    update_providers(|list| {
+        list.retain(|p| p["id"] != id);
+        Ok(())
+    })?;
     creds::delete(id);
-    save_providers(list)
+    Ok(())
 }
 
 fn host_of(url: &str) -> String {
@@ -284,16 +294,17 @@ pub async fn test(id: &str) -> Result<Vec<String>> {
         .iter()
         .filter_map(|m| m["id"].as_str().or(m["name"].as_str()).map(str::to_string))
         .collect();
-    let mut list = providers();
-    if let Some(p) = list.iter_mut().find(|p| p["id"] == id) {
-        let old = p["models"].as_array().cloned().unwrap_or_default();
-        // La détection des images est refaite au prochain choix du modèle ; le réglage manuel reste.
-        p["models"] = ids
-            .iter()
-            .map(|m| old.iter().find(|o| o["id"] == m.as_str()).cloned().map(|mut o| { o.as_object_mut().map(|x| x.remove("visionDetected")); o }).unwrap_or_else(|| json!({ "id": m })))
-            .collect();
-    }
-    save_providers(list)?;
+    update_providers(|list| {
+        if let Some(p) = list.iter_mut().find(|p| p["id"] == id) {
+            let old = p["models"].as_array().cloned().unwrap_or_default();
+            // La détection des images est refaite au prochain choix du modèle ; le réglage manuel reste.
+            p["models"] = ids
+                .iter()
+                .map(|m| old.iter().find(|o| o["id"] == m.as_str()).cloned().map(|mut o| { o.as_object_mut().map(|x| x.remove("visionDetected")); o }).unwrap_or_else(|| json!({ "id": m })))
+                .collect();
+        }
+        Ok(())
+    })?;
     crate::log::info(&format!("fournisseur {host} : {} modèle(s)", ids.len()));
     Ok(ids)
 }
@@ -308,11 +319,12 @@ pub async fn vision(provider_id: &str, model: &str, again: bool) -> Result<Value
     let mut detected = m["visionDetected"].as_bool();
     if (again || m.get("visionDetected").is_none()) && p["models"].as_array().is_some_and(|ms| ms.iter().any(|x| x["id"] == model)) {
         detected = images::detect(&p, model, &client()?, creds::read(provider_id)).await;
-        let mut list = providers();
-        if let Some(x) = list.iter_mut().find(|q| q["id"] == provider_id).and_then(|q| q["models"].as_array_mut()).and_then(|ms| ms.iter_mut().find(|x| x["id"] == model)) {
-            x["visionDetected"] = detected.into();
-        }
-        save_providers(list)?;
+        update_providers(|list| {
+            if let Some(x) = list.iter_mut().find(|q| q["id"] == provider_id).and_then(|q| q["models"].as_array_mut()).and_then(|ms| ms.iter_mut().find(|x| x["id"] == model)) {
+                x["visionDetected"] = detected.into();
+            }
+            Ok(())
+        })?;
         m["visionDetected"] = detected.into();
     }
     Ok(json!({ "vision": images::effective(&m), "detected": detected, "manual": m["vision"].as_bool() }))
@@ -320,15 +332,16 @@ pub async fn vision(provider_id: &str, model: &str, again: bool) -> Result<Value
 
 /// Le réglage manuel d'un modèle : voit les images (true), ne les voit pas (false), ou automatique (None).
 pub fn set_vision(provider_id: &str, model: &str, value: Option<bool>) -> Result<()> {
-    let mut list = providers();
-    let x = list.iter_mut().find(|q| q["id"] == provider_id).and_then(|q| q["models"].as_array_mut()).and_then(|ms| ms.iter_mut().find(|x| x["id"] == model)).ok_or_else(|| format!("modèle inconnu : {model}"))?;
-    match value {
-        Some(v) => x["vision"] = v.into(),
-        None => {
-            x.as_object_mut().map(|o| o.remove("vision"));
+    update_providers(|list| {
+        let x = list.iter_mut().find(|q| q["id"] == provider_id).and_then(|q| q["models"].as_array_mut()).and_then(|ms| ms.iter_mut().find(|x| x["id"] == model)).ok_or_else(|| format!("modèle inconnu : {model}"))?;
+        match value {
+            Some(v) => x["vision"] = v.into(),
+            None => {
+                x.as_object_mut().map(|o| o.remove("vision"));
+            }
         }
-    }
-    save_providers(list)
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -364,48 +377,49 @@ pub fn import_qwen() -> Result<Value> {
         return Err("aucun modèle dans modelProviders.openai de Qwen Code".into());
     }
     let env_file = std::fs::read_to_string(qwen_dir().join(".env")).unwrap_or_default();
-    let mut list = providers();
-    let (mut created, mut models, mut keys) = (0, 0, 0);
-    for e in &entries {
-        let (Some(model), Some(base)) = (e["id"].as_str(), e["baseUrl"].as_str()) else { continue };
-        let Ok(url) = normalize_url(base) else { continue };
-        let i = match list.iter().position(|p| p["url"] == url.as_str()) {
-            Some(i) => i,
-            None => {
-                list.push(json!({ "id": new_id(), "name": host_of(&url), "url": url, "models": [] }));
-                created += 1;
-                list.len() - 1
+    let (created, models, keys) = update_providers(|list| {
+        let (mut created, mut models, mut keys) = (0, 0, 0);
+        for e in &entries {
+            let (Some(model), Some(base)) = (e["id"].as_str(), e["baseUrl"].as_str()) else { continue };
+            let Ok(url) = normalize_url(base) else { continue };
+            let i = match list.iter().position(|p| p["url"] == url.as_str()) {
+                Some(i) => i,
+                None => {
+                    list.push(json!({ "id": new_id(), "name": host_of(&url), "url": url, "models": [] }));
+                    created += 1;
+                    list.len() - 1
+                }
+            };
+            let g = &e["generationConfig"];
+            let sp = &g["samplingParams"];
+            let mut m = json!({ "id": model });
+            for (to, v) in [
+                ("temperature", &sp["temperature"]),
+                ("topP", &sp["top_p"]),
+                ("maxTokens", if sp["max_tokens"].is_null() { &sp["max_completion_tokens"] } else { &sp["max_tokens"] }),
+                ("contextLength", &g["contextWindowSize"]),
+            ] {
+                if v.is_number() {
+                    m[to] = v.clone();
+                }
             }
-        };
-        let g = &e["generationConfig"];
-        let sp = &g["samplingParams"];
-        let mut m = json!({ "id": model });
-        for (to, v) in [
-            ("temperature", &sp["temperature"]),
-            ("topP", &sp["top_p"]),
-            ("maxTokens", if sp["max_tokens"].is_null() { &sp["max_completion_tokens"] } else { &sp["max_tokens"] }),
-            ("contextLength", &g["contextWindowSize"]),
-        ] {
-            if v.is_number() {
-                m[to] = v.clone();
+            if let Some(label) = e["name"].as_str() {
+                m["label"] = label.into();
+            }
+            let p = &mut list[i];
+            let ms = p["models"].as_array_mut().unwrap();
+            ms.retain(|o| o["id"] != model);
+            ms.push(m);
+            models += 1;
+            let env_key = e["envKey"].as_str().unwrap_or("OPENAI_API_KEY");
+            let key = q["env"][env_key].as_str().map(str::to_string).or_else(|| dotenv(&env_file, env_key)).or_else(|| std::env::var(env_key).ok());
+            if let (Some(key), Some(id)) = (key.filter(|k| !k.is_empty()), p["id"].as_str()) {
+                creds::write(id, &key)?;
+                keys += 1;
             }
         }
-        if let Some(label) = e["name"].as_str() {
-            m["label"] = label.into();
-        }
-        let p = &mut list[i];
-        let ms = p["models"].as_array_mut().unwrap();
-        ms.retain(|o| o["id"] != model);
-        ms.push(m);
-        models += 1;
-        let env_key = e["envKey"].as_str().unwrap_or("OPENAI_API_KEY");
-        let key = q["env"][env_key].as_str().map(str::to_string).or_else(|| dotenv(&env_file, env_key)).or_else(|| std::env::var(env_key).ok());
-        if let (Some(key), Some(id)) = (key.filter(|k| !k.is_empty()), p["id"].as_str()) {
-            creds::write(id, &key)?;
-            keys += 1;
-        }
-    }
-    save_providers(list)?;
+        Ok((created, models, keys))
+    })?;
     crate::log::info(&format!("import depuis Qwen Code : {created} fournisseur(s), {models} modèle(s)"));
     Ok(json!({ "providers": created, "models": models, "keys": keys, "path": path }))
 }

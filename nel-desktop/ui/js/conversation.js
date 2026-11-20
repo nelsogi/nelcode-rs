@@ -353,7 +353,7 @@ export async function startGen(s, g) {
 // p : { text, side, choices? } ; side "a" / "b" en mode comparaison.
 export function onToken(p) {
   const g = S.gen;
-  if (!g) return;
+  if (!g || g.done) return;
   const out = g.kind === 'compare' ? g[p.side] : g;
   if (g.reasoning && !g.thinkEnd && p.text) { g.thinkEnd = Date.now(); showReasoning(); }
   out.text += p.text;
@@ -367,16 +367,27 @@ export function onToken(p) {
   }
 }
 
+// S.gen n'est remis à null qu'une fois la réponse enregistrée et affichée : « !S.gen » veut dire « fini ».
 export async function onDone(p) {
   const g = S.gen;
-  if (!g) return;
-  S.gen = null;
+  if (!g || g.done) return;
+  g.done = true;
   const s = g.session;
   // Les tokens et le coût estimé de la conversation (gardés avec elle), et le budget du mois.
   for (const u of g.kind === 'compare' ? [p.a?.usage, p.b?.usage] : [p.usage]) addUsage(s, u);
   afterPaid(p.usage);
-  if (g.kind === 'compare') return onCompareDone(g, s, p);
-  if (g.kind === 'summary') return onSummaryDone(g, s, p);
+  if (g.kind === 'compare' || g.kind === 'summary') {
+    S.gen = null;
+    return g.kind === 'compare' ? onCompareDone(g, s, p) : onSummaryDone(g, s, p);
+  }
+  try { await finishReply(g, s, p); } finally {
+    S.gen = null;
+    renderAll();
+  }
+}
+
+// La fin d'une réponse (envoi, régénération) : message gardé ou question rendue, plan, coût, enregistrement.
+async function finishReply(g, s, p) {
   let text = (p.text ?? '').trim();
   // Mode Agent : les étapes restent dans la conversation même sans réponse finale (pour voir et annuler les écritures).
   if (p.agent?.steps?.length && (p.error || !text)) {
@@ -416,7 +427,6 @@ export async function onDone(p) {
   if (p.claude) {
     S.lastSpeed = claudeCost(p.claude) + (p.stopped ? ' · arrêtée' : '');
   }
-  renderAll();
 }
 
 // Le résumé est écrit : il remplace, pour le modèle, les messages jusqu'à g.upTo. Arrêté ou en erreur : rien ne change.

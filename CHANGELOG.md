@@ -140,6 +140,16 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   variables `ANTHROPIC_*` et `CLAUDE_CODE_USE_*` du PC ne sont plus transmises (la clé ne part que vers Anthropic) ; un
   dossier voisin au nom plus long n'est plus pris pour le dossier de travail ; la raison d'une modification refusée
   s'affiche avec son diff.
+- **Réglages perdus** quand deux écritures de `settings.json` se croisaient (par exemple la clé du serveur local créée
+  à l'ouverture des Réglages pendant le réglage « Voit les images » ou la détection d'un modèle) : une lecture pouvait
+  tomber sur le fichier vidé par l'écriture en cours, repartir de rien et réécrire les réglages **sans les
+  fournisseurs**. Chaque modification lit, change et réécrit maintenant le fichier sous un même verrou, l'écriture
+  remplace le fichier d'un coup (fichier temporaire renommé), et un `settings.json` illisible n'est plus jamais écrasé
+  (il est mis de côté dans `settings.illisible.json`). C'était la cause des échecs intermittents des tests des images.
+- Le journal donne la durée de la préparation de chaque image (réglages, décodage, réduction, encodage, enregistrement).
+- Fin d'une réponse : l'état « en cours » n'est levé qu'une fois la réponse enregistrée et affichée (avant, il l'était
+  avant l'enregistrement, et la réponse ou son coût apparaissaient un instant plus tard ; deux tests de l'interface
+  échouaient parfois pour cette raison).
 - Les tests de l'interface n'utilisent plus les vraies clés du Gestionnaire d'identification (espace à part pour les
   tests), et l'effacement d'un dossier de test bloqué n'attend plus 4 minutes.
 
