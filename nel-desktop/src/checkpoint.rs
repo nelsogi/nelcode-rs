@@ -15,11 +15,59 @@ use crate::store::Result;
 /// Le nombre de points gardés par dossier de travail.
 const KEEP: usize = 20;
 
+/// Les filtres (filter.<nom>.clean/smudge/process) définis par la configuration du dépôt (.git/config, et ce qu'elle
+/// inclut) : ceux du dossier de travail, jamais lancés par Nel Code. Ceux de l'utilisateur (~/.gitconfig, système :
+/// git-lfs…) restent. Si git ne sait pas dire d'où vient un réglage (git < 2.26), tous les filtres sont écartés.
+fn repo_filters(dir: &Path) -> Vec<String> {
+    let mut cmd = Command::new("git");
+    crate::process::hide_window(&mut cmd);
+    // Lire la configuration ne lance rien.
+    let out = cmd.args(["config", "--show-scope", "--name-only", "--get-regexp", r"^filter\."]).current_dir(dir).stdin(Stdio::null()).output();
+    let text = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(o) if o.status.code() == Some(1) => return Vec::new(), // aucun filtre
+        _ => {
+            let mut cmd = Command::new("git");
+            crate::process::hide_window(&mut cmd);
+            let all = cmd.args(["config", "--name-only", "--get-regexp", r"^filter\."]).current_dir(dir).stdin(Stdio::null()).output();
+            return all.map(|o| String::from_utf8_lossy(&o.stdout).lines().filter_map(filter_name).collect::<Vec<_>>()).unwrap_or_default();
+        }
+    };
+    let mut names: Vec<String> = text.lines().filter_map(|l| l.split_once('\t')).filter(|(scope, _)| !matches!(*scope, "global" | "system")).filter_map(|(_, key)| filter_name(key)).collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// « filter.lfs.clean » → « lfs » (le nom peut contenir des points).
+fn filter_name(key: &str) -> Option<String> {
+    let rest = key.strip_prefix("filter.")?;
+    rest.rsplit_once('.').map(|(name, _)| name.to_string()).filter(|n| !n.is_empty())
+}
+
+/// Les réglages qui empêchent git de lancer un programme choisi par le dépôt : ni fsmonitor, ni hooks (dossier qui
+/// n'existe pas ; update-ref lance reference-transaction, add et read-tree post-index-change), ni filtres du dépôt
+/// (clean pendant add, smudge pendant checkout-index). Un dépôt reçu en archive, ou un .git/config modifié, ne
+/// fait donc rien tourner pendant un point de restauration.
+fn safe_config(dir: &Path) -> Vec<String> {
+    let hooks = crate::store::root().join("git-no-hooks").join("jamais-cree");
+    let mut c = vec!["core.fsmonitor=false".to_string(), format!("core.hooksPath={}", hooks.display())];
+    for f in repo_filters(dir) {
+        c.extend(["clean", "smudge", "process"].map(|k| format!("filter.{f}.{k}=")));
+        c.push(format!("filter.{f}.required=false"));
+    }
+    c
+}
+
 /// Lance git dans `dir` (sans fenêtre), avec l'index `index` s'il est donné. Rend la sortie standard. Sans conversion
 /// des fins de ligne (core.autocrlf) : les fichiers reviennent octet pour octet. L'auteur des points : Nel Code.
+/// Jamais de programme du dépôt (voir `safe_config`).
 fn git(dir: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("git");
     crate::process::hide_window(&mut cmd);
+    for c in safe_config(dir) {
+        cmd.args(["-c", &c]);
+    }
     cmd.args(["-c", "core.autocrlf=false", "-c", "user.name=Nel Code", "-c", "user.email=nelcode@localhost"]).args(args).current_dir(dir).stdin(Stdio::null());
     if let Some(i) = index {
         cmd.env("GIT_INDEX_FILE", i);
@@ -232,6 +280,43 @@ mod tests {
         create(d.join("sous").to_str().unwrap()).unwrap().unwrap();
         assert_eq!(g(&["for-each-ref", "--format=%(refname)", &refs]).lines().count(), KEEP, "les points du sous-dossier sont à part");
         assert_eq!(g(&["for-each-ref", "--format=%(refname)", "refs/nelcode/"]).lines().count(), KEEP + 1);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// Un dépôt piégé (reçu en archive, ou .git/config modifié) : fsmonitor, hooks et filtres du dépôt ne tournent
+    /// jamais pendant un point ou une restauration ; les filtres de l'utilisateur restent.
+    #[test]
+    fn depot_piege_ne_lance_rien() {
+        let d = tmp();
+        let marks = d.join("marques");
+        fs::create_dir_all(&marks).unwrap();
+        let m = |n: &str| marks.join(n).to_string_lossy().replace('\\', "/");
+        let g = |args: &[&str]| git(&d, None, args).unwrap();
+        g(&["init", "-q"]);
+        fs::write(d.join(".gitignore"), "marques/\n").unwrap();
+        fs::write(d.join("a.txt"), "a\n").unwrap();
+        g(&["config", "core.fsmonitor", &format!("touch {}; false #", m("fsmonitor"))]);
+        g(&["config", "filter.piege.clean", &format!("touch {}; cat", m("clean"))]);
+        g(&["config", "filter.piege.smudge", &format!("touch {}; cat", m("smudge"))]);
+        fs::write(d.join(".gitattributes"), "*.txt filter=piege\n").unwrap();
+        for hook in ["reference-transaction", "post-index-change"] {
+            let p = d.join(".git/hooks").join(hook);
+            fs::write(&p, format!("#!/bin/sh\ntouch {}\n", m(hook))).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let dir = d.to_str().unwrap();
+        let id = create(dir).unwrap().unwrap();
+        fs::write(d.join("a.txt"), "agent\n").unwrap();
+        restore(dir, &id).unwrap();
+        assert_eq!(read(&d, "a.txt"), "a\n");
+        let ran: Vec<String> = fs::read_dir(&marks).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(ran.is_empty(), "programmes du dépôt lancés : {ran:?}");
+        assert_eq!(filter_name("filter.a.b.clean").as_deref(), Some("a.b"));
+        assert_eq!(repo_filters(&d), vec!["piege".to_string()]);
         let _ = fs::remove_dir_all(&d);
     }
 

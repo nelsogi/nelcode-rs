@@ -94,7 +94,7 @@ test('conversation : texte au fil de l\'eau, outil Lecture en étape, coût et d
   // Pas de Régénérer ni de Modifier (la session de claude ne se réécrit pas).
   assert.equal(await A.ev(`[...document.querySelectorAll('#messages .actions button')].some((b) => /Régénérer|Modifier/.test(b.textContent))`), false);
   const r = starts().at(-1);
-  assert.deepEqual(r.args, ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'default']);
+  assert.deepEqual(r.args, ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'default', '--setting-sources', 'user'], 'les réglages du projet (.claude/settings.json) ne sont pas lus par défaut');
   assert.equal(r.prompt, 'lecture de Program.cs ?', 'le message passe par l\'entrée standard');
   assert.equal(r.key, KEY, 'ANTHROPIC_API_KEY depuis le Gestionnaire d\'identification');
   assert.equal(r.secret, false, 'les variables *TOKEN* ne sont pas transmises');
@@ -118,7 +118,8 @@ test('écriture avec diff, commande et plan ; réglages acceptEdits, outils auto
   // Un nom de modèle invalide n'est pas gardé (jamais passé à claude).
   await save(`T.setValue(T.dialog().querySelector('.claude-field input.model'), 'opus & calc')`);
   assert.equal(A.readJson('settings.json').claudeModel, '');
-  await save(`T.setValue(T.dialog().querySelector('.claude-field select.mode'), 'acceptEdits'); T.setValue(T.dialog().querySelector('.claude-field textarea.claude-tools'), 'Read\\n Bash(dotnet build *) \\n\\nRead'); T.setValue(T.dialog().querySelector('.claude-field input.model'), ' sonnet ')`);
+  await save(`T.setValue(T.dialog().querySelector('.claude-field select.mode'), 'acceptEdits'); T.setValue(T.dialog().querySelector('.claude-field textarea.claude-tools'), 'Read\\n Bash(dotnet build *) \\n\\nRead'); T.setValue(T.dialog().querySelector('.claude-field input.model'), ' sonnet '); T.dialog().querySelector('.claude-field input.project-settings').click()`);
+  assert.equal(A.readJson('settings.json').claudeProjectSettings, true, 'réglages du projet : choisis explicitement');
   assert.equal(await A.ev(`S.settings.claudePermissionMode`), 'acceptEdits');
   assert.deepEqual(A.readJson('settings.json').claudeAllowedTools, ['Read', 'Bash(dotnet build *)']);
   assert.equal(A.readJson('settings.json').claudeModel, 'sonnet');

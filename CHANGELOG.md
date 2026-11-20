@@ -2,7 +2,63 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
-## [0.9.0] - 2026-11-17
+## [1.0.0] - 2026-11-20
+
+Première version stable. La 0.9.0 n'a jamais été publiée : tout ce qui a changé depuis la 0.8.0 est détaillé ici.
+
+### En bref : Nel Code depuis la 0.1.0
+
+- **Modèles locaux, sans connexion** : les `.nelmodel` de MiniChat (0.1.0) et les modèles ouverts **GGUF** Qwen2 et
+  Llama (0.5.0), importés par glisser-déposer ou depuis un **catalogue** vérifié par SHA-256 ; **GPU NVIDIA** avec un
+  pack téléchargé à la demande (0.4.1) ; pénalité de répétition, test de vitesse.
+- **Conversations** : réponse au fil des tokens, Stop, Régénérer, Modifier, export, commandes `/`, palette Ctrl+K,
+  **mode transparence** et **mode comparaison** avec classement (0.2.0), fichiers `@`, blocs de code coloriés, projets,
+  commandes personnalisées, **images** dans les messages (réduites, sans métadonnées), **résumé automatique** du
+  contexte et `/compact`.
+- **Modèles distants** compatibles OpenAI (llama.cpp, Ollama, LM Studio…, 0.7.0) et **fournisseur Claude** ; clés dans
+  le trousseau du système, jamais dans un fichier.
+- **Serveur local** compatible OpenAI, désactivé par défaut, sur 127.0.0.1 et avec une clé d'accès (0.6.0).
+- **Mode Agent** (0.8.0) : lecture, recherche, écriture avec diff et accord, annulation, **commandes** sans shell,
+  **plan**, **NELCODE.md**, **fichiers protégés**, **points de restauration git**, **explorateurs** en lecture seule et
+  **client MCP** (stdio et Streamable HTTP).
+- **Claude Agent** : conversation menée par l'outil `claude` d'Anthropic installé sur le PC, avec une clé API.
+- **Suivi** des tokens et du coût estimé, budget mensuel ; journal sans le texte des conversations.
+- **Mises à jour automatiques** signées (0.3.0) ; **Windows**, et **Linux** et **macOS** en expérimental.
+
+### Sécurité (relecture complète de la 1.0.0)
+
+Toutes les protections ont été relues dans le code (bac à sable, explorateurs, MCP, Claude Agent, serveur local,
+fournisseurs, images, points de restauration, mises à jour, imports). Corrigé :
+
+- **Points de restauration git : plus aucun programme du dépôt lancé** (grave). git tourne dans le dossier de travail
+  avec la configuration du dépôt : un `.git/config` piégé (dépôt reçu en archive, ou modifié par l'agent avec
+  « Accepter tout ») faisait lancer un programme au début de chaque demande Agent, sans rien demander, par
+  `core.fsmonitor`, les hooks `reference-transaction` et `post-index-change`, ou un filtre `clean`/`smudge`. Nel Code
+  passe maintenant `core.fsmonitor=false`, un `core.hooksPath` vide et neutralise les filtres définis par le dépôt (ceux
+  de l'utilisateur, comme git-lfs, restent). Test : un dépôt avec les quatre pièges, point puis restauration, rien ne
+  tourne.
+- **Claude Agent : les réglages du projet ne sont plus lus par défaut** (grave). En `-p`, `claude` ne demande pas si le
+  dossier est de confiance : le `.claude/settings.json` d'un dépôt cloné pouvait lancer des commandes (hooks),
+  autoriser Bash sans accord, activer ses serveurs MCP ou envoyer la clé API ailleurs (`env.ANTHROPIC_BASE_URL`).
+  Nel Code lance `claude --setting-sources user` ; **Réglages → Claude Agent → Lire les réglages du projet** (désactivé
+  par défaut) les remet, pour des projets de confiance. Tests unitaire et de l'interface.
+- **Mode Agent : écrire un fichier protégé demande une confirmation à chaque fois** (moyen). `write_file` et
+  `edit_file` ne tenaient pas compte des fichiers protégés : avec « Accepter tout », l'agent écrivait `.git/config`,
+  `.git/hooks/…` ou `.env` sans question, et les erreurs d'`edit_file` (« passage introuvable », « N fois ») disaient au
+  modèle ce que contenait `.env` sans qu'il soit lu. Maintenant : confirmation à chaque fois (bouton « Autoriser
+  l'écriture », jamais « Accepter tout ») et, pour une modification, le fichier n'est lu qu'après l'accord. Tests de
+  l'interface.
+- **Commandes autorisées sans confirmation : seulement un programme donné par son nom** (moyen). « git status » dans la
+  liste autorisait aussi « outils/git.exe status », un programme du projet. Un programme donné par un chemin demande
+  maintenant toujours Lancer / Refuser. Test unitaire.
+- Les noms réservés de Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`…`COM9`, `LPT1`…`LPT9`, avec ou sans extension) et
+  les noms qui finissent par un point ou une espace sont refusés (lecture, recherche, écriture, `@`). Une espace finale
+  n'est plus effacée silencieusement avant la vérification.
+- Linux et macOS : dans les chemins de l'agent, `\` reste un séparateur (sinon `..\x` y serait un nom de fichier et non
+  une remontée) ; les shells et lanceurs de ces systèmes (`sh`, `zsh`, `fish`, `open`, `xdg-open`, `osascript`…) et les
+  scripts `.sh` sont refusés par `run_command` ; les fichiers protégés le restent quelle que soit la casse ; l'accord
+  d'un serveur MCP de projet tient compte de la casse du dossier hors Windows (« Projet » et « projet » sont deux
+  dossiers sous Linux).
 
 ### Ajouté
 
@@ -211,6 +267,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ### Modifié
 
+- **Version 1.0.0**. README : liste des fonctions, section **Sécurité** (ce qui est protégé, ce qui ne l'est pas,
+  signaler une faille), **limites connues**, nouvelles captures d'écran (conversation, mode Agent, Suivi, import,
+  commandes, palette), et un **README en anglais** (`README.en.md`). Les captures se refont avec
+  `node scripts/captures.mjs` (l'application de développement pilotée comme pour les tests de l'interface).
 - Serveur local : les messages d'erreur sont **en anglais**, comme ceux de l'API OpenAI (« missing or incorrect access
   key », « unknown path… », « invalid JSON… ») : les clients et les outils les attendent ainsi.
 - Suivi : les colonnes de l'**export CSV** sont en anglais (`date;project;provider;model;kind;input_tokens;
@@ -244,17 +304,6 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   juste avant le premier affichage (avant, un test de l'interface pouvait lire la barre d'état encore vide).
 - Les tests de l'interface n'utilisent plus les vraies clés du Gestionnaire d'identification (espace à part pour les
   tests), et l'effacement d'un dossier de test bloqué n'attend plus 4 minutes.
-
-### Sécurité
-
-- Les noms réservés de Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`…`COM9`, `LPT1`…`LPT9`, avec ou sans extension) et
-  les noms qui finissent par un point ou une espace sont refusés (lecture, recherche, écriture, `@`). Une espace finale
-  n'est plus effacée silencieusement avant la vérification.
-- Linux et macOS : dans les chemins de l'agent, `\` reste un séparateur (sinon `..\x` y serait un nom de fichier et non
-  une remontée) ; les shells et lanceurs de ces systèmes (`sh`, `zsh`, `fish`, `open`, `xdg-open`, `osascript`…) et les
-  scripts `.sh` sont refusés par `run_command` ; les fichiers protégés le restent quelle que soit la casse ; l'accord
-  d'un serveur MCP de projet tient compte de la casse du dossier hors Windows (« Projet » et « projet » sont deux
-  dossiers sous Linux).
 
 ## [0.8.0] - 2026-11-16
 

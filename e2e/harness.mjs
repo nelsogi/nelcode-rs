@@ -124,5 +124,7 @@ export async function launch({ settings = {}, files = {}, env = {} } = {}) {
 
   await waitFor(`typeof S === 'object' && !!S.info.version && !!S.current`, 30_000, 'démarrage de l\'interface');
   await ev(HELPERS);
-  return { home, pid: app.pid, ev, waitFor, ask, importAs, close, readJson: (file) => JSON.parse(fs.readFileSync(path.join(home, file), 'utf8')) };
+  /** Capture d'écran de la fenêtre, en PNG (scripts/captures.mjs). */
+  const shot = async (file) => fs.writeFileSync(file, Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  return { home, pid: app.pid, ev, waitFor, ask, importAs, close, shot, readJson: (file) => JSON.parse(fs.readFileSync(path.join(home, file), 'utf8')) };
 }

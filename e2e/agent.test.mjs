@@ -40,6 +40,11 @@ const SCRIPTS = {
   'recherche-protegee': (n) => n ? ['Recherche faite.', []] : ['', [call('search', { query: 'motdepasse' })]],
   'tout-puis-protege': (n) => n ? ['Fini.', []] : ['', [call('write_file', { path: 'p1.txt', content: 'p1' }), call('read_file', { path: 'config/appsettings.Production.json' })]],
   'protege-stop': () => ['', [call('read_file', { path: 'k/private.key' })]],
+  'ecriture-protegee': (n) => n ? ['Fini.', []] : ['', [
+    call('write_file', { path: 'p2.txt', content: 'p2' }), call('edit_file', { path: '.env', old_text: 'DB_PASSWORD=h', new_text: 'x' }),
+    call('write_file', { path: '.git/hooks/pre-commit', content: '#!/bin/sh\necho piege\n' }),
+  ]],
+  'modif-protegee': (n) => n ? ['Modifié.', []] : ['', [call('edit_file', { path: '.env', old_text: 'hunter2-motdepasse', new_text: 'nouveau' }), call('edit_file', { path: '.env', old_text: 'absent', new_text: 'y' })]],
   // NELCODE.md, plan, commandes
   simple: () => ['OK.', []],
   planificateur: (n) => [
@@ -407,6 +412,40 @@ test('« Accepter tout » des écritures ne vaut pas pour un fichier protégé',
   assert.deepEqual((await lastMsg()).agent.steps.map((s) => s.status), ['accepted', 'rejected']);
   assert.ok(!everything().includes('motdepasse-prod'));
   fs.rmSync(path.join(DIR, 'p1.txt'));
+});
+
+test('écriture d\'un fichier protégé : confirmation à chaque fois, même après « Accepter tout », rien de lu avant', async () => {
+  await start('ecriture-protegee', 'Écris et règle');
+  await decide(0, 'Accepter tout pour cette demande');
+  // edit_file sur .env : à confirmer, sans « Accepter tout » ; le passage demandé est montré, le fichier pas encore lu.
+  await A.waitFor(`${stepEl(1)}?.dataset.status === 'pending'`, 10_000, 'modification de .env à confirmer');
+  assert.deepEqual(await A.ev(`[...${stepEl(1)}.querySelectorAll('button')].map((b) => b.textContent)`), ['Autoriser l\'écriture', 'Refuser']);
+  assert.match(await A.ev(`${stepEl(1)}.textContent`), /Modification de \.env — fichier protégé.*n'est lu qu'avec ton accord/s);
+  await A.ev(`T.button('Refuser', ${stepEl(1)})`);
+  // Création dans .git/hooks : à confirmer aussi.
+  await A.waitFor(`${stepEl(2)}?.dataset.status === 'pending'`, 10_000, 'hook git à confirmer');
+  assert.match(await A.ev(`${stepEl(2)}.querySelector('.title').textContent`), /Création de \.git\/hooks\/pre-commit .*— fichier protégé/);
+  await A.ev(`T.button('Refuser', ${stepEl(2)})`);
+  await finish();
+  assert.deepEqual((await lastMsg()).agent.steps.map((s) => s.status), ['accepted', 'rejected', 'rejected']);
+  const results = toolResults();
+  // Le refus ne dit rien du contenu (avant : « old_text introuvable » ou non, sans rien demander).
+  assert.match(results[1], /« \.env » est un fichier protégé, il n'a été ni lu ni modifié/);
+  assert.equal(read('.env'), SECRETS['.env']);
+  assert.ok(!fs.existsSync(path.join(DIR, '.git', 'hooks', 'pre-commit')));
+  fs.rmSync(path.join(DIR, 'p2.txt'));
+});
+
+test('modification d\'un fichier protégé autorisée : écrite, puis l\'erreur d\'un passage absent seulement après accord', async () => {
+  await start('modif-protegee', 'Change le mot de passe');
+  await decide(0, 'Autoriser l\'écriture');
+  await decide(1, 'Autoriser l\'écriture');
+  await finish();
+  const m = await lastMsg();
+  assert.deepEqual(m.agent.steps.map((s) => s.status), ['accepted', 'error']);
+  assert.equal(read('.env'), 'DB_PASSWORD=nouveau');
+  assert.match(toolResults()[1], /old_text introuvable dans « \.env »/);
+  fs.writeFileSync(path.join(DIR, '.env'), SECRETS['.env']);
 });
 
 test('search ne parcourt jamais les fichiers protégés sans confirmation', async () => {

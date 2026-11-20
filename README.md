@@ -1,5 +1,7 @@
 # Nel Code
 
+*[English version](README.en.md)*
+
 Discuter avec les petits modèles de langage entraînés par [MiniChat](https://github.com/nelsogi/MiniChat), ou avec des
 modèles ouverts (Qwen2.5-Coder…), **sur ton PC, sans connexion**.
 
@@ -13,6 +15,27 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 > inventent des faits, comme sur la capture ci-dessus. Nel Code sert à apprendre et à expérimenter, pas à s'informer.
 > Voir la [carte du modèle](MODEL-CARD.md).
 
+## Fonctions
+
+- **Modèles sur ton PC, sans connexion** : `.nelmodel` de MiniChat et modèles ouverts **GGUF** (Qwen2, Llama), par
+  glisser-déposer ou depuis un **catalogue** vérifié ; processeur ou **GPU NVIDIA** (pack téléchargé à la demande).
+- **Conversations** : réponse au fil des tokens, Stop, Régénérer avec versions, Modifier, recherche, export, **projets**,
+  commandes `/` et **commandes personnalisées**, palette **Ctrl+K**, blocs de code coloriés, fichiers **`@`**,
+  **images** (réduites, sans métadonnées), **résumé automatique** du contexte et `/compact`.
+- **Mode transparence** (les 5 choix du modèle pour chaque mot) et **mode comparaison** (deux modèles côte à côte, votes
+  et classement).
+- **Modèles distants** compatibles OpenAI (llama.cpp, Ollama, LM Studio…) et **Claude** d'Anthropic ; clés dans le
+  trousseau du système.
+- **Mode Agent** : le modèle lit, cherche, modifie des fichiers (diff et accord à chaque écriture, annulation), lance
+  des commandes **sans shell** avec ton accord, tient un **plan**, suit **NELCODE.md**, lance des **explorateurs** en
+  lecture seule et utilise des **serveurs MCP** ; **fichiers protégés** et **points de restauration git**.
+- **Claude Agent** : une conversation menée par l'outil `claude` d'Anthropic installé sur le PC, affichée dans Nel Code.
+- **Serveur local** compatible OpenAI (pour Continue dans VS Code…), désactivé par défaut.
+- **Suivi** des tokens, du coût estimé et du temps de réponse, avec un budget mensuel.
+- **Mises à jour automatiques** signées ; Windows, Linux et macOS (ces deux derniers en expérimental).
+
+![Le mode Agent : plan, étapes et modification à valider](docs/agent.png)
+
 ## Installation
 
 Nel Code est fait d'abord pour **Windows**. Les versions **Linux** et **macOS** sont **expérimentales** : mêmes
@@ -21,7 +44,7 @@ fonctions (sauf le pack GPU, Windows seulement), mais moins éprouvées. Tous le
 
 ### Windows
 
-1. Télécharge `Nel Code_0.9.0_x64-setup.exe`.
+1. Télécharge `Nel Code_1.0.0_x64-setup.exe`.
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -34,9 +57,9 @@ accélère les réponses.
 
 Deux paquets, pour les PC 64 bits (x86_64) avec une glibc 2.35 ou plus récente (Ubuntu 22.04, Debian 12, Fedora 36…) :
 
-- **AppImage** (`Nel Code_0.9.0_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
+- **AppImage** (`Nel Code_1.0.0_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
   Sans FUSE (certaines distributions récentes), installe `libfuse2`, ou lance-la avec `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_0.9.0_amd64.deb"`. Le paquet **ne se met pas à jour
+- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_1.0.0_amd64.deb"`. Le paquet **ne se met pas à jour
   tout seul** : pour une nouvelle version, télécharge le nouveau `.deb` et installe-le de la même façon.
 
 Il faut WebKitGTK 4.1 (déjà là sur un bureau GNOME ou KDE récent ; sinon le `.deb` l'installe). Les clés API sont
@@ -45,7 +68,7 @@ fonctionne, mais ne peut pas garder de clé.
 
 ### macOS (expérimental)
 
-1. Télécharge `Nel Code_0.9.0_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
+1. Télécharge `Nel Code_1.0.0_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
    glisse Nel Code dans **Applications**.
 2. L'appli n'est **pas signée** par un développeur Apple : au premier lancement, macOS dit qu'il ne peut pas vérifier
    le développeur (ou que l'appli est « endommagée »). Pour l'ouvrir quand même :
@@ -70,7 +93,7 @@ Puis, dans Ubuntu :
 ```bash
 sudo apt update && sudo apt install -y libfuse2t64 gnome-keyring
 # Le .deb (ou l'AppImage, avec chmod +x) téléchargé dans les Releases :
-sudo apt install -y "./Nel Code_0.9.0_amd64.deb"
+sudo apt install -y "./Nel Code_1.0.0_amd64.deb"
 # Puis Nel Code dans le menu des applications (WSLg ouvre sa fenêtre sous Windows).
 ```
 
@@ -233,6 +256,11 @@ s'affichent dans l'étape « Sous-agent : … » qui l'a lancé (avec leur nombr
   tout ce qui demande un accord est refusé et l'étape s'affiche « refusée ») ; en option, **accepter les
   modifications de fichiers** (`acceptEdits`). **Outils autorisés** (`--allowedTools`), un par ligne :
   `Read`, `Bash(dotnet build *)`…
+- **Réglages du projet** : par défaut, l'outil ne lit que tes réglages (`~/.claude/settings.json`), jamais ceux du
+  dossier de travail (`--setting-sources user`) : sans personne pour confirmer que le dossier est de confiance, le
+  `.claude/settings.json` d'un dépôt cloné pourrait lancer des commandes (hooks), autoriser Bash sans accord, activer
+  ses serveurs MCP ou envoyer ta clé à une autre adresse. **Lire les réglages du projet** (Réglages → Claude Agent) les
+  remet : seulement pour des projets de confiance.
 - **Modèle** (`--model`) : un alias (`opus`, `sonnet`, `haiku`) ou un id complet (`claude-opus-5-5`) ; vide, le
   modèle par défaut de l'outil. Il s'affiche dans la barre d'état de la conversation.
 - **Stop** envoie Ctrl+C à l'outil (son SIGINT sous Windows), puis attend qu'il finisse proprement (le début de la
@@ -285,7 +313,8 @@ PowerShell, bash, les scripts `.bat` / `.cmd` / `.ps1` et les opérateurs `|`, `
 tourne dans le dossier de travail, sans fenêtre ; sa sortie s'affiche en direct dans l'étape (limitée : le milieu d'une
 très longue sortie est coupé). Chaque commande demande **Lancer** / **Refuser**, sauf celles de **Réglages → Commandes
 autorisées sans confirmation** (vide par défaut ; par exemple `dotnet build` et `dotnet test`, qui autorisent aussi
-`dotnet build src/App.csproj`). Au-delà de la durée maximale (2 min par défaut, réglable), ou sur **Stop**, la commande
+`dotnet build src/App.csproj`). La liste ne vaut que pour un programme donné par son nom (cherché dans le PATH) : un
+programme du projet (`outils/dotnet.exe`) demande toujours Lancer / Refuser. Au-delà de la durée maximale (2 min par défaut, réglable), ou sur **Stop**, la commande
 et **tous ses processus enfants** sont tués (Job Object Windows). Les variables d'environnement dont le nom contient
 `KEY`, `TOKEN` ou `SECRET` ne lui sont pas transmises.
 
@@ -301,15 +330,17 @@ clés… —, qui ne sont jamais copiés dans git), dans un commit à part rang�
 demande** (sur la réponse, après confirmation) remet tous les fichiers du dossier dans cet état, y compris les
 modifications faites depuis, et supprime les fichiers créés depuis ; les fichiers ignorés et protégés ne sont pas
 touchés, la conversation reste. Seuls les **20 derniers points** de chaque dossier sont gardés, les plus anciens sont
-supprimés. Sans dépôt git, pas de point (pas de `git init` automatique).
+supprimés. Sans dépôt git, pas de point (pas de `git init` automatique). git y tourne sans rien lancer de ce que le
+dépôt configure (ni `core.fsmonitor`, ni hooks, ni filtres de `.git/config`) : un dépôt piégé ne fait rien tourner.
 
 **Sécurité** :
 - tout reste dans le dossier de travail : chemins relatifs normalisés ; `..`, chemins absolus, noms avec `:` et liens
   (symboliques ou jonctions) qui sortent du dossier sont refusés ; les fichiers trop gros aussi ;
 - les noms réservés de Windows (`CON`, `NUL`, `COM1`, `LPT1`…, avec ou sans extension) et les noms qui finissent par un
   point ou une espace sont refusés ;
-- les **fichiers protégés** ne sont lus qu'avec ta confirmation explicite, à chaque fois (« Accepter tout » des
-  écritures ne compte pas pour eux), et `search` ne les parcourt jamais sans elle. Par défaut : `.env`, `.env.*`,
+- les **fichiers protégés** ne sont lus ou écrits qu'avec ta confirmation explicite, à chaque fois (« Accepter tout »
+  des écritures ne compte pas pour eux ; pour une modification, le fichier n'est lu qu'après ton accord), et `search`
+  ne les parcourt jamais sans elle. Par défaut : `.env`, `.env.*`,
   `.git/`, `*.pem`, `*.key`, `*.pfx`, `id_rsa`, `*.kdbx`, `appsettings.*.json`, `secrets.json` ; d'autres s'ajoutent
   dans **Réglages → Fichiers protégés** (un motif par ligne : `*.secret`, `privé/` pour un dossier, `config/prod.yml`
   pour un chemin) ;
@@ -531,6 +562,8 @@ fournisseur, modèle et projet, le temps de réponse moyen et les tokens/s par m
 `;`, pour Excel ; colonnes en anglais : `date;project;provider;model;kind;input_tokens;output_tokens;duration_s;
 tokens_per_s;estimated_cost_usd;responses`).
 
+![La page Suivi](docs/suivi.png)
+
 Les coûts sont des **estimations** : **Réglages → Suivi** contient la table de prix (un modèle par ligne : nom, prix
 d'entrée et de sortie en dollars par million de tokens), préremplie avec les modèles Claude de la page officielle des
 tarifs d'Anthropic (date de vérification affichée) ; « Prix par défaut » la remet. Les modèles de ce PC et ceux sans prix
@@ -559,6 +592,74 @@ se chargent aussi.
 
 Propres à cette version : `mcp.json` (serveurs MCP globaux, sans valeur secrète), `mcp-state.json` (accords des serveurs
 de projet, outils toujours autorisés, dernières listes d'outils) et `logs\mcp\` (le stderr de chaque serveur MCP).
+
+## Sécurité
+
+Nel Code fait tourner des modèles qui peuvent se tromper ou être manipulés (une instruction cachée dans un fichier, une
+page, un résultat d'outil) : ses protections ne supposent jamais que le modèle est fiable. La 1.0.0 a fait l'objet
+d'une relecture complète du code ; le détail est dans le [CHANGELOG](CHANGELOG.md).
+
+**Ce qui est protégé**
+
+- **Clés** (fournisseurs, MCP, Claude Agent) : dans le trousseau du système, jamais dans un fichier de données, jamais
+  dans le journal. L'interface n'appelle jamais le réseau elle-même (politique de sécurité du contenu stricte) : tout
+  passe par la partie Rust.
+- **Mode Agent** : tout reste dans le dossier de travail (`..`, chemins absolus, flux NTFS, noms réservés de Windows,
+  liens symboliques et jonctions qui en sortent : refusés) ; chaque écriture attend ton accord ; les **fichiers
+  protégés** ne sont lus ou écrits qu'avec une confirmation à chaque fois ; les commandes tournent **sans shell**, avec
+  ton accord (sauf liste autorisée, par nom de programme), sans les variables `KEY`, `TOKEN` et `SECRET`, et sont tuées
+  avec tous leurs enfants au délai ou sur Stop. Le contenu d'un fichier ou d'un outil n'est jamais une instruction
+  pour Nel Code.
+- **Explorateurs** : lecture seule, vérifiée par Nel Code (pas seulement demandée au modèle) ; ni fichiers protégés, ni
+  outils MCP.
+- **MCP** : un serveur de projet (`.nelcode/mcp.json`) ne démarre jamais sans ton accord, redemandé si sa configuration
+  ou le programme trouvé change ; chaque appel d'outil est validé (sauf « toujours autoriser ») ; les résultats sont
+  limités et présentés comme des données ; les secrets restent dans le trousseau ; les processus sont arrêtés avec la
+  conversation.
+- **Claude Agent** : la clé ne part que vers Anthropic (les `ANTHROPIC_*` du PC ne sont pas transmises) ; les réglages
+  du projet (`.claude/settings.json`) ne sont pas lus sans ton choix.
+- **Points de restauration** : les fichiers protégés n'entrent jamais dans git ; git ne lance aucun programme configuré
+  par le dépôt.
+- **Serveur local** : désactivé par défaut, sur `127.0.0.1` seulement, avec une clé d'accès vérifiée à chaque requête.
+- **Images** : réencodées, sans aucune métadonnée (EXIF, GPS…).
+- **Téléchargements** : mises à jour signées (la signature est vérifiée avant l'installation), pack GPU et modèles du
+  catalogue vérifiés par SHA-256 ; un `.nelmodel` est extrait fichier par fichier (noms exacts, tailles limitées) et
+  chargé pour essai avant d'être installé.
+- **Journal** : jamais le texte des conversations, ni les arguments des commandes et des outils MCP.
+
+**Ce qui ne l'est pas**
+
+- Ce que tu acceptes : une commande lancée (ou autorisée sans confirmation) tourne avec **tes droits**, sans bac à sable
+  du système. `dotnet build`, `cargo test` ou `npm test` exécutent du code du projet : ne les autorise d'office que dans
+  des projets de confiance. Même chose pour un serveur MCP autorisé (l'accord porte sur sa configuration et le chemin du
+  programme, pas sur le contenu du script qu'il lance), et pour Claude Agent en mode `acceptEdits`.
+- Un programme qui tourne déjà sous ton compte peut lire tes données et, souvent, ton trousseau.
+- Les variables d'environnement passées aux commandes de l'agent ne sont filtrées que par leur nom (`KEY`, `TOKEN`,
+  `SECRET`) : `DB_PASSWORD` passe (les serveurs MCP, eux, ne reçoivent pas non plus `PASSWORD`, `CREDENTIAL`, `AUTH`…).
+- La clé d'accès du serveur local est dans `settings.json` (elle ne sert qu'en local).
+- Un lien physique (hard link) déjà présent dans le dossier de travail vers un fichier extérieur n'est pas détecté (les
+  outils de l'agent ne peuvent pas en créer).
+
+**Signaler une faille** : en privé, par l'onglet *Security* du dépôt GitHub (*Report a vulnerability*), plutôt que dans
+une issue publique.
+
+## Limites connues
+
+- Les modèles **MiniChat** sont minuscules : ils se trompent souvent et inventent des faits. Contexte de 256 tokens.
+- **GGUF** : architectures Qwen2 et Llama seulement, formats de chat ChatML et Llama 3.
+- **Linux et macOS** sont expérimentaux : les tests de l'interface ne tournent que sous Windows ; pas de pack GPU ; le
+  `.deb` ne se met pas à jour tout seul. Ni l'installateur Windows ni l'appli macOS ne sont **signés** (SmartScreen,
+  Gatekeeper : voir [Installation](#installation)).
+- **Mode Agent** : il faut un modèle distant qui gère les outils ; fichiers texte UTF-8 de 100 Ko au plus, 5 000
+  fichiers listés au plus ; pas d'outil pour supprimer ou renommer ; les commandes n'ont pas d'entrée (rien
+  d'interactif).
+- **MCP** : pas d'OAuth (en-têtes fixes seulement), pas de ressources ni de prompts, pas de l'ancien transport SSE.
+- **Claude Agent** : clé API seulement (pas de compte Claude.ai) ; ce qui demande un accord est refusé (pas de question
+  pendant la demande) ; pas de Régénérer ni de Modifier.
+- **Images** : seulement pour les modèles distants qui les voient (pas les modèles de ce PC).
+- **Serveur local** : seulement le chat (`/v1/chat/completions`), une réponse à la fois.
+- **Points de restauration** : seulement dans un dépôt git, les 20 derniers ; les fichiers ignorés et protégés n'y sont
+  pas.
 
 ## Compiler depuis les sources
 
@@ -609,6 +710,10 @@ L'application de développement est lancée avec des dossiers de données et Web
 cargo build -p nel-desktop
 node --test --test-concurrency=1 --test-reporter=spec "e2e/*.test.mjs"
 ```
+
+`.\scripts\test.ps1` lance tout (`cargo test --workspace`, puis les tests de l'interface) et n'affiche qu'un résumé et
+le détail des tests qui échouent ; `-SansE2e` s'arrête aux tests Rust, `-Fichier agent` ne lance que
+`e2e/agent.test.mjs`.
 
 `e2e/nelcode.test.mjs` couvre le démarrage, l'import, une réponse, Stop, Régénérer et les versions, Modifier, le
 changement de modèle, la recherche, renommer et supprimer, les réglages, la transparence, la comparaison et le vote, le
@@ -679,7 +784,8 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
 | `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, images, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, et `js/` : modules ES sans framework, voir ci-dessous) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
-| `docs/` | Captures d'écran |
+| `docs/` | Captures d'écran (`node scripts/captures.mjs` les refait, après `cargo build -p nel-desktop`) |
+| `scripts/` | `test.ps1` (tous les tests, résumé), `captures.mjs`, `updater-json.sh` (latest.json des mises à jour), `linux-startup-test.sh` |
 
 L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `index.html` (`js/main.js`) :
 

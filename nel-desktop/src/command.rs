@@ -66,7 +66,12 @@ pub fn display(program: &str, args: &[String]) -> String {
 
 /// Autorisée sans confirmation : une entrée de la liste dont les mots sont le début de la commande (« dotnet build »
 /// autorise « dotnet build src/App.csproj », pas « dotnet test »). Le programme se compare sans « .exe » ni casse.
+/// Seulement un programme donné par son nom (cherché dans le PATH) : « outils/git.exe status », un programme du
+/// projet, n'est jamais « git status ».
 pub fn allowed(program: &str, args: &[String], list: &[String]) -> bool {
+    if program.contains(['/', '\\']) {
+        return false;
+    }
     let words: Vec<String> = std::iter::once(base(program)).chain(args.iter().cloned()).collect();
     list.iter().any(|entry| {
         let want: Vec<&str> = entry.split_whitespace().collect();
@@ -225,7 +230,10 @@ mod tests {
         let list = a(&["dotnet build", "dotnet test", "  "]);
         assert!(allowed("dotnet", &a(&["build"]), &list));
         assert!(allowed("DOTNET.exe", &a(&["build", "src/App.csproj"]), &list));
-        assert!(allowed("C:\\Program Files\\dotnet\\dotnet.exe", &a(&["test"]), &list));
+        // Un programme donné par un chemin (un dotnet.exe du projet, par exemple) : toujours une confirmation.
+        for p in ["outils/dotnet.exe", "outils\\dotnet", "./dotnet", "C:\\Program Files\\dotnet\\dotnet.exe"] {
+            assert!(!allowed(p, &a(&["test"]), &list), "{p}");
+        }
         assert!(!allowed("dotnet", &a(&["run"]), &list));
         assert!(!allowed("dotnet", &[], &list));
         assert!(!allowed("dotnetx", &a(&["build"]), &list));

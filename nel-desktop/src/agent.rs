@@ -848,6 +848,13 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
         }
         "write_file" | "edit_file" => {
             let creating = name == "write_file";
+            // Un fichier protégé (.env, .git/config, .git/hooks/…) : jamais écrit sans une confirmation à lui, même avec
+            // « Accepter tout ». Pour une modification, son contenu n'est lu qu'après l'accord : sinon les erreurs
+            // (« passage introuvable », « N fois ») diraient au modèle ce qu'il contient.
+            let protected = sb.resolve(path).ok().and_then(|abs| sb.protected(&abs));
+            if let (Some(pattern), false) = (&protected, creating) {
+                return edit_protected(run, sb, path, args, pattern, cancel).await;
+            }
             let plan = if creating {
                 plan_write(sb, path, arg(args, "content").unwrap_or_default())
             } else {
@@ -860,17 +867,19 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
             };
             let lines = diff(change.before.as_deref().unwrap_or_default(), &change.after);
             let (added, removed) = (lines.iter().filter(|l| l.0 == '+').count(), lines.iter().filter(|l| l.0 == '-').count());
-            let title = format!("{verb} {} (+{added} −{removed})", change.rel);
+            let title = format!("{verb} {} (+{added} −{removed}){}", change.rel, if protected.is_some() { " — fichier protégé" } else { "" });
+            let auto = run.accept_all && protected.is_none();
             let id = run.step(json!({
                 "kind": if creating { "write" } else { "edit" }, "title": title, "path": change.rel, "added": added, "removed": removed,
-                "diff": lines.iter().map(|(c, l)| json!([c.to_string(), l])).collect::<Vec<_>>(),
-                "status": if run.accept_all { "accepted" } else { "pending" },
+                "diff": lines.iter().map(|(c, l)| json!([c.to_string(), l])).collect::<Vec<_>>(), "protected": protected,
+                "status": if auto { "accepted" } else { "pending" },
             }));
-            // L'accord de l'utilisateur : rien n'est écrit sans lui. « Accepter tout » ne vaut que pour cette demande.
-            let decision = if run.accept_all { "accept".to_string() } else { ask(run, &id, cancel).await };
+            // L'accord de l'utilisateur : rien n'est écrit sans lui. « Accepter tout » ne vaut que pour cette demande,
+            // et jamais pour un fichier protégé.
+            let decision = if auto { "accept".to_string() } else { ask(run, &id, cancel).await };
             match decision.as_str() {
                 "accept" | "accept_all" => {
-                    run.accept_all |= decision == "accept_all";
+                    run.accept_all |= decision == "accept_all" && protected.is_none();
                     match apply(&change).and_then(|_| save_backup(&run.request, &id, &change)) {
                         Ok(()) => {
                             run.update(&id, json!({ "status": "accepted" }));
@@ -905,6 +914,51 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
         },
         "run_command" => run_command(run, sb, args, cancel).await,
         other => fail(run, "error", format!("Outil inconnu : {other}"), format!("l'outil « {other} » n'existe pas (outils : list_files, read_file, search, write_file, edit_file, update_plan, run_command, spawn_explorer, et ceux des serveurs MCP, mcp__serveur__outil)")),
+    }
+}
+
+/// `edit_file` sur un fichier protégé : l'utilisateur voit le passage demandé (ancien → nouveau) et confirme avant que
+/// le fichier soit lu ; « Accepter tout » n'y change rien. Puis la modification se fait comme les autres (sauvegarde,
+/// annulation).
+async fn edit_protected(run: &mut Run<'_>, sb: &Sandbox, path: &str, args: &Value, pattern: &str, cancel: &Notify) -> Done {
+    let (old, new) = (arg(args, "old_text").unwrap_or_default(), arg(args, "new_text").unwrap_or_default());
+    let rel = sb.resolve(path).map(|abs| sb.rel(&abs)).unwrap_or_else(|_| path.to_string());
+    let lines = diff(old, new);
+    let id = run.step(json!({
+        "kind": "edit", "title": format!("Modification de {rel} — fichier protégé"), "path": rel, "protected": pattern, "status": "pending",
+        "diff": lines.iter().map(|(c, l)| json!([c.to_string(), l])).collect::<Vec<_>>(),
+        "detail": format!("« {rel} » est protégé ({pattern}) : il peut contenir des mots de passe ou des clés. Le modèle veut y remplacer ce passage ; le fichier n'est lu qu'avec ton accord."),
+    }));
+    match ask(run, &id, cancel).await.as_str() {
+        "accept" | "accept_all" => {}
+        "stop" => {
+            run.update(&id, json!({ "status": "rejected", "error": "arrêté" }));
+            return Done::Stopped("arrêté par l'utilisateur : rien n'a été écrit".into());
+        }
+        _ => {
+            run.update(&id, json!({ "status": "rejected" }));
+            return Done::Result(format!("refusé par l'utilisateur : « {rel} » est un fichier protégé, il n'a été ni lu ni modifié. Ne recommence pas sans lui demander."));
+        }
+    }
+    let change = match plan_edit(sb, path, old, new) {
+        Ok(c) => c,
+        Err(e) => {
+            run.update(&id, json!({ "status": "error", "error": e.clone() }));
+            return Done::Result(format!("échec : {e}"));
+        }
+    };
+    let lines = diff(change.before.as_deref().unwrap_or_default(), &change.after);
+    let (added, removed) = (lines.iter().filter(|l| l.0 == '+').count(), lines.iter().filter(|l| l.0 == '-').count());
+    match apply(&change).and_then(|_| save_backup(&run.request, &id, &change)) {
+        Ok(()) => {
+            run.update(&id, json!({ "status": "accepted", "title": format!("Modification de {} (+{added} −{removed}) — fichier protégé", change.rel), "added": added, "removed": removed }));
+            crate::log::info(&format!("agent : « {} » (protégé) modifié", change.rel));
+            Done::Result(format!("« {} » modifié (+{added} −{removed} lignes).", change.rel))
+        }
+        Err(e) => {
+            run.update(&id, json!({ "status": "error", "error": e.clone() }));
+            Done::Result(format!("échec : {e}"))
+        }
     }
 }
 

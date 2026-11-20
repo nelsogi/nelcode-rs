@@ -64,17 +64,19 @@ pour tout vérifier : la sortie complète coûte cher en tokens.
 ## Règles du projet
 
 - **Sécurité de l'agent** : tout passe par `Sandbox` (chemins normalisés, `..`, absolus et liens refusés) ; fichiers
-  protégés (`.env`, `*.pem`, `.git/`… + motifs des réglages) lus seulement après confirmation à chaque fois, « Accepter
-  tout » n'y change rien ; commandes sans shell, confirmées sauf liste autorisée ; clés jamais dans `settings.json`,
+  protégés (`.env`, `*.pem`, `.git/`… + motifs des réglages) lus ou écrits seulement après confirmation à chaque fois,
+  « Accepter tout » n'y change rien ; commandes sans shell, confirmées sauf liste autorisée (programmes par leur nom
+  seulement) ; git des points de restauration sans fsmonitor, hooks ni filtres du dépôt ; `claude` sans les réglages du
+  projet sauf choix explicite ; clés jamais dans `settings.json`,
   jamais dans le journal ni dans les tests (clés de test à part) ; l'interface n'appelle jamais le réseau (CSP inchangée).
   Ne jamais affaiblir une de ces protections sans demande explicite.
 - **Jamais le nom « Claude Code » dans l'interface** (textes, boutons, messages). Écrire « Claude Agent » ou « claude ».
 - **Pas de connexion Claude.ai** : on utilise l'exécutable `claude` déjà connecté sur le PC, ou une clé API Anthropic.
 - **CHANGELOG à jour** : chaque nouveauté ou correction va dans `CHANGELOG.md` ; README mis à jour si l'usage change.
 - **Un test par nouveauté** : test unitaire Rust et/ou e2e. Pas de commit avec un test qui échoue.
-- **Version 0.9.0 ouverte** : les nouveautés s'ajoutent à la section [0.9.0] ; ni tag ni release tant que demandé.
+- **Version 1.0.0 ouverte** : les nouveautés s'ajoutent à la section [1.0.0] ; ni tag ni release tant que demandé.
 - **Git** : commiter directement sur `master` (pas de branche) ; ne pas pousser sans demande. Messages au format
-  `0.9.0 (en cours) : sujet`.
+  `1.0.0 (en cours) : sujet`.
 
 ## Compact instructions
 

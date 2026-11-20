@@ -8,6 +8,10 @@
 //! - Le message part sur l'entrée standard (jamais en argument : rien à échapper, même pour un claude.cmd).
 //! - Mode de permission « default » (rien d'automatique : en -p, tout ce qui demande un accord est refusé) ou
 //!   « acceptEdits », et `--allowedTools` (réglages).
+//! - Les réglages du projet (.claude/settings.json, .claude/settings.local.json) ne sont pas lus (`--setting-sources
+//!   user`), sauf si l'utilisateur l'a choisi : en -p, claude ne demande pas si le dossier est de confiance, et un
+//!   dépôt piégé y mettrait des hooks (commandes lancées), des permissions (Bash sans accord), ses serveurs MCP
+//!   activés, ou ANTHROPIC_BASE_URL dans `env` (la clé envoyée ailleurs).
 //! - Stop : Ctrl+C sur la console du processus sous Windows, SIGINT à son groupe ailleurs, puis attente de sa fin
 //!   propre ; au-delà de 15 s, le processus et ses enfants sont tués (Job Object, groupe de processus).
 
@@ -65,19 +69,20 @@ pub fn valid_model(m: &str) -> bool {
     !m.is_empty() && m.len() <= 100 && m.chars().all(|c| c.is_ascii_alphanumeric() || "-._[]".contains(c))
 }
 
-/// Mode de permission, outils autorisés, modèle (vide : celui de l'outil).
-fn settings() -> (String, Vec<String>, String) {
+/// Mode de permission, outils autorisés, modèle (vide : celui de l'outil), réglages du projet lus ou non.
+fn settings() -> (String, Vec<String>, String, bool) {
     let s = store::load_settings();
     let mode = s["claudePermissionMode"].as_str().unwrap_or("default").to_string();
     let tools = s["claudeAllowedTools"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
     let model = s["claudeModel"].as_str().unwrap_or_default().to_string();
-    (mode, tools, model)
+    (mode, tools, model, s["claudeProjectSettings"] == true)
 }
 
 /// Pour les réglages et le démarrage d'une conversation : l'outil trouvé, la clé, les réglages.
 pub fn status() -> Value {
-    let (mode, tools, model) = settings();
+    let (mode, tools, model, project) = settings();
     json!({
+        "projectSettings": project,
         "cli": find_cli().map(|p| p.to_string_lossy().into_owned()),
         "installUrl": INSTALL_URL,
         "hasKey": creds::read(KEY_ID).is_some(),
@@ -97,8 +102,9 @@ pub fn save_key(key: &str) -> Result<()> {
     }
 }
 
-/// Les arguments de `claude` (le message part sur l'entrée standard).
-pub fn args(session: Option<&str>, mode: &str, allowed: &[String], model: &str) -> Vec<String> {
+/// Les arguments de `claude` (le message part sur l'entrée standard). Sans `project` : seulement les réglages de
+/// l'utilisateur (~/.claude/settings.json), jamais ceux du dossier de travail.
+pub fn args(session: Option<&str>, mode: &str, allowed: &[String], model: &str, project: bool) -> Vec<String> {
     let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode"].iter().map(|s| s.to_string()).collect();
     a.push(if PERMISSION_MODES.contains(&mode) { mode.to_string() } else { "default".into() });
     let allowed: Vec<&str> = allowed.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
@@ -109,6 +115,10 @@ pub fn args(session: Option<&str>, mode: &str, allowed: &[String], model: &str) 
     if valid_model(model) {
         a.push("--model".into());
         a.push(model.to_string());
+    }
+    if !project {
+        a.push("--setting-sources".into());
+        a.push("user".into());
     }
     if let Some(s) = session.filter(|s| !s.is_empty()) {
         a.push("--resume".into());
@@ -421,11 +431,11 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
         Ok(r) if r.is_dir() => r,
         _ => return fail(format!("dossier de travail introuvable : {dir}")),
     };
-    let (mode, allowed, model) = settings();
+    let (mode, allowed, model, project) = settings();
     let resumed = session.is_some();
     let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().filter(|(k, _)| passed_var(&k.to_string_lossy())).collect();
     let mut cmd = Command::new(&cli);
-    cmd.args(args(session.as_deref(), &mode, &allowed, &model))
+    cmd.args(args(session.as_deref(), &mode, &allowed, &model, project))
         .current_dir(&root)
         .env_clear()
         .envs(env)
@@ -538,13 +548,16 @@ mod tests {
 
     #[test]
     fn arguments() {
-        assert_eq!(args(None, "default", &[], ""), ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "default"]);
-        let a = args(Some("abc-123"), "acceptEdits", &["Read".into(), " Bash(git log *) ".into(), "".into()], "");
+        assert_eq!(args(None, "default", &[], "", true), ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "default"]);
+        let a = args(Some("abc-123"), "acceptEdits", &["Read".into(), " Bash(git log *) ".into(), "".into()], "", true);
         assert_eq!(a[6..], ["acceptEdits", "--allowedTools", "Read,Bash(git log *)", "--resume", "abc-123"]);
-        assert_eq!(args(None, "bypassPermissions", &[], "")[6], "default", "seuls default et acceptEdits");
-        assert!(!args(Some(""), "default", &[], "").contains(&"--resume".to_string()));
-        assert_eq!(args(None, "default", &[], "claude-opus-5-5[1m]")[7..], ["--model", "claude-opus-5-5[1m]"]);
-        assert!(!args(None, "default", &[], "opus & calc").contains(&"--model".to_string()), "nom invalide : pas de --model");
+        assert_eq!(args(None, "bypassPermissions", &[], "", true)[6], "default", "seuls default et acceptEdits");
+        assert!(!args(Some(""), "default", &[], "", true).contains(&"--resume".to_string()));
+        assert_eq!(args(None, "default", &[], "claude-opus-5-5[1m]", true)[7..], ["--model", "claude-opus-5-5[1m]"]);
+        assert!(!args(None, "default", &[], "opus & calc", true).contains(&"--model".to_string()), "nom invalide : pas de --model");
+        // Par défaut, les réglages du dossier de travail (.claude/settings*.json : hooks, permissions, env) ne sont
+        // pas lus ; --resume reste à la fin.
+        assert_eq!(args(Some("s1"), "default", &[], "", false)[7..], ["--setting-sources", "user", "--resume", "s1"]);
         for v in ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "claude_code_use_vertex"] {
             assert!(!passed_var(v), "{v}");
         }

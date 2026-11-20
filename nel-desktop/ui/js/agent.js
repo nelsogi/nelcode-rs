@@ -62,7 +62,7 @@ export async function startClaudeAgent() {
   $('input').focus();
 }
 
-// La section Claude Agent des réglages : rend { el, mode, tools, model } (enregistrés avec les autres réglages ; la clé, tout de suite).
+// La section Claude Agent des réglages : rend { el, mode, tools, model, project } (enregistrés avec les autres réglages ; la clé, tout de suite).
 export async function claudeSection() {
   const st = S.claudeStatus = await invoke('claude_agent_status');
   const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: st.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…' });
@@ -83,6 +83,7 @@ export async function claudeSection() {
   // Le modèle (--model) : un alias de l'outil ou un id complet ; vide : celui de l'outil.
   const model = h('input', { class: 'text-input model', list: 'claude-models', spellcheck: 'false', placeholder: 'celui de l\'outil (par défaut)' });
   model.value = st.model ?? '';
+  const project = h('input', { type: 'checkbox', class: 'project-settings', checked: !!st.projectSettings });
   const models = h('datalist', { id: 'claude-models' }, ...['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'].map((m) => h('option', { value: m })));
   const el = h('div', { class: 'field claude-field' }, h('div', { class: 'row' }, h('span', {}, 'Claude Agent')),
     h('div', { class: 'hint cli' }, st.cli ? `Outil « claude » : ${st.cli}` : [`Outil « claude » d'Anthropic introuvable : `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_claude_install'); } }, 'l\'installer')]),
@@ -93,8 +94,10 @@ export async function claudeSection() {
       h('div', { class: 'hint' }, 'Un alias (opus, sonnet, haiku) ou un id complet (claude-opus-5-5). Vide : le modèle par défaut de l\'outil.')),
     h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Mode de permission')), mode),
     h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Outils autorisés sans accord (--allowedTools)')), tools,
-      h('div', { class: 'hint' }, 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.')));
-  return { el, mode, tools, model };
+      h('div', { class: 'hint' }, 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.')),
+    h('div', { class: 'field' }, h('label', { class: 'check' }, project, 'Lire les réglages du projet (.claude/settings.json)'),
+      h('div', { class: 'hint' }, 'Désactivé par défaut : seuls tes réglages (~/.claude/settings.json) comptent. Les réglages d\'un projet peuvent lancer des commandes (hooks), autoriser Bash sans accord ou envoyer ta clé à une autre adresse : ne l\'active que pour des projets de confiance.')));
+  return { el, mode, tools, model, project };
 }
 
 export async function refreshNelcode() {
@@ -157,7 +160,7 @@ export function stepsEl(steps, m) {
     const n = count[st.id];
     if (n) { subs.set(st.id, h('div', { class: 'substeps' })); body.append(subs.get(st.id)); }
     // La raison d'un refus ou d'une erreur (Claude Agent) accompagne le diff.
-    if (st.detail && (!st.diff || st.status === 'rejected' || st.status === 'error')) body.append(h('pre', { class: 'detail' }, st.detail));
+    if (st.detail && (!st.diff || st.protected || st.status === 'rejected' || st.status === 'error')) body.append(h('pre', { class: 'detail' }, st.detail));
     if (st.diff) body.append(diffEl(st.diff));
     if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
     // Les boutons de la décision sont grisés dès le premier clic (un double clic décidait deux fois), rendus si erreur.
@@ -172,7 +175,7 @@ export function stepsEl(steps, m) {
     };
     // Un fichier protégé : une confirmation à chaque fois (jamais « Accepter tout »).
     if (st.status === 'pending' && !m && st.protected) body.append(h('div', { class: 'row-btns' },
-      h('button', { class: 'btn danger', onclick: (e) => decide('accept', e) }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : 'Autoriser la lecture'),
+      h('button', { class: 'btn danger', onclick: (e) => decide('accept', e) }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : write ? 'Autoriser l\'écriture' : 'Autoriser la lecture'),
       h('button', { class: 'btn primary', onclick: (e) => decide('reject', e) }, 'Refuser')));
     // Une commande : Lancer ou Refuser, à chaque fois (jamais « Accepter tout »).
     if (st.status === 'pending' && !m && st.kind === 'command') body.append(h('div', { class: 'row-btns' },
