@@ -338,13 +338,15 @@ mod tests {
         let dir = std::env::temp_dir();
         // SAFETY : seul ce test lit ces variables.
         unsafe {
-            std::env::set_var("NELCODE_TEST_UNIX_TOKEN", "cache");
+            std::env::set_var("NELCODE_TEST_UNIX_TOKEN", "valeur-cachee-1");
+            std::env::set_var("NELCODE_TEST_UNIX_PASSWORD", "valeur-cachee-2");
             std::env::set_var("NELCODE_TEST_UNIX_VISIBLE", "visible");
         }
         let env = rt().block_on(execute("env", &[], &dir, Duration::from_secs(20), &Notify::new(), |_| {})).unwrap();
         assert_eq!(env.code, Some(0));
         assert!(env.output.contains("NELCODE_TEST_UNIX_VISIBLE=visible"), "{}", env.output);
-        assert!(!env.output.contains("cache"), "{}", env.output);
+        // (Le nom et la valeur : l'environnement du runner contient d'autres « cache ».)
+        assert!(!env.output.contains("valeur-cachee") && !env.output.contains("NELCODE_TEST_UNIX_TOKEN"), "{}", env.output);
         let bad = rt().block_on(execute("/bin/sh", &a(&["-c", "exit 3"]), &dir, Duration::from_secs(20), &Notify::new(), |_| {})).unwrap();
         assert_eq!(bad.code, Some(3));
         assert!(rt().block_on(execute("programme-qui-n-existe-pas", &[], &dir, Duration::from_secs(5), &Notify::new(), |_| {})).is_err());

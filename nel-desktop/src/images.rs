@@ -142,8 +142,8 @@ pub fn prepare(session: &str, bytes: &[u8], name: &str) -> Result<Value> {
     let file = format!("img-{}.{ext}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
     fs::write(folder.join(&file), &out).map_err(|e| format!("image non enregistrée : {e}"))?;
     let saving = saving.elapsed().as_millis();
-    // Le nom affiché : celui du fichier d'origine, sans dossier (jamais un chemin).
-    let name = Path::new(name).file_name().and_then(|n| n.to_str()).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("image");
+    // Le nom affiché : celui du fichier d'origine, sans dossier (jamais un chemin, « \ » compris sous Linux et macOS).
+    let name = name.rsplit(['/', '\\']).next().map(str::trim).filter(|n| !n.is_empty()).unwrap_or("image");
     let name: String = name.chars().filter(|c| !c.is_control()).take(80).collect();
     crate::log::info(&format!(
         "image préparée : {w} × {h}, {} Ko en {} ms (réglages {} ms, décodage {} ms, réduction {} ms, encodage {} ms, enregistrement {} ms)",

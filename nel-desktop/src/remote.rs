@@ -820,11 +820,12 @@ mod tests {
     fn redirections_seulement_vers_la_meme_origine() {
         let (other, seen_other) = serve(|_| "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into());
         let (port, seen) = serve(move |path| match path {
-            "/v1/models" => "HTTP/1.1 302 Found\r\nLocation: /v1/ailleurs\r\nContent-Length: 0\r\n\r\n".into(),
+            // (Connection: close : le serveur ne garde jamais une connexion, reqwest ne doit pas la réutiliser.)
+            "/v1/models" => "HTTP/1.1 302 Found\r\nLocation: /v1/ailleurs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
             "/v1/ailleurs" => "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
             // Même machine, autre hôte (localhost et 127.0.0.1 ne sont pas la même origine), puis autre port.
-            "/v1/chat/completions" => format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://localhost:{other}/vol\r\nContent-Length: 0\r\n\r\n"),
-            _ => format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{other}/vol\r\nContent-Length: 0\r\n\r\n"),
+            "/v1/chat/completions" => format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://localhost:{other}/vol\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+            _ => format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{other}/vol\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
         });
         let get = |path: &str| {
             let url = format!("http://127.0.0.1:{port}/v1/{path}");

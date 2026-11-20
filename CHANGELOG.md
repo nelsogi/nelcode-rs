@@ -298,6 +298,9 @@ fournisseurs, images, points de restauration, mises à jour, imports). Corrigé 
 
 ### Corrigé
 
+- Images, Linux et macOS : le nom affiché d'une image donnée avec un chemin Windows (`C:\photos\vacances.png`) gardait
+  tout le chemin ; seul le nom du fichier est gardé, quel que soit le séparateur. Un test des commandes sous Unix ne
+  dépend plus de l'environnement du runner.
 - Mode Agent : les boutons d'une étape (Accepter, Refuser, Lancer, Autoriser…) sont **grisés dès le premier clic** ; un
   double clic envoyait deux décisions (la seconde en erreur). Ils redeviennent cliquables si la décision échoue.
 - Claude Agent : un message de sous-agent ne double plus le texte de l'agent principal ni ne le coupe en étape ; les
