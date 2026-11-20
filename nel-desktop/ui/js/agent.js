@@ -134,7 +134,7 @@ export function toggleAgent() {
   toast(s.agent ? `Mode Agent : ${S.model.name} peut lire les fichiers de « ${s.workingDirectory || '(aucun dossier)'} », et les modifier avec ton accord.` : 'Mode Agent désactivé.', '', 4000);
 }
 
-export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot' };
+export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot', mcp: 'plug' };
 
 export const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur', running: 'en cours', stopped: 'arrêtée', waiting: 'en attente' };
 
@@ -169,7 +169,12 @@ export function stepsEl(steps, m) {
     if (st.status === 'pending' && !m && st.kind === 'command') body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('terminal'), 'Lancer'),
       h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser')));
-    if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command') body.append(h('div', { class: 'row-btns' },
+    // Un outil MCP : Autoriser, Toujours autoriser cet outil (gardé), ou Refuser.
+    if (st.status === 'pending' && !m && st.kind === 'mcp') body.append(h('div', { class: 'row-btns' },
+      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Autoriser'),
+      h('button', { class: 'btn', title: 'Ne plus demander pour cet outil de ce serveur (tant que sa configuration ne change pas)', onclick: () => decide('always') }, 'Toujours autoriser cet outil'),
+      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser')));
+    if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command' && st.kind !== 'mcp') body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Accepter'),
       h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser'),
       h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));

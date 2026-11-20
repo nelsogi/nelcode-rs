@@ -23,6 +23,8 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 - `server.rs` : serveur local compatible OpenAI (127.0.0.1 seulement, clé d'accès obligatoire, désactivé par défaut)
 - `agent.rs` : mode Agent (outils lecture/recherche/écriture dans un `Sandbox`, fichiers protégés, NELCODE.md, plan,
   explorateurs `spawn_explorer` en lecture seule)
+- `mcp.rs` : client MCP (stdio dans un Job Object, Streamable HTTP ; mcp.json global et .nelcode/mcp.json avec accord
+  par empreinte ; secrets dans le Gestionnaire d'identification ; mcp-state.json : accords, « toujours », outils)
 - `command.rs` : outil `run_command` (sans shell, Job Object Windows, délai, variables secrètes retirées)
 - `checkpoint.rs` : points de restauration git de l'Agent (refs/nelcode/checkpoints, 20 par dossier)
 - `claude_agent.rs` : conversation « Claude Agent » : lance l'exécutable `claude` installé et affiche son flux stream-json
@@ -36,12 +38,12 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 ### nel-desktop/ui (modules ES, `js/main.js` charge le reste)
 `util.js` (appels Rust, DOM, fenêtres) · `state.js` (état partagé `S`, `UI`) · `conversation.js` (conversations,
 génération, saisie) · `agent.js` (mode Agent, étapes, plan, confirmations) · `files.js` (panneau Fichiers, diff) ·
-`projects.js` · `providers.js` (modèles distants) · `catalog.js` · `settings.js` · `usage.js` (page Suivi, budget, prix) · `images.js` (images des messages) · `onboarding.js` · `palette.js`
+`projects.js` · `providers.js` (modèles distants) · `catalog.js` · `settings.js` · `mcp.js` (page MCP, accords, puce) · `usage.js` (page Suivi, budget, prix) · `images.js` (images des messages) · `onboarding.js` · `palette.js`
 (Ctrl+K). Aussi `index.html`, `style.css`, `icons.js`.
 
 ### e2e/
 `harness.mjs` lance l'exe debug avec dossiers de données temporaires et le pilote par le port de débogage WebView2.
-Fichiers : `nelcode`, `ux`, `agent`, `explorer`, `remote`, `server`, `usage`, `images`, `context`, `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
+Fichiers : `nelcode`, `ux`, `agent`, `explorer`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
 `gguf` et `gpu` (ignorés sans modèle / sans carte NVIDIA).
 
 ## Tests

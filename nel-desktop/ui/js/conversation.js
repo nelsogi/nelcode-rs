@@ -13,6 +13,7 @@ import { projectName, rememberProject, renderProject, sameProject, sessionsByPro
 import { refreshFiles } from './files.js';
 import { autoSummarize, summaryEl } from './summary.js';
 import { addUsage, afterPaid, budgetOk, renderUsageChip } from './usage.js';
+import { closeOtherMcp, mcpOff, mcpStarted, refreshMcp } from './mcp.js';
 import { addPaths, attached, giveBack, imageLines, imageTokens, isImagePath, messageImages, pendingOf, refreshVision, renderAttach, takePending, vision } from './images.js';
 
 export const TITLE_LENGTH = 40;
@@ -336,7 +337,9 @@ export async function startGen(s, g) {
       // Le mode Agent : seulement un modèle distant qui gère les outils ; jamais un .nelmodel ni un GGUF local.
       if (!r) throw new Error(AGENT_LOCAL);
       if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
-      await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, images: g.images ?? null, dir: s.workingDirectory, options: genOptions() });
+      // Les serveurs MCP démarrent pour cette conversation (arrêtés quand on en ouvre une autre).
+      mcpStarted(s);
+      await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, images: g.images ?? null, dir: s.workingDirectory, options: genOptions(), session: s.id, mcpOff: mcpOff(s) });
     } else if (r) await invoke('remote_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, images: g.images ?? null, options: genOptions(), project: s.workingDirectory || '' });
     else await invoke('generate', { history: g.history, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
     return true;
@@ -613,7 +616,7 @@ export async function submitEdit(index, text) {
 
 export function renderAll() {
   renderSessions(); renderModels(); renderHeader(); renderMessages(); renderComposer(); renderStatus(); refreshContext(); renderPlan(); renderAttach();
-  renderProject(); refreshFiles();
+  renderProject(); refreshFiles(); closeOtherMcp();
 }
 
 export function renderSessions() {
@@ -678,6 +681,7 @@ export function renderHeader() {
   $('transp-btn').classList.toggle('on', !!S.settings.transparency);
   $('agent-btn').classList.toggle('on', !!s.agent);
   refreshNelcode();
+  refreshMcp();
   renderPlan();
 }
 
@@ -823,12 +827,15 @@ export function refreshContext() {
       // Pas de tokenizer pour un modèle distant : environ 4 caractères par token, et l'estimation de chaque image.
       const chars = historyOf(S.current).flat().join('').length + (await expandMentions($('input').value, true)).length;
       const [pics, count, detail] = vision().ok ? imageTokens() : [0, 0, []];
-      const n = Math.ceil(chars / 4) + pics, ctx = S.model.blockSize;
+      // Mode Agent : les définitions d'outils (Nel Code et serveurs MCP activés) partent à chaque tour.
+      const tools = S.current.agent ? (S.mcpCtx?.total ?? 0) : 0;
+      const n = Math.ceil(chars / 4) + pics + tools, ctx = S.model.blockSize;
       S.context = null;
       fill.style.width = ctx ? Math.min(100, 100 * n / ctx) + '%' : '0';
       fill.className = ctx && n > ctx ? 'full' : ctx && n > 0.8 * ctx ? 'warn' : '';
-      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (count ? ` · ${count} image${count > 1 ? 's' : ''} ≈ ${pics} (estimation)` : '') + (summaryOf(S.current) ? ' · résumé' : '');
-      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.' + (count ? '\nImages (estimation, environ largeur × hauteur / 750) :\n' + detail.join('\n') : '') + summaryNote();
+      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (count ? ` · ${count} image${count > 1 ? 's' : ''} ≈ ${pics} (estimation)` : '') + (tools ? ` · outils ≈ ${tools}` : '') + (summaryOf(S.current) ? ' · résumé' : '');
+      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.' + (count ? '\nImages (estimation, environ largeur × hauteur / 750) :\n' + detail.join('\n') : '')
+        + (tools ? `\nDéfinitions d'outils du mode Agent : ≈ ${tools} tokens (Nel Code ≈ ${S.mcpCtx.builtin}${S.mcpCtx.servers.filter((x) => x.on).map((x) => `, MCP ${x.name} ≈ ${x.tokens}`).join('')})` : '') + summaryNote();
       return;
     }
     try {

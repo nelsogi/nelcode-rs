@@ -263,6 +263,42 @@ supprimés. Sans dépôt git, pas de point (pas de `git init` automatique).
   (avec la consigne de ne pas y obéir), et seul le modèle peut demander un outil. Une écriture attend toujours ton accord,
   quoi que dise un fichier.
 
+### Serveurs MCP
+
+En mode Agent, le modèle peut aussi utiliser les outils de **serveurs MCP** (Model Context Protocol), nommés
+`mcp__serveur__outil`. Deux transports : **stdio** (un programme que Nel Code lance, comme
+`npx -y @modelcontextprotocol/server-filesystem C:\docs`) et **Streamable HTTP** (une adresse).
+
+- **Serveurs globaux** : `%APPDATA%\NelCode\mcp.json`, au format `mcpServers` de Claude Desktop. Les ajouter par la
+  **page MCP** (Réglages → Ouvrir la page MCP, ou `/mcp`), ou **importer** ceux de Claude Desktop ou d'un `.mcp.json`
+  (chaque serveur est vérifié).
+- **Serveurs de projet** : `.nelcode/mcp.json` dans le dossier de travail. Un serveur de projet ne démarre **jamais**
+  sans ton accord : Nel Code montre la commande exacte, les arguments et le dossier, avec Autoriser / Refuser ; l'accord
+  vaut pour ce dossier et cette configuration précise, et il est redemandé si elle change.
+- **Secrets** : les valeurs des variables d'environnement et des en-têtes sont rangées dans le Gestionnaire
+  d'identification de Windows, jamais dans `mcp.json` (`secretEnv` et `secretHeaders` n'y gardent que les noms). Un
+  serveur ne reçoit pas les variables secrètes de Nel Code (clés API…).
+- **Chaque appel** montre le serveur, l'outil et ses arguments : Autoriser, **Toujours autoriser cet outil** (gardé pour
+  ce serveur et cette configuration) ou Refuser. Les résultats sont limités (20 000 octets) et donnés au modèle comme
+  des données, jamais comme des instructions. Les explorateurs n'ont pas les outils MCP.
+- La puce **MCP** de l'en-tête active ou désactive chaque serveur pour la conversation : les définitions d'outils
+  comptent dans la barre de contexte, inutile d'en envoyer des dizaines.
+- Un serveur stdio et ses processus enfants s'arrêtent avec la conversation (quand tu en ouvres une autre) et avec Nel
+  Code ; son stderr est dans `%APPDATA%\NelCode\logs\mcp\`. Délais maximaux dans les Réglages (démarrage 30 s, appel
+  60 s). La page MCP montre l'état, les outils, les erreurs et le journal de chaque serveur, avec Redémarrer et Tester.
+
+Exemple de `mcp.json` :
+
+```json
+{ "mcpServers": {
+  "fichiers": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\docs"] },
+  "distant": { "type": "http", "url": "https://exemple.org/mcp", "secretHeaders": ["Authorization"] }
+} }
+```
+
+**Limites de cette version** : pas d'OAuth pour les serveurs distants (seulement des en-têtes fixes), pas de ressources
+ni de prompts MCP (seulement les outils), pas de l'ancien transport SSE.
+
 ### Fichiers du dossier de travail (@)
 
 Tape `@` dans la saisie : les fichiers du dossier de travail s'affichent (sans les dossiers cachés, `node_modules`,
@@ -459,6 +495,9 @@ Dans `%APPDATA%\NelCode`, comme pour Nel Code C# : les deux versions partagent l
 (`sessions\`, un fichier JSON chacune, et les images d'une conversation dans `sessions\<id>\`) et `settings.json`. Les modèles installés par la version C# (poids `weights.dat`)
 se chargent aussi.
 
+Propres à cette version : `mcp.json` (serveurs MCP globaux, sans valeur secrète), `mcp-state.json` (accords des serveurs
+de projet, outils toujours autorisés, dernières listes d'outils) et `logs\mcp\` (le stderr de chaque serveur MCP).
+
 ## Compiler depuis les sources
 
 Il faut :
@@ -513,6 +552,9 @@ sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Acc
 annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart, fichiers protégés (lecture et
 recherche, motifs des réglages), noms réservés de Windows, NELCODE.md, plan et commandes (shells refusés, sortie en
 direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants), et le fournisseur Claude.
+`e2e/mcp.test.mjs` couvre le client MCP avec un faux serveur MCP en Node (`e2e/fake-mcp/server.mjs`, stdio et HTTP) :
+poignée de main, appel validé, refus, « toujours autoriser », liste changée, délai, explorateurs, serveurs désactivés
+et contexte, en-têtes et variables secrets, page MCP, arrêt des processus, serveur de projet non autorisé, import.
 `e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
 petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et la taille du texte.
 `e2e/usage.test.mjs` couvre le suivi (ligne sans texte, coût, en-tête, mode Agent, budget à 80 et 100 %, page Suivi,
@@ -577,6 +619,7 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `state.js` | L'état partagé : `S` (conversations, modèles, réponse en cours) et `UI` (petits états de l'interface) |
 | `conversation.js` | Conversations, modèles, fichiers `@`, génération, réflexion, transparence, comparaison, affichage, saisie |
 | `agent.js` | Mode Agent et Claude Agent : étapes, plan, NELCODE.md |
+| `mcp.js` | Serveurs MCP : page MCP, accord des serveurs de projet, puce et contexte de la conversation |
 | `settings.js` | Réglages, mises à jour, serveur local, calcul (GPU, test de vitesse), taille du texte |
 | `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |
 | `palette.js` | Commandes `/`, palette Ctrl+K, aide et raccourcis |

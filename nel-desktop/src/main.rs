@@ -12,6 +12,7 @@ mod delayload;
 mod gpu;
 mod images;
 mod log;
+mod mcp;
 mod remote;
 mod server;
 mod store;
@@ -60,6 +61,8 @@ struct AppState {
     remote_cancel: Mutex<Option<Arc<tokio::sync::Notify>>>,
     /// Mode Agent : les écritures qui attendent l'accord de l'utilisateur.
     approvals: agent::Approvals,
+    /// Les serveurs MCP lancés, par conversation.
+    mcp: mcp::Manager,
 }
 
 /// Le GPU, initialisé au premier appel depuis le pack (%APPDATA%\NelCode\gpu).
@@ -843,7 +846,7 @@ fn set_model_vision(provider: String, model: String, value: Option<bool>) -> Res
 /// un point de restauration est pris avant (checkpoint : { id, dir }) ; sans git ou en cas d'échec, la demande part sans.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, images: Option<images::Attached>, dir: String, options: GenOptions) -> Result<()> {
+fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, images: Option<images::Attached>, dir: String, options: GenOptions, session: Option<String>, mcp_off: Option<Vec<String>>) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
         return Err("une réponse est déjà en cours".into());
     }
@@ -859,7 +862,8 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
             log::error(&format!("point de restauration impossible : {e}"));
             None
         });
-        let mut done = agent::run(&app, &provider, &model, &history, &message, &images.unwrap_or_default(), &dir, (s.temperature, s.top_p), max_turns, cancel).await;
+        let (session, off) = (session.unwrap_or_default(), mcp_off.unwrap_or_default());
+        let mut done = agent::run(&app, &provider, &model, &history, &message, &images.unwrap_or_default(), &dir, (s.temperature, s.top_p), max_turns, (&session, &off), cancel).await;
         let (input, output) = (done["promptTokens"].as_u64().unwrap_or(0), done["tokens"].as_u64().unwrap_or(0));
         if input + output > 0 {
             done["usage"] = usage::record(usage::Rec {
@@ -884,10 +888,11 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
     Ok(())
 }
 
-/// La réponse de l'utilisateur à une écriture : "accept", "reject" ou "accept_all" (pour le reste de la demande).
+/// La réponse de l'utilisateur à une étape : "accept", "reject", "accept_all" (écritures, pour le reste de la
+/// demande) ou "always" (outil MCP : toujours autorisé).
 #[tauri::command]
 fn agent_decide(state: State<AppState>, request: String, step: String, decision: String) -> Result<()> {
-    if !["accept", "reject", "accept_all"].contains(&decision.as_str()) {
+    if !["accept", "reject", "accept_all", "always"].contains(&decision.as_str()) {
         return Err(format!("décision inconnue : {decision}"));
     }
     let tx = state.approvals.lock().unwrap().remove(&format!("{request}/{step}")).ok_or("cette écriture n'attend plus de réponse")?;
@@ -986,6 +991,113 @@ fn claude_agent_send(app: AppHandle, state: State<AppState>, session_id: Option<
         let _ = app.emit("gen-done", done);
     });
     Ok(())
+}
+
+// --- MCP (mcp.rs) -------------------------------------------------------------------------------------------
+
+/// La page MCP : serveurs globaux et du projet `dir` (configuration sans secret, état, outils, accord), erreurs.
+#[tauri::command]
+fn mcp_list(app: AppHandle, dir: Option<String>) -> Value {
+    mcp::list(&app, dir.as_deref())
+}
+
+/// Les définitions d'outils comptées dans la barre de contexte du mode Agent (`off` : serveurs désactivés pour la
+/// conversation).
+#[tauri::command]
+fn mcp_context(dir: Option<String>, off: Option<Vec<String>>) -> Value {
+    mcp::context(dir.as_deref(), &off.unwrap_or_default(), store::load_settings()["explorerMax"].as_u64().unwrap_or(5) > 0)
+}
+
+/// Ajoute un serveur global ; `secrets` : { env: { NOM: valeur }, headers: { Nom: valeur } } (Gestionnaire
+/// d'identification).
+#[tauri::command]
+fn mcp_add_server(name: String, def: Value, secrets: Option<Value>) -> Result<()> {
+    mcp::add_global(&name, def, &secrets.unwrap_or(Value::Null))
+}
+
+#[tauri::command]
+fn mcp_delete_server(app: AppHandle, name: String) -> Result<()> {
+    mcp::delete_global(&app, &name)
+}
+
+#[tauri::command]
+fn mcp_set_disabled(app: AppHandle, name: String, disabled: bool) -> Result<()> {
+    mcp::set_disabled(&app, &name, disabled)
+}
+
+/// La valeur secrète d'une variable (`kind` "env") ou d'un en-tête ("header") d'un serveur (vide : retirée).
+#[tauri::command]
+fn mcp_set_secret(dir: Option<String>, key: String, kind: String, name: String, value: String) -> Result<()> {
+    let s = mcp::server(dir.as_deref(), &key)?;
+    let listed = if kind == "env" { &s.secret_env } else { &s.secret_headers };
+    if !listed.contains(&name) {
+        return Err(format!("« {name} » n'est pas une valeur secrète de ce serveur"));
+    }
+    mcp::set_secret(&key, &kind, &name, &value)
+}
+
+/// Autorise ou refuse un serveur de projet, pour la configuration montrée (`hash` : si elle a changé depuis, refusé).
+#[tauri::command]
+fn mcp_approve(app: AppHandle, dir: String, key: String, hash: String, allow: bool) -> Result<()> {
+    let p = mcp::prepared(Some(&dir), &key)?;
+    if p.hash != hash {
+        return Err("la configuration de ce serveur a changé depuis : relis-la avant de décider".into());
+    }
+    mcp::set_approval(&p, allow)?;
+    if !allow {
+        app.state::<AppState>().mcp.stop_key(&key);
+    }
+    Ok(())
+}
+
+/// « Tester » : démarre le serveur à part, lit ses outils, l'arrête.
+#[tauri::command]
+async fn mcp_test(app: AppHandle, dir: Option<String>, key: String) -> Result<Value> {
+    let p = mcp::prepared(dir.as_deref(), &key)?;
+    app.state::<AppState>().mcp.test(&app, &p, mcp::start_timeout()).await
+}
+
+/// « Redémarrer » : arrête le serveur partout, puis le relance pour la conversation `session` s'il y tournait.
+#[tauri::command]
+async fn mcp_restart(app: AppHandle, dir: Option<String>, key: String, session: Option<String>) -> Result<Value> {
+    let p = mcp::prepared(dir.as_deref(), &key)?;
+    let m = &app.state::<AppState>().mcp;
+    let sessions = m.stop_key(&key);
+    if let Some(s) = session.filter(|s| sessions.contains(s)) {
+        m.ensure(&app, &s, &p, mcp::start_timeout()).await?;
+    }
+    Ok(m.status(&key))
+}
+
+/// La fin du journal (stderr) d'un serveur.
+#[tauri::command]
+fn mcp_log(key: String) -> String {
+    mcp::log_tail(&key, 20_000)
+}
+
+/// Une conversation fermée (une autre est ouverte, ou elle est supprimée) : ses serveurs MCP sont arrêtés.
+#[tauri::command]
+fn mcp_close_session(state: State<AppState>, session: String) {
+    state.mcp.close_session(&session);
+}
+
+/// Importe une configuration de Claude Desktop ou un .mcp.json (chaque serveur vérifié).
+#[tauri::command]
+fn mcp_import(path: String) -> Result<Value> {
+    mcp::import(std::path::Path::new(&path))
+}
+
+/// La configuration de Claude Desktop de ce PC, si elle existe.
+#[tauri::command]
+fn mcp_claude_desktop() -> Option<String> {
+    let p = mcp::claude_desktop_config();
+    p.is_file().then(|| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn pick_mcp_config(app: AppHandle) -> Option<String> {
+    let file = app.dialog().file().set_title("Importer des serveurs MCP").add_filter("Configuration MCP (.json)", &["json"]).blocking_pick_file()?;
+    Some(file.into_path().ok()?.to_string_lossy().into_owned())
 }
 
 // --- Suivi (usage.jsonl) ------------------------------------------------------------------------------------
@@ -1138,7 +1250,27 @@ fn main() {
             image_delete,
             model_vision,
             set_model_vision,
+            mcp_list,
+            mcp_context,
+            mcp_add_server,
+            mcp_delete_server,
+            mcp_set_disabled,
+            mcp_set_secret,
+            mcp_approve,
+            mcp_test,
+            mcp_restart,
+            mcp_log,
+            mcp_close_session,
+            mcp_import,
+            mcp_claude_desktop,
+            pick_mcp_config,
         ])
-        .run(tauri::generate_context!())
-        .expect("impossible de lancer Nel Code");
+        .build(tauri::generate_context!())
+        .expect("impossible de lancer Nel Code")
+        .run(|app, event| {
+            // Les serveurs MCP s'arrêtent avec l'application (leurs Job Objects tueraient de toute façon les processus).
+            if let tauri::RunEvent::Exit = event {
+                app.state::<AppState>().mcp.stop_all();
+            }
+        });
 }

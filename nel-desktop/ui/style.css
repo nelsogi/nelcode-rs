@@ -631,3 +631,32 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .field textarea.prices { width: 100%; resize: vertical; font: 12px/1.5 var(--mono); }
 .field .budget { width: 110px; }
 @media (max-width: 640px) { .usage .tiles { grid-template-columns: 1fr; } }
+
+/* --- Serveurs MCP : page, accord d'un serveur de projet, choix par conversation --- */
+.dialog:has(.mcp-page) { width: min(720px, 94vw); }
+.mcp-page { display: flex; flex-direction: column; gap: 10px; }
+.mcp-page .row-btns, .mcp-form .row-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.mcp-page .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.mcp-server { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.mcp-server[data-state="error"] { border-color: var(--warning); }
+.mcp-server > .row { display: flex; align-items: center; gap: 8px; }
+.mcp-server .meta { font: 12px var(--mono); color: var(--faint); flex: 1; }
+.mcp-state { font: 12px var(--mono); color: var(--faint); }
+.mcp-state.running { color: var(--success); }
+.mcp-state.error { color: var(--warning); }
+.mcp-what { font: 12px var(--mono); color: var(--text-2); word-break: break-all; user-select: text; }
+.mcp-approval { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.mcp-approval[data-approval="pending"] span, .mcp-approval[data-approval="deny"] span { color: var(--warning); }
+.mcp-secret .name { font: 12px var(--mono); min-width: 160px; align-self: center; }
+.mcp-secret .key { flex: 1; min-width: 0; }
+.mcp-tools ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); }
+.mcp-log { max-height: 220px; overflow: auto; font: 11.5px var(--mono); background: var(--surface-2); border-radius: 8px; padding: 8px; white-space: pre-wrap; user-select: text; }
+.mcp-form { display: flex; flex-direction: column; gap: 6px; border: 1px dashed var(--border-strong); border-radius: 10px; padding: 10px; }
+.mcp-form .mcp-stdio, .mcp-form .mcp-http { display: flex; flex-direction: column; gap: 6px; }
+.mcp-form [hidden] { display: none; }
+.mcp-launch { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; font-size: 13px; }
+.mcp-launch dt { color: var(--faint); }
+.mcp-launch dd { margin: 0; font: 12px var(--mono); word-break: break-all; user-select: text; }
+.mcp-launch .args { margin: 0; padding-left: 18px; }
+.mcp-choice { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.mcp-choice .meta { font: 12px var(--mono); color: var(--faint); margin-left: auto; }

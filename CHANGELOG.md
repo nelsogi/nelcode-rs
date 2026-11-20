@@ -140,6 +140,41 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
     quand s'en passer (petite tâche, fichier déjà connu).
   - Tests : outils et consignes, réglages (unitaires) ; parallélisme, regroupement, limites, refus d'écriture et des
     fichiers protégés, Stop, modèle des explorateurs, suivi et budget (`e2e/explorer.test.mjs`, faux serveur à outils).
+- **Client MCP** (Model Context Protocol) : les outils de serveurs MCP sont proposés au modèle en mode Agent, nommés
+  `mcp__serveur__outil`. Implémentation minimale du protocole 2025-06-18 (le SDK Rust officiel, rmcp 3, négocie un
+  protocole sans `initialize` et lance ses processus lui-même, sans Job Object) : `initialize`, `tools/list` (par
+  pages), `tools/call`, `notifications/tools/list_changed` (liste relue avant le tour suivant), `ping`, annulation.
+  - **Transports** : stdio (un programme lancé sans fenêtre, cherché dans le PATH avec .exe, .cmd, .bat) et
+    Streamable HTTP (réponse JSON ou SSE, session `Mcp-Session-Id`, flux de notifications). **Délais maximaux**
+    réglables : démarrage (lancement, poignée de main et liste, 30 s) et appel d'outil (60 s, puis
+    `notifications/cancelled`).
+  - Un processus stdio et **tous ses enfants** sont dans un Job Object : arrêtés à la fermeture de la conversation
+    (une autre ouverte, ou supprimée), à la fermeture de l'application, quand le serveur est désactivé pour la
+    conversation ou que son accord est retiré. Son **stderr** va dans `logs\mcp\<serveur>.log`.
+  - **Configuration** : serveurs globaux (`%APPDATA%\NelCode\mcp.json`) et serveurs de projet (`.nelcode/mcp.json` du
+    dossier de travail), au format `mcpServers` de Claude Desktop. **Import** de la configuration de Claude Desktop ou
+    d'un `.mcp.json`, chaque serveur vérifié (nom, transport, commande ou adresse, en-têtes ; ancien SSE refusé ; nom
+    déjà pris refusé).
+  - **Serveur de projet** : il ne démarre **jamais** sans ton accord. La première fois, Nel Code montre la commande
+    exacte (programme trouvé), les arguments et le dossier (ou l'adresse), avec Autoriser / Refuser ; la réponse est
+    gardée pour ce dossier et cette configuration précise (empreinte SHA-256) : si elle change, l'accord est redemandé.
+  - **Secrets** : les valeurs des variables (`secretEnv`) et des en-têtes (`secretHeaders`) sont dans le Gestionnaire
+    d'identification, jamais dans `mcp.json` (à l'import aussi). Un processus MCP ne reçoit **pas** les variables
+    secrètes de Nel Code (KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL, AUTH, `ANTHROPIC_*`, `OPENAI_*`).
+  - **Validation** : chaque appel montre le serveur, l'outil et ses arguments, avec Autoriser / Toujours autoriser cet
+    outil / Refuser (« toujours » est gardé pour ce serveur et cette configuration). Les **explorateurs n'y ont pas
+    accès**. Les résultats sont **limités** (20 000 octets) et rendus au modèle encadrés comme des **données**, jamais
+    des instructions ; le message système le rappelle.
+  - **Contexte** : les définitions d'outils (de Nel Code et des serveurs activés) comptent dans la barre de contexte du
+    mode Agent. La puce **MCP** de l'en-tête active ou désactive chaque serveur pour la conversation.
+  - **Page MCP** (Réglages → Ouvrir la page MCP, ou `/mcp`) : état de chaque serveur, outils, erreurs, journal,
+    Redémarrer, Tester, ajout d'un serveur global, valeurs secrètes, activer / désactiver, supprimer, accords des
+    serveurs du projet. Les appels MCP s'affichent comme des étapes de l'agent.
+  - Pas dans cette version : OAuth pour les serveurs distants (en-têtes fixes seulement), ressources et prompts MCP.
+  - Tests : configuration, empreinte, noms d'outils et limites, résultats encadrés, variables, SSE, programmes du
+    projet (unitaires) ; poignée de main, appel, refus, « toujours », liste changée, délai, explorateurs, serveurs
+    désactivés et contexte, HTTP, secrets, page MCP, arrêt avec la conversation et l'application, serveur de projet non
+    autorisé puis nouvel accord, import (`e2e/mcp.test.mjs`, faux serveur MCP en Node `e2e/fake-mcp/server.mjs`).
 
 ### Modifié
 
@@ -170,6 +205,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - Fin d'une réponse : l'état « en cours » n'est levé qu'une fois la réponse enregistrée et affichée (avant, il l'était
   avant l'enregistrement, et la réponse ou son coût apparaissaient un instant plus tard ; deux tests de l'interface
   échouaient parfois pour cette raison).
+- Démarrage : la conversation de départ n'est créée qu'une fois les modèles, le modèle actif et les fournisseurs lus,
+  juste avant le premier affichage (avant, un test de l'interface pouvait lire la barre d'état encore vide).
 - Les tests de l'interface n'utilisent plus les vraies clés du Gestionnaire d'identification (espace à part pour les
   tests), et l'effacement d'un dossier de test bloqué n'attend plus 4 minutes.
 

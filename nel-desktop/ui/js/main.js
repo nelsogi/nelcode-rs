@@ -14,6 +14,7 @@ import { refreshFiles, toggleFiles } from './files.js';
 import { maybeOnboard } from './onboarding.js';
 import * as USAGE from './usage.js';
 import * as IMG from './images.js';
+import * as MCP from './mcp.js';
 
 listen('catalog-progress', (e) => { if (e.payload.tag === C.name) { Object.assign(C, e.payload); catalogProgress(); } });
 
@@ -143,6 +144,8 @@ $('transp-btn').onclick = toggleTransparency;
 
 $('agent-btn').onclick = toggleAgent;
 
+$('mcp-chip').onclick = MCP.chooseServers;
+
 $('nelcode-chip').onclick = nelcodeChip;
 
 $('palette-btn').onclick = openPalette;
@@ -189,7 +192,10 @@ document.addEventListener('keydown', (e) => {
 listen('gen-token', (e) => onToken(e.payload));
 
 // Après l'enregistrement de la réponse : une mise à jour qui attendait peut s'installer.
-listen('gen-done', async (e) => { await onDone(e.payload); U.idle?.(); });
+listen('gen-done', async (e) => { await onDone(e.payload); U.idle?.(); MCP.closeOtherMcp(); });
+
+// Un serveur MCP a changé d'état (démarré, arrêté, liste d'outils) : la page MCP ouverte suit.
+listen('mcp-changed', () => UI.mcpRedraw?.());
 
 listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payload; renderStatus(); } });
 
@@ -239,11 +245,12 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
   applyTheme();
   applyTextSize();
   await refreshModels();
-  S.current = newSession();
   const st = await invoke('model_status');
   Object.assign(S.model, { name: st.name, loading: st.loading, blockSize: st.blockSize, device: st.device });
   S.server.port = (await invoke('server_status')).port;
   S.providers = await invoke('list_providers');
+  // La conversation n'existe qu'une fois tout chargé : l'interface (et les tests qui l'attendent) est alors complète.
+  S.current = newSession();
   renderAll();
   $('input').focus();
   // Premier lancement : l'assistant (s'il n'y a encore ni modèle, ni fournisseur, ni conversation).
@@ -264,4 +271,4 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 })().catch((e) => toast('Démarrage : ' + errText(e), 'error', 0));
 
 // Les tests de l'interface (e2e/) lisent l'état et appellent ces fonctions depuis la page.
-Object.assign(window, { S, F, C, USAGE, IMG, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });
+Object.assign(window, { S, F, C, USAGE, IMG, MCP, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });

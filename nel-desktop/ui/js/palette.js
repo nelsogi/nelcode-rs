@@ -14,6 +14,7 @@ import { projectName, recentProjects, selectProject } from './projects.js';
 import { toggleFiles } from './files.js';
 import { openWizard } from './onboarding.js';
 import { openUsage } from './usage.js';
+import { openMcp } from './mcp.js';
 
 export const COMMANDS = [
   { name: 'new', desc: 'Nouvelle conversation', run: () => startNew() },
@@ -24,6 +25,7 @@ export const COMMANDS = [
   { name: 'compact', args: '[consigne]', desc: 'Résumer les anciens échanges (les 4 derniers restent tels quels) ; ex. /compact garde surtout les tests', run: (a) => compactNow(a) },
   { name: 'commands', desc: 'Commandes personnalisées (.md) : liste, et création', run: () => showCommands() },
   { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
+  { name: 'mcp', desc: 'Serveurs MCP : état, outils, journal, ajout, import (Claude Desktop, .mcp.json)', run: () => openMcp() },
   { name: 'agent', desc: 'Activer / désactiver le mode Agent (modèle distant qui gère les outils)', run: () => toggleAgent() },
   { name: 'model', args: '<nom>', desc: 'Charger un modèle installé', run: (a) => a ? loadModel(a) : toast('Usage : /model <nom>', 'warning') },
   { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.length ? S.models.map((m) => h('div', { class: 'line' }, m.name === S.model.name ? icon('check') : h('span', { class: 'pad' }), `${m.name} — ${sizeText(m.bytes)}`)) : 'Aucun modèle.', '', 8000) },
