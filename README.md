@@ -250,8 +250,8 @@ s'affichent dans l'étape « Sous-agent : … » qui l'a lancé (avec leur nombr
 
 - **Clé API seulement** : dans **Réglages → Claude Agent**, une clé API de la Console Anthropic, rangée dans le
   Gestionnaire d'identification et passée à l'outil comme `ANTHROPIC_API_KEY`. Pas de connexion à un compte Claude.ai.
-  Les autres variables d'environnement qui contiennent `KEY`, `TOKEN` ou `SECRET`, les `ANTHROPIC_*` (dont
-  `ANTHROPIC_BASE_URL`) et les `CLAUDE_CODE_USE_*` (autres authentifications) ne sont pas transmises.
+  Les autres variables secrètes (voir [Sécurité](#sécurité) : `ANTHROPIC_BASE_URL` comprise) et les
+  `CLAUDE_CODE_USE_*` (autres authentifications) ne sont pas transmises.
 - **Mode de permission** : par défaut, rien d'automatique (`--permission-mode default` : sans personne pour répondre,
   tout ce qui demande un accord est refusé et l'étape s'affiche « refusée ») ; en option, **accepter les
   modifications de fichiers** (`acceptEdits`). **Outils autorisés** (`--allowedTools`), un par ligne :
@@ -315,8 +315,8 @@ très longue sortie est coupé). Chaque commande demande **Lancer** / **Refuser*
 autorisées sans confirmation** (vide par défaut ; par exemple `dotnet build` et `dotnet test`, qui autorisent aussi
 `dotnet build src/App.csproj`). La liste ne vaut que pour un programme donné par son nom (cherché dans le PATH) : un
 programme du projet (`outils/dotnet.exe`) demande toujours Lancer / Refuser. Au-delà de la durée maximale (2 min par défaut, réglable), ou sur **Stop**, la commande
-et **tous ses processus enfants** sont tués (Job Object Windows). Les variables d'environnement dont le nom contient
-`KEY`, `TOKEN` ou `SECRET` ne lui sont pas transmises.
+et **tous ses processus enfants** sont tués (Job Object Windows). Les variables d'environnement secrètes (voir
+[Sécurité](#sécurité)) ne lui sont pas transmises.
 
 **Écritures** : avant chaque écriture, Nel Code montre le diff (lignes ajoutées en vert, retirées en rouge) avec
 **Accepter**, **Refuser** et **Accepter tout pour cette demande**. Aucun fichier n'est modifié sans accord. Chaque
@@ -469,7 +469,8 @@ serveur compatible avec l'API OpenAI. Il est **désactivé par défaut**.
 
 1. **Réglages → Serveur local** : coche « Activer le serveur », choisis le port (8765 par défaut), **Enregistrer**.
    La barre d'état affiche `API :8765` tant qu'il tourne (`API · répond…` pendant une réponse).
-2. Copie la **clé d'accès** (bouton Copier). **Nouvelle clé** la remplace : l'ancienne est refusée tout de suite.
+2. Copie la **clé d'accès** (bouton Copier ; elle est rangée dans le trousseau du système). **Nouvelle clé** la
+   remplace : l'ancienne est refusée tout de suite.
 
 Le serveur n'écoute que sur `127.0.0.1` (jamais sur le réseau), et refuse toute requête sans la clé
 (`Authorization: Bearer <clé>`). Il propose :
@@ -580,7 +581,7 @@ copie la version, le système, le modèle actif et les 50 dernières lignes du j
 
 ### Où sont les données
 
-| Système | Dossier des données | Clés API (fournisseurs, MCP, Claude Agent) |
+| Système | Dossier des données | Clés (fournisseurs, MCP, Claude Agent, serveur local) |
 | --- | --- | --- |
 | Windows | `%APPDATA%\NelCode` | Gestionnaire d'identification de Windows |
 | macOS | `~/Library/Application Support/NelCode` | Trousseau de macOS |
@@ -607,9 +608,14 @@ d'une relecture complète du code ; le détail est dans le [CHANGELOG](CHANGELOG
 - **Mode Agent** : tout reste dans le dossier de travail (`..`, chemins absolus, flux NTFS, noms réservés de Windows,
   liens symboliques et jonctions qui en sortent : refusés) ; chaque écriture attend ton accord ; les **fichiers
   protégés** ne sont lus ou écrits qu'avec une confirmation à chaque fois ; les commandes tournent **sans shell**, avec
-  ton accord (sauf liste autorisée, par nom de programme), sans les variables `KEY`, `TOKEN` et `SECRET`, et sont tuées
-  avec tous leurs enfants au délai ou sur Stop. Le contenu d'un fichier ou d'un outil n'est jamais une instruction
-  pour Nel Code.
+  ton accord (sauf liste autorisée, par nom de programme), et sont tuées avec tous leurs enfants au délai ou sur Stop.
+  Le contenu d'un fichier ou d'un outil n'est jamais une instruction pour Nel Code.
+- **Variables secrètes** : une seule liste pour les commandes de l'agent, les serveurs MCP et Claude Agent. Une
+  variable de Nel Code dont le nom contient `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`,
+  `CREDENTIAL` ou `PRIVATE`, ou commence par `ANTHROPIC_` ou `OPENAI_`, ne leur est jamais transmise.
+- **Fournisseurs et serveurs MCP distants** : une redirection n'est suivie que vers la même origine (même schéma, hôte
+  et port) ; vers un autre hôte, la requête s'arrête en erreur et la clé (`Authorization`, `x-api-key`, en-têtes
+  secrets) n'y part jamais.
 - **Explorateurs** : lecture seule, vérifiée par Nel Code (pas seulement demandée au modèle) ; ni fichiers protégés, ni
   outils MCP.
 - **MCP** : un serveur de projet (`.nelcode/mcp.json`) ne démarre jamais sans ton accord, redemandé si sa configuration
@@ -620,7 +626,8 @@ d'une relecture complète du code ; le détail est dans le [CHANGELOG](CHANGELOG
   du projet (`.claude/settings.json`) ne sont pas lus sans ton choix.
 - **Points de restauration** : les fichiers protégés n'entrent jamais dans git ; git ne lance aucun programme configuré
   par le dépôt.
-- **Serveur local** : désactivé par défaut, sur `127.0.0.1` seulement, avec une clé d'accès vérifiée à chaque requête.
+- **Serveur local** : désactivé par défaut, sur `127.0.0.1` seulement, avec une clé d'accès vérifiée à chaque requête
+  et rangée dans le trousseau (celle qu'une version d'avant gardait dans `settings.json` y est déplacée au démarrage).
 - **Images** : réencodées, sans aucune métadonnée (EXIF, GPS…).
 - **Téléchargements** : mises à jour signées (la signature est vérifiée avant l'installation), pack GPU et modèles du
   catalogue vérifiés par SHA-256 ; un `.nelmodel` est extrait fichier par fichier (noms exacts, tailles limitées) et
@@ -634,9 +641,8 @@ d'une relecture complète du code ; le détail est dans le [CHANGELOG](CHANGELOG
   des projets de confiance. Même chose pour un serveur MCP autorisé (l'accord porte sur sa configuration et le chemin du
   programme, pas sur le contenu du script qu'il lance), et pour Claude Agent en mode `acceptEdits`.
 - Un programme qui tourne déjà sous ton compte peut lire tes données et, souvent, ton trousseau.
-- Les variables d'environnement passées aux commandes de l'agent ne sont filtrées que par leur nom (`KEY`, `TOKEN`,
-  `SECRET`) : `DB_PASSWORD` passe (les serveurs MCP, eux, ne reçoivent pas non plus `PASSWORD`, `CREDENTIAL`, `AUTH`…).
-- La clé d'accès du serveur local est dans `settings.json` (elle ne sert qu'en local).
+- Les variables secrètes sont reconnues à leur nom : une variable au nom ordinaire qui contient un secret (`DB_URL`
+  avec un mot de passe dedans) est transmise.
 - Un lien physique (hard link) déjà présent dans le dossier de travail vers un fichier extérieur n'est pas détecté (les
   outils de l'agent ne peuvent pas en créer).
 

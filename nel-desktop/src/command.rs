@@ -1,8 +1,8 @@
 //! Mode Agent : les commandes (outil `run_command`). Un programme et ses arguments, lancé **sans shell** (jamais
 //! cmd /c, PowerShell, bash ; pas de `|`, `>`, `&&`), dans le dossier de travail, avec un délai maximal. Le processus
 //! et tous ses enfants sont dans un Job Object (Windows) ou un groupe de processus (Linux, macOS) : Stop, le délai ou
-//! la fin de la commande les tuent tous. Les variables d'environnement dont le nom contient KEY, TOKEN ou SECRET ne
-//! sont pas transmises.
+//! la fin de la commande les tuent tous. Les variables d'environnement secrètes (`hidden_var` : KEY, TOKEN, PASSWORD…)
+//! ne sont pas transmises.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -79,10 +79,16 @@ pub fn allowed(program: &str, args: &[String], list: &[String]) -> bool {
     })
 }
 
-/// Une variable qui ne doit pas être transmise (son nom contient KEY, TOKEN ou SECRET).
+/// Les mots qui font d'une variable d'environnement un secret, n'importe où dans son nom.
+pub const SECRET_WORDS: [&str; 9] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "PWD", "AUTH", "CREDENTIAL", "PRIVATE"];
+/// Les préfixes des variables des fournisseurs d'API (ANTHROPIC_BASE_URL enverrait une clé ailleurs, par exemple).
+pub const SECRET_PREFIXES: [&str; 2] = ["ANTHROPIC_", "OPENAI_"];
+
+/// Une variable de Nel Code qui ne passe jamais à un processus lancé (commande de l'agent, serveur MCP, claude) : la
+/// seule liste, partagée par les trois.
 pub fn hidden_var(name: &str) -> bool {
     let n = name.to_uppercase();
-    ["KEY", "TOKEN", "SECRET"].iter().any(|w| n.contains(w))
+    SECRET_WORDS.iter().any(|w| n.contains(w)) || SECRET_PREFIXES.iter().any(|p| n.starts_with(p))
 }
 
 pub struct Outcome {
@@ -243,11 +249,20 @@ mod tests {
 
     #[test]
     fn variables_cachees() {
-        for v in ["OPENAI_API_KEY", "GH_TOKEN", "client_secret", "AWS_SECRET_ACCESS_KEY", "KeyVault"] {
+        for v in [
+            "OPENAI_API_KEY", "GH_TOKEN", "client_secret", "AWS_SECRET_ACCESS_KEY", "KeyVault", "DB_PASSWORD", "MYSQL_PWD", "SMTP_PASSWD",
+            "HF_AUTH", "GOOGLE_APPLICATION_CREDENTIALS", "SSH_PRIVATE", "ANTHROPIC_BASE_URL", "anthropic_model", "OPENAI_ORG",
+        ] {
             assert!(hidden_var(v), "{v}");
         }
-        for v in ["PATH", "USERPROFILE", "DOTNET_ROOT", "TEMP"] {
+        for v in ["PATH", "USERPROFILE", "DOTNET_ROOT", "TEMP", "APPDATA", "SystemRoot", "NODE_OPTIONS", "HOME"] {
             assert!(!hidden_var(v), "{v}");
+        }
+        // La même liste pour les trois : commandes de l'agent, serveurs MCP, Claude Agent (qui retire en plus les
+        // CLAUDE_CODE_USE_*).
+        for v in ["DB_PASSWORD", "OPENAI_ORG", "GH_TOKEN", "PATH", "TEMP"] {
+            assert_eq!(crate::mcp::passed_var(v), !hidden_var(v), "{v}");
+            assert_eq!(crate::claude_agent::passed_var(v), !hidden_var(v), "{v}");
         }
     }
 

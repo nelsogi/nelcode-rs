@@ -51,6 +51,20 @@ fournisseurs, images, points de restauration, mises à jour, imports). Corrigé 
 - **Commandes autorisées sans confirmation : seulement un programme donné par son nom** (moyen). « git status » dans la
   liste autorisait aussi « outils/git.exe status », un programme du projet. Un programme donné par un chemin demande
   maintenant toujours Lancer / Refuser. Test unitaire.
+- **Fournisseurs et serveurs MCP distants : jamais de redirection vers un autre hôte** (faible). reqwest suivait une
+  redirection ailleurs en ne retirant que `Authorization` : la clé `x-api-key` (fournisseur Claude) ou un en-tête secret
+  de MCP partait vers l'autre hôte. Une redirection n'est plus suivie que vers la même origine (schéma, hôte, port) ;
+  sinon la requête s'arrête avec un message clair. Test : un serveur qui redirige vers un autre hôte et un autre port,
+  rien n'y arrive.
+- **Une seule liste de variables secrètes** (faible), partagée par les commandes de l'agent, les serveurs MCP et Claude
+  Agent : `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`, `CREDENTIAL`, `PRIVATE` n'importe où dans le
+  nom, et les préfixes `ANTHROPIC_` et `OPENAI_`. Avant, une commande de l'agent recevait encore `DB_PASSWORD`. Test
+  unitaire (la même réponse pour les trois).
+- **Clé du serveur local dans le trousseau** (faible), plus dans `settings.json` ; celle d'une version d'avant y est
+  déplacée au démarrage, puis retirée du fichier, et reste acceptée. Tests de l'interface.
+- **Flux SSE de MCP borné** (faible) : des octets qui ne sont pas de l'UTF-8 valide restaient en attente sans limite
+  (mémoire). Ils sont maintenant remplacés par « � », et le tampon ne dépasse jamais 8 Mo, quoi qu'envoie le serveur.
+  Test unitaire.
 - Les noms réservés de Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`…`COM9`, `LPT1`…`LPT9`, avec ou sans extension) et
   les noms qui finissent par un point ou une espace sont refusés (lecture, recherche, écriture, `@`). Une espace finale
   n'est plus effacée silencieusement avant la vérification.
@@ -79,8 +93,8 @@ fournisseurs, images, points de restauration, mises à jour, imports). Corrigé 
   `.bat`/`.cmd`/`.ps1`, `|`, `>`, `&&` refusés), dans le dossier de travail, sortie limitée et affichée en direct.
   Lancer / Refuser à chaque commande, sauf la liste « Commandes autorisées sans confirmation » des réglages (vide par
   défaut) ; « Accepter tout » ne vaut pas pour elles. Durée maximale réglable (2 min par défaut) ; le délai et Stop
-  tuent la commande et tous ses processus enfants (Job Object). Les variables d'environnement contenant KEY, TOKEN ou
-  SECRET ne sont pas transmises. Le journal ne note que le nom du programme.
+  tuent la commande et tous ses processus enfants (Job Object). Les variables d'environnement secrètes (KEY, TOKEN,
+  PASSWORD… : la liste de la section Sécurité) ne sont pas transmises. Le journal ne note que le nom du programme.
 - Tests unitaires (NELCODE.md et sa limite, plans, validation sans shell, liste autorisée, variables cachées, sortie
   limitée, délai et Stop qui tuent les enfants) et de l'interface pour chacun de ces points.
 - **Fournisseur Claude** : bouton « Ajouter Claude (Anthropic) » (`https://api.anthropic.com/v1/`, clé dans le

@@ -4,7 +4,8 @@
 //! chaque outil comme une étape, coût et durée à la fin.
 //!
 //! - Authentification par clé API seulement : ANTHROPIC_API_KEY, lue dans le trousseau du système, est
-//!   passée au processus ; les autres variables qui contiennent KEY, TOKEN ou SECRET ne le sont pas.
+//!   passée au processus ; les autres variables secrètes (`command::hidden_var` : KEY, TOKEN, PASSWORD…) ne le
+//!   sont pas.
 //! - Le message part sur l'entrée standard (jamais en argument : rien à échapper, même pour un claude.cmd).
 //! - Mode de permission « default » (rien d'automatique : en -p, tout ce qui demande un accord est refusé) ou
 //!   « acceptEdits », et `--allowedTools` (réglages).
@@ -127,12 +128,11 @@ pub fn args(session: Option<&str>, mode: &str, allowed: &[String], model: &str, 
     a
 }
 
-/// Les variables d'environnement transmises à `claude` : ni secret (KEY, TOKEN, SECRET : CLAUDE_CODE_OAUTH_TOKEN,
-/// ANTHROPIC_AUTH_TOKEN…), ni ANTHROPIC_* (ANTHROPIC_BASE_URL enverrait la clé ailleurs), ni CLAUDE_CODE_USE_*
-/// (Bedrock, Vertex… : une autre authentification que la clé API).
-fn passed_var(name: &str) -> bool {
-    let n = name.to_uppercase();
-    !hidden_var(&n) && !n.starts_with("ANTHROPIC_") && !n.starts_with("CLAUDE_CODE_USE_")
+/// Les variables d'environnement transmises à `claude` : ni secret (`command::hidden_var`, la liste partagée : KEY,
+/// TOKEN, AUTH… et ANTHROPIC_*, dont ANTHROPIC_BASE_URL qui enverrait la clé ailleurs), ni CLAUDE_CODE_USE_* (Bedrock,
+/// Vertex… : une autre authentification que la clé API).
+pub(crate) fn passed_var(name: &str) -> bool {
+    !hidden_var(name) && !name.to_uppercase().starts_with("CLAUDE_CODE_USE_")
 }
 
 // ---------------------------------------------------------------------------------------------------------

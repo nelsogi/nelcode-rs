@@ -156,7 +156,7 @@ budget.
 
 ### Where data lives
 
-| System | Data folder | API keys |
+| System | Data folder | Keys (providers, MCP, Claude Agent, local server) |
 | --- | --- | --- |
 | Windows | `%APPDATA%\NelCode` | Windows Credential Manager |
 | macOS | `~/Library/Application Support/NelCode` | macOS keychain |
@@ -178,8 +178,14 @@ protections never assume the model is trustworthy. Version 1.0.0 went through a 
 - **Agent mode**: everything stays inside the working folder (`..`, absolute paths, NTFS streams, Windows reserved
   names, symbolic links and junctions that leave the folder are refused); every write waits for your approval;
   **protected files** are read or written only after a confirmation each time; commands run **without a shell**, with
-  your approval (except the allow list, by program name), without variables containing `KEY`, `TOKEN` or `SECRET`, and
-  are killed with all their children on timeout or Stop. File and tool contents are never instructions for Nel Code.
+  your approval (except the allow list, by program name), and are killed with all their children on timeout or Stop.
+  File and tool contents are never instructions for Nel Code.
+- **Secret variables**: one list for agent commands, MCP servers and Claude Agent. A Nel Code environment variable
+  whose name contains `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`, `CREDENTIAL` or `PRIVATE`, or
+  starts with `ANTHROPIC_` or `OPENAI_`, is never passed to them.
+- **Providers and remote MCP servers**: redirects are only followed to the same origin (same scheme, host and port); to
+  another host the request stops with an error and the key (`Authorization`, `x-api-key`, secret headers) never goes
+  there.
 - **Explorers**: read-only, enforced by Nel Code (not just asked of the model); no protected files, no MCP tools.
 - **MCP**: a project server never starts without your approval, asked again if its configuration or resolved program
   changes; each tool call is approved (unless "always allow"); results are size-limited and framed as data; secrets
@@ -188,7 +194,8 @@ protections never assume the model is trustworthy. Version 1.0.0 went through a 
   settings (`.claude/settings.json`) are not read unless you choose so.
 - **Restore points**: protected files never enter git; git runs nothing configured by the repository (no
   `core.fsmonitor`, hooks or filters from `.git/config`).
-- **Local server**: off by default, `127.0.0.1` only, access key checked on every request.
+- **Local server**: off by default, `127.0.0.1` only, access key checked on every request and stored in the keychain
+  (a key that an older version kept in `settings.json` is moved there at startup).
 - **Images**: re-encoded without any metadata (EXIF, GPS…).
 - **Downloads**: signed updates, GPU pack and catalog models checked by SHA-256; a `.nelmodel` is extracted file by
   file (exact names, size limits) and test-loaded before installation.
@@ -201,9 +208,8 @@ protections never assume the model is trustworthy. Version 1.0.0 went through a 
   approved MCP server (the approval covers its configuration and program path, not the content of the script it runs)
   and for Claude Agent in `acceptEdits` mode.
 - A program already running under your account can read your data and often your keychain.
-- Environment variables passed to agent commands are filtered by name only (`KEY`, `TOKEN`, `SECRET`): `DB_PASSWORD`
-  goes through (MCP servers also don't receive `PASSWORD`, `CREDENTIAL`, `AUTH`…).
-- The local server's access key is stored in `settings.json` (it is only used locally).
+- Secret variables are recognized by their name: a variable with an ordinary name that holds a secret (`DB_URL`
+  with a password inside) is passed.
 - A hard link already present in the working folder that points outside is not detected (the agent's tools cannot
   create one).
 

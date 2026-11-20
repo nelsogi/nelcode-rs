@@ -361,11 +361,10 @@ fn delete_secrets(key: &str, s: &Server) {
     }
 }
 
-/// Une variable de Nel Code transmise à un processus MCP : jamais un secret (KEY, TOKEN, SECRET, PASSWORD,
-/// CREDENTIAL…), ni une variable des fournisseurs d'API (ANTHROPIC_*, OPENAI_*).
+/// Une variable de Nel Code transmise à un processus MCP : jamais un secret (`command::hidden_var`, la liste partagée
+/// avec les commandes de l'agent et Claude Agent).
 pub fn passed_var(name: &str) -> bool {
-    let n = name.to_uppercase();
-    !command::hidden_var(&n) && !["PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE", "AUTH"].iter().any(|w| n.contains(w)) && !n.starts_with("ANTHROPIC_") && !n.starts_with("OPENAI_")
+    !command::hidden_var(name)
 }
 
 /// L'environnement d'un processus MCP : celui de Nel Code sans ses secrets, puis `env`, puis les secrets du serveur.
@@ -933,23 +932,55 @@ pub fn sse_events(buf: &mut String) -> Vec<String> {
     out
 }
 
+/// Le tampon d'un flux SSE : le texte reçu et un caractère UTF-8 coupé entre deux morceaux. Jamais plus de `max`
+/// octets en attente, même si les octets reçus ne sont pas de l'UTF-8 valide (remplacés par « � »).
+#[derive(Default)]
+pub struct SseBuffer {
+    text: String,
+    cut: Vec<u8>,
+}
+
+impl SseBuffer {
+    /// Ajoute un morceau du flux ; rend les événements complets, ou une erreur au-delà de `max` octets en attente.
+    pub fn push(&mut self, chunk: &[u8], max: usize) -> Result<Vec<String>> {
+        self.cut.extend_from_slice(chunk);
+        loop {
+            match std::str::from_utf8(&self.cut) {
+                Ok(s) => {
+                    self.text.push_str(s);
+                    self.cut.clear();
+                    break;
+                }
+                // Un caractère coupé à la fin : la suite viendra avec le prochain morceau.
+                Err(e) if e.error_len().is_none() => {
+                    let valid = e.valid_up_to();
+                    self.text.push_str(&String::from_utf8_lossy(&self.cut[..valid]));
+                    self.cut.drain(..valid);
+                    break;
+                }
+                // Des octets invalides : remplacés, et la lecture continue après eux.
+                Err(e) => {
+                    let end = e.valid_up_to() + e.error_len().unwrap_or(1);
+                    self.text.push_str(&String::from_utf8_lossy(&self.cut[..end]));
+                    self.cut.drain(..end);
+                }
+            }
+        }
+        let events = sse_events(&mut self.text);
+        if self.text.len() + self.cut.len() > max {
+            return Err("événement SSE trop gros".into());
+        }
+        Ok(events)
+    }
+}
+
 async fn read_sse(mut resp: reqwest::Response, sh: &Arc<Shared>) -> Result<()> {
-    let (mut buf, mut bytes) = (String::new(), Vec::new());
+    let mut buf = SseBuffer::default();
     while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
-        bytes.extend_from_slice(&chunk);
-        let valid = match std::str::from_utf8(&bytes) {
-            Ok(_) => bytes.len(),
-            Err(e) => e.valid_up_to(),
-        };
-        buf.push_str(&String::from_utf8_lossy(&bytes[..valid]));
-        bytes.drain(..valid);
-        for data in sse_events(&mut buf) {
+        for data in buf.push(&chunk, MAX_MESSAGE)? {
             if let Ok(v) = serde_json::from_str::<Value>(&data) {
                 sh.dispatch(v);
             }
-        }
-        if buf.len() > MAX_MESSAGE {
-            return Err("événement SSE trop gros".into());
         }
     }
     Ok(())
@@ -1137,7 +1168,7 @@ fn spawn_stdio(app: Option<AppHandle>, p: &Prepared) -> Result<(Arc<Shared>, Job
 
 fn http_client() -> Result<reqwest::Client> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::builder().user_agent("NelCode").connect_timeout(Duration::from_secs(10)).build().map_err(|e| e.to_string())
+    reqwest::Client::builder().user_agent("NelCode").connect_timeout(Duration::from_secs(10)).redirect(crate::remote::same_origin_redirects()).build().map_err(|e| e.to_string())
 }
 
 /// Démarre un serveur : processus ou connexion, initialize, notifications/initialized, tools/list ; le tout en
@@ -1683,6 +1714,23 @@ mod tests {
         assert_eq!(buf, "data: {\"c\"");
         buf.push_str(":3}\n\n");
         assert_eq!(sse_events(&mut buf), [r#"{"c":3}"#]);
+    }
+
+    #[test]
+    fn tampon_sse_limite() {
+        // Un « é » coupé entre deux morceaux est recollé.
+        let mut b = SseBuffer::default();
+        assert!(b.push(b"data: \xc3", 100).unwrap().is_empty());
+        assert_eq!(b.push(b"\xa9\n\n", 100).unwrap(), ["é"]);
+        // Des octets invalides sont remplacés et ne bloquent pas la suite.
+        assert_eq!(b.push(b"data: \xff\xfeok\n\n", 100).unwrap(), ["\u{fffd}\u{fffd}ok"]);
+        // Un flux sans fin d'événement, valide ou non : erreur au-delà de la taille maximale, sans grossir sans fin.
+        for chunk in [&b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"[..], b"data: xxxx"] {
+            let mut b = SseBuffer::default();
+            let err = (0..100).find_map(|_| b.push(chunk, 100).err());
+            assert_eq!(err.as_deref(), Some("événement SSE trop gros"));
+            assert!(b.text.len() + b.cut.len() <= 100 + 3 * chunk.len());
+        }
     }
 
     #[test]

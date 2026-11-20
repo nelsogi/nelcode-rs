@@ -230,9 +230,27 @@ fn host_of(url: &str) -> String {
     reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| format!("{h}{}", u.port().map(|p| format!(":{p}")).unwrap_or_default()))).unwrap_or_else(|| url.into())
 }
 
+/// Les redirections suivies : seulement vers la même origine (schéma, hôte et port de la première adresse), 10 au plus.
+/// Une redirection ailleurs est une erreur : la clé (Authorization, x-api-key, en-têtes secrets de MCP) ne part
+/// jamais vers un autre hôte (reqwest ne retire qu'Authorization, et pas un passage de https à http sur le même hôte).
+pub fn same_origin_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let origin = |u: &reqwest::Url| (u.scheme().to_string(), u.host_str().map(str::to_lowercase), u.port_or_known_default());
+        let first = attempt.previous().first().map(origin);
+        if attempt.previous().len() > 10 {
+            attempt.error("trop de redirections")
+        } else if first.is_some_and(|f| f != origin(attempt.url())) {
+            let to = attempt.url().host_str().unwrap_or_default().to_string();
+            attempt.error(format!("redirection vers un autre hôte ({to}) refusée : la clé n'y est pas envoyée"))
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
 fn client() -> Result<reqwest::Client> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::builder().user_agent("NelCode").connect_timeout(CONNECT_TIMEOUT).build().map_err(|e| e.to_string())
+    reqwest::Client::builder().user_agent("NelCode").connect_timeout(CONNECT_TIMEOUT).redirect(same_origin_redirects()).build().map_err(|e| e.to_string())
 }
 
 /// Le message d'erreur d'un serveur : `error.message`, `error` (Ollama), ou le début du texte.
@@ -257,6 +275,8 @@ fn http_error(host: &str, model: Option<&str>, status: u16, body: &str) -> Strin
 fn send_error(host: &str, e: &reqwest::Error) -> String {
     if e.is_connect() || e.is_timeout() {
         format!("{host} ne répond pas : vérifie l'adresse, le réseau et que le serveur est lancé")
+    } else if let Some(why) = e.is_redirect().then(|| std::error::Error::source(e)).flatten() {
+        format!("{host} : {why}")
     } else {
         format!("{host} : {e}")
     }
@@ -774,6 +794,54 @@ mod tests {
         // Réflexion jamais fermée (réponse coupée).
         assert_eq!(run(&["<think>longue réflexion"]), ("longue réflexion".into(), "".into()));
         assert_eq!(run(&["<think>é</th", "ink>ü"]), ("é".into(), "ü".into()));
+    }
+
+    /// Un petit serveur HTTP : chaque requête reçue (ligne et en-têtes) part dans le canal ; la réponse est donnée par
+    /// `reply` selon le chemin.
+    fn serve(reply: impl Fn(&str) -> String + Send + 'static) -> (u16, std::sync::mpsc::Receiver<String>) {
+        use std::io::{BufRead, BufReader, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for mut c in l.incoming().flatten() {
+                let mut head = String::new();
+                let mut r = BufReader::new(c.try_clone().unwrap());
+                while r.read_line(&mut head).is_ok_and(|n| n > 2) && !head.ends_with("\r\n\r\n") {}
+                let path = head.split_whitespace().nth(1).unwrap_or_default().to_string();
+                let _ = tx.send(head);
+                let _ = c.write_all(reply(&path).as_bytes());
+            }
+        });
+        (port, rx)
+    }
+
+    #[test]
+    fn redirections_seulement_vers_la_meme_origine() {
+        let (other, seen_other) = serve(|_| "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into());
+        let (port, seen) = serve(move |path| match path {
+            "/v1/models" => "HTTP/1.1 302 Found\r\nLocation: /v1/ailleurs\r\nContent-Length: 0\r\n\r\n".into(),
+            "/v1/ailleurs" => "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+            // Même machine, autre hôte (localhost et 127.0.0.1 ne sont pas la même origine), puis autre port.
+            "/v1/chat/completions" => format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://localhost:{other}/vol\r\nContent-Length: 0\r\n\r\n"),
+            _ => format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{other}/vol\r\nContent-Length: 0\r\n\r\n"),
+        });
+        let get = |path: &str| {
+            let url = format!("http://127.0.0.1:{port}/v1/{path}");
+            tauri::async_runtime::block_on(async move {
+                client().unwrap().get(url).bearer_auth("cle-secrete").header("x-api-key", "cle-secrete").send().await.map(|r| r.status().as_u16()).map_err(|e| send_error("hôte", &e))
+            })
+        };
+        // Même origine : suivie.
+        assert_eq!(get("models"), Ok(200));
+        assert_eq!(seen.try_iter().count(), 2);
+        // Autre hôte, autre port : refusée, rien n'y est envoyé.
+        for path in ["chat/completions", "port"] {
+            let err = get(path).unwrap_err();
+            assert!(err.contains("redirection vers un autre hôte"), "{err}");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(seen_other.try_iter().count(), 0, "la clé est partie vers l'autre hôte");
     }
 
     #[test]

@@ -67,7 +67,8 @@ pour tout vérifier : la sortie complète coûte cher en tokens.
   protégés (`.env`, `*.pem`, `.git/`… + motifs des réglages) lus ou écrits seulement après confirmation à chaque fois,
   « Accepter tout » n'y change rien ; commandes sans shell, confirmées sauf liste autorisée (programmes par leur nom
   seulement) ; git des points de restauration sans fsmonitor, hooks ni filtres du dépôt ; `claude` sans les réglages du
-  projet sauf choix explicite ; clés jamais dans `settings.json`,
+  projet sauf choix explicite ; une seule liste de variables secrètes (`command::hidden_var`) ; redirections des
+  fournisseurs et de MCP seulement vers la même origine ; clés (serveur local compris) jamais dans `settings.json`,
   jamais dans le journal ni dans les tests (clés de test à part) ; l'interface n'appelle jamais le réseau (CSP inchangée).
   Ne jamais affaiblir une de ces protections sans demande explicite.
 - **Jamais le nom « Claude Code » dans l'interface** (textes, boutons, messages). Écrire « Claude Agent » ou « claude ».

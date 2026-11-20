@@ -697,7 +697,7 @@ fn read_file(dir: String, path: String, confirm: Option<bool>) -> Result<String>
 fn server_status(state: State<AppState>) -> Value {
     let port = state.server.lock().unwrap().as_ref().map(|s| s.port);
     let s = store::load_settings();
-    json!({ "port": port, "url": format!("http://127.0.0.1:{}/v1", s["serverPort"]), "key": s["serverKey"] })
+    json!({ "port": port, "url": format!("http://127.0.0.1:{}/v1", s["serverPort"]), "key": server::key() })
 }
 
 /// Après un changement des réglages : démarre, redémarre ou arrête le serveur.
@@ -710,9 +710,7 @@ fn server_apply(app: AppHandle) -> Result<Option<u16>> {
 #[tauri::command]
 fn regenerate_server_key() -> Result<String> {
     let key = server::new_key();
-    let mut change = serde_json::Map::new();
-    change.insert("serverKey".into(), key.clone().into());
-    store::save_settings(&change)?;
+    server::set_key(&key)?;
     log::info("serveur local : nouvelle clé d'accès");
     Ok(key)
 }

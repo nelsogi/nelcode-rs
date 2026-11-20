@@ -1,7 +1,8 @@
 //! Le serveur local, compatible avec l'API OpenAI (désactivé par défaut) : GET /v1/models et POST /v1/chat/completions,
 //! avec ou sans streaming (SSE). Il n'écoute que sur 127.0.0.1, et chaque requête doit porter la clé d'accès
-//! (`Authorization: Bearer <clé>`, réglages). Les erreurs sont en anglais, comme celles de l'API OpenAI (les clients
-//! et les outils les attendent ainsi). HTTP/1.1 minimal : une requête par connexion, puis fermeture.
+//! (`Authorization: Bearer <clé>`, rangée dans le trousseau du système). Les erreurs sont en anglais, comme celles de
+//! l'API OpenAI (les clients et les outils les attendent ainsi). HTTP/1.1 minimal : une requête par connexion, puis
+//! fermeture.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -12,6 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::remote::creds;
 use crate::{AppState, GenOptions, compare_model, current, log, store, text_stream};
 
 pub const DEFAULT_PORT: u64 = 8765;
@@ -41,6 +43,34 @@ pub fn new_key() -> String {
     format!("nc-{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
+/// La clé d'accès dans le trousseau du système.
+const KEY_ID: &str = "local-server";
+
+/// La clé d'accès (trousseau du système). Celle qu'une version d'avant la 1.0.0 gardait dans settings.json y est
+/// d'abord déplacée, puis retirée du fichier.
+pub fn key() -> Option<String> {
+    if let Some(old) = store::load_settings()["serverKey"].as_str().filter(|k| !k.is_empty()) {
+        match creds::write(KEY_ID, old) {
+            Ok(()) => {
+                let _ = store::update_settings(|s| {
+                    if let Some(o) = s.as_object_mut() {
+                        o.remove("serverKey");
+                    }
+                    Ok(())
+                });
+                log::info("serveur local : clé d'accès déplacée de settings.json vers le trousseau");
+            }
+            Err(e) => log::error(&format!("serveur local : clé d'accès non déplacée dans le trousseau ({e})")),
+        }
+    }
+    creds::read(KEY_ID).filter(|k| !k.is_empty())
+}
+
+/// Range une nouvelle clé d'accès (l'ancienne est refusée dès la requête suivante).
+pub fn set_key(key: &str) -> Result<(), String> {
+    creds::write(KEY_ID, key)
+}
+
 /// Démarre (ou redémarre) le serveur selon les réglages, ou l'arrête s'il est désactivé ; une clé est créée à la
 /// première activation. Rend le port actif (« server-changed » prévient l'interface).
 pub fn apply(app: &AppHandle) -> Result<Option<u16>, String> {
@@ -49,10 +79,8 @@ pub fn apply(app: &AppHandle) -> Result<Option<u16>, String> {
     let settings = store::load_settings();
     let port = settings["serverPort"].as_u64().unwrap_or(DEFAULT_PORT) as u16;
     let enabled = settings["serverEnabled"].as_bool().unwrap_or(false);
-    if enabled && settings["serverKey"].as_str().is_none_or(str::is_empty) {
-        let mut key = serde_json::Map::new();
-        key.insert("serverKey".into(), new_key().into());
-        store::save_settings(&key)?;
+    if enabled && key().is_none() {
+        set_key(&new_key())?;
     }
     if enabled && server.as_ref().map(|s| s.port) == Some(port) {
         return Ok(Some(port));
@@ -179,7 +207,7 @@ fn handle(app: &AppHandle, mut conn: TcpStream) {
         Ok(r) => r,
         Err((status, m)) => return error(&mut conn, status, &m, "invalid_request_error"),
     };
-    let key = store::load_settings()["serverKey"].as_str().unwrap_or_default().to_string();
+    let key = key().unwrap_or_default();
     let given = req.auth.as_deref().and_then(|a| a.strip_prefix("Bearer ")).unwrap_or_default();
     if key.is_empty() || !same(given.trim(), &key) {
         return error(&mut conn, 401, "missing or incorrect access key (Authorization: Bearer <key from the Nel Code settings>)", "invalid_api_key");

@@ -52,7 +52,9 @@ test('activé dans les réglages : clé générée et affichée, port réglé, i
   await A.waitFor(`S.server.port === ${PORT}`, 10_000, 'serveur actif');
   assert.match(await A.ev(`document.getElementById('status').textContent`), new RegExp(`API :${PORT}`));
   const s = A.readJson('settings.json');
-  assert.deepEqual([s.serverEnabled, s.serverPort, s.serverKey], [true, PORT, KEY]);
+  assert.deepEqual([s.serverEnabled, s.serverPort], [true, PORT]);
+  assert.equal(s.serverKey, undefined, 'la clé est dans le trousseau, pas dans settings.json');
+  assert.equal((await A.ev(`window.__TAURI__.core.invoke('server_status')`)).key, KEY);
 });
 
 test('clé d\'accès obligatoire', async () => {
@@ -151,5 +153,22 @@ test('désactivé : le port est fermé, l\'indicateur disparaît ; le journal ne
   assert.equal(A.readJson('settings.json').serverEnabled, false);
   const logs = fs.readdirSync(path.join(A.home, 'logs')).map((f) => fs.readFileSync(path.join(A.home, 'logs', f), 'utf8')).join('');
   assert.match(logs, /serveur local démarré sur 127\.0\.0\.1/);
-  assert.ok(!logs.includes(SECRET));
+  assert.ok(!logs.includes(SECRET) && !logs.includes(KEY), 'ni les messages ni la clé dans le journal');
+});
+
+test('clé d\'une version d\'avant (dans settings.json) : déplacée dans le trousseau, toujours acceptée', async () => {
+  await A.close();
+  A = null;
+  const port = PORT + 1, old = 'nc-ancienne-cle-de-la-0-9';
+  const B = await launch({ settings: { serverPort: port, serverEnabled: true, serverKey: old } });
+  try {
+    await B.waitFor(`S.server.port === ${port}`, 10_000, 'serveur actif');
+    const models = (key) => fetch(`http://127.0.0.1:${port}/v1/models`, { headers: { Authorization: `Bearer ${key}` } }).then((r) => r.status);
+    assert.equal(await models(old), 200);
+    assert.equal(await models('nc-fausse'), 401);
+    assert.equal(B.readJson('settings.json').serverKey, undefined, 'retirée de settings.json');
+    assert.equal((await B.ev(`window.__TAURI__.core.invoke('server_status')`)).key, old);
+  } finally {
+    await B.close();
+  }
 });
