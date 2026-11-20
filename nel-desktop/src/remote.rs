@@ -4,7 +4,7 @@
 //! settings.json garde `providers: [{ id, name, url, kind?, omitSampling?, models: [{ id, temperature?, topP?, maxTokens?,
 //! contextLength? }] }]`. `kind: "anthropic"` : l'API Claude (couche compatible OpenAI d'Anthropic) ; `omitSampling` :
 //! ne jamais envoyer temperature ni top_p (les modèles Claude récents les refusent).
-//! La clé d'un fournisseur n'y est jamais : elle est dans le Gestionnaire d'identification de Windows.
+//! La clé d'un fournisseur n'y est jamais : elle est dans le trousseau du système (voir `creds`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,19 +30,20 @@ fn idle_timeout() -> Duration {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Clés : Gestionnaire d'identification de Windows (identifiants génériques « NelCode:provider:<id> »)
+// Clés : le trousseau du système (crate keyring). Windows : Gestionnaire d'identification, identifiants génériques
+// « NelCode:provider:<id> » (les mêmes qu'avant : les clés existantes restent lues) ; macOS : trousseau (service
+// « NelCode », compte « provider:<id> ») ; Linux : Secret Service (GNOME Keyring, KWallet…), mêmes noms.
 
 pub(crate) mod creds {
-    use windows_sys::Win32::Foundation::FILETIME;
-    use windows_sys::Win32::Security::Credentials::{CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW, CredWriteW};
+    use std::collections::HashMap;
 
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain([0]).collect()
-    }
+    use keyring_core::{Entry, Error};
 
-    /// « NelCode:provider:<id> ». Avec NELCODE_HOME (tests), un espace à part par dossier de données, pour que les
-    /// tests ne touchent jamais aux vraies clés de l'utilisateur. Fixé au premier appel.
-    fn target(id: &str) -> Vec<u16> {
+    use crate::os;
+
+    /// Avec NELCODE_HOME (tests), un espace à part par dossier de données, pour que les tests ne touchent jamais aux
+    /// vraies clés de l'utilisateur. Fixé au premier appel.
+    fn account(id: &str) -> String {
         static NS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         let ns = NS.get_or_init(|| {
             std::env::var("NELCODE_HOME").map_or(String::new(), |h| {
@@ -50,53 +51,50 @@ pub(crate) mod creds {
                 format!("test-{hash:016x}:")
             })
         });
-        wide(&format!("NelCode:{ns}provider:{id}"))
+        format!("{ns}provider:{id}")
+    }
+
+    /// Sous Windows, la cible exacte d'avant (« NelCode:<compte> », persistance locale, utilisateur « NelCode »).
+    pub(super) fn windows_target(id: &str) -> String {
+        format!("NelCode:{}", account(id))
+    }
+
+    fn entry(id: &str) -> Result<Entry, String> {
+        let store = os::CURRENT.keystore();
+        if let Err(e) = keyring::Entry::store_status() {
+            return Err(format!("{store} indisponible : {e}"));
+        }
+        let r = if cfg!(windows) {
+            let target = windows_target(id);
+            Entry::new_with_modifiers("NelCode", "NelCode", &HashMap::from([("target", target.as_str()), ("persistence", "Local")]))
+        } else {
+            Entry::new("NelCode", &account(id))
+        };
+        r.map_err(|e| format!("{store} : {e}"))
     }
 
     pub fn write(id: &str, key: &str) -> Result<(), String> {
-        let (mut target, mut user) = (target(id), wide("NelCode"));
-        let blob = key.as_bytes();
-        let cred = CREDENTIALW {
-            Flags: 0,
-            Type: CRED_TYPE_GENERIC,
-            TargetName: target.as_mut_ptr(),
-            Comment: std::ptr::null_mut(),
-            LastWritten: FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 },
-            CredentialBlobSize: blob.len() as u32,
-            CredentialBlob: blob.as_ptr() as *mut u8,
-            Persist: CRED_PERSIST_LOCAL_MACHINE,
-            AttributeCount: 0,
-            Attributes: std::ptr::null_mut(),
-            TargetAlias: std::ptr::null_mut(),
-            UserName: user.as_mut_ptr(),
-        };
-        if unsafe { CredWriteW(&cred, 0) } == 0 {
-            return Err(format!("Gestionnaire d'identification : clé non enregistrée ({})", std::io::Error::last_os_error()));
-        }
-        Ok(())
+        // En octets (UTF-8) : sous Windows, les clés rangées avant le sont ainsi.
+        entry(id)?.set_secret(key.as_bytes()).map_err(|e| format!("{} : clé non enregistrée ({e})", os::CURRENT.keystore()))
     }
 
     pub fn read(id: &str) -> Option<String> {
-        let target = target(id);
-        let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
-        if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) } == 0 {
-            return None;
+        match entry(id).ok()?.get_secret() {
+            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(Error::NoEntry) => None,
+            Err(e) => {
+                crate::log::error(&format!("{} : clé illisible ({e})", os::CURRENT.keystore()));
+                None
+            }
         }
-        let key = unsafe {
-            let c = &*cred;
-            let bytes = std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize);
-            String::from_utf8_lossy(bytes).into_owned()
-        };
-        unsafe { CredFree(cred as *const _) };
-        Some(key)
     }
 
     pub fn delete(id: &str) {
-        let target = target(id);
-        unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) };
+        if let Ok(e) = entry(id) {
+            let _ = e.delete_credential();
+        }
     }
 }
-
 
 // ---------------------------------------------------------------------------------------------------------
 // Fournisseurs
@@ -352,7 +350,7 @@ fn qwen_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("NELCODE_QWEN_DIR") {
         return PathBuf::from(d);
     }
-    PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join(".qwen")
+    crate::os::home().unwrap_or_default().join(".qwen")
 }
 
 /// `NOM=valeur` d'un fichier .env (guillemets retirés).
@@ -800,14 +798,46 @@ mod tests {
         assert_eq!(few.last().unwrap()["content"], "dernier");
     }
 
+    /// Le trousseau du système (Gestionnaire d'identification, trousseau macOS, Secret Service).
     #[test]
-    fn gestionnaire_d_identification() {
+    fn trousseau_du_systeme() {
         let id = format!("test-{}", new_id());
         assert_eq!(creds::read(&id), None);
         creds::write(&id, "sk-secret-é").unwrap();
         assert_eq!(creds::read(&id).as_deref(), Some("sk-secret-é"));
         creds::write(&id, "sk-2").unwrap();
         assert_eq!(creds::read(&id).as_deref(), Some("sk-2"));
+        creds::delete(&id);
+        assert_eq!(creds::read(&id), None);
+    }
+
+    /// Windows : une clé rangée par les versions d'avant keyring (CredWriteW, octets UTF-8, cible
+    /// « NelCode:provider:<id> ») est lue, remplacée et retirée comme avant.
+    #[cfg(windows)]
+    #[test]
+    fn cles_existantes_sous_windows() {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::Security::Credentials::{CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredReadW, CredFree, CredWriteW};
+        let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let id = format!("test-{}", new_id());
+        let (mut target, mut user) = (wide(&creds::windows_target(&id)), wide("NelCode"));
+        let blob = "sk-ancienne-é".as_bytes();
+        let cred = CREDENTIALW {
+            Flags: 0, Type: CRED_TYPE_GENERIC, TargetName: target.as_mut_ptr(), Comment: std::ptr::null_mut(),
+            LastWritten: FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 }, CredentialBlobSize: blob.len() as u32,
+            CredentialBlob: blob.as_ptr() as *mut u8, Persist: CRED_PERSIST_LOCAL_MACHINE, AttributeCount: 0,
+            Attributes: std::ptr::null_mut(), TargetAlias: std::ptr::null_mut(), UserName: user.as_mut_ptr(),
+        };
+        assert_ne!(unsafe { CredWriteW(&cred, 0) }, 0);
+        assert_eq!(creds::read(&id).as_deref(), Some("sk-ancienne-é"));
+        // Réécrite par keyring : toujours la même cible, en octets UTF-8, persistance locale.
+        creds::write(&id, "sk-nouvelle").unwrap();
+        let mut p: *mut CREDENTIALW = std::ptr::null_mut();
+        assert_ne!(unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut p) }, 0);
+        let (bytes, persist) = unsafe { (std::slice::from_raw_parts((*p).CredentialBlob, (*p).CredentialBlobSize as usize).to_vec(), (*p).Persist) };
+        unsafe { CredFree(p as *const _) };
+        assert_eq!(bytes, b"sk-nouvelle");
+        assert_eq!(persist, CRED_PERSIST_LOCAL_MACHINE);
         creds::delete(&id);
         assert_eq!(creds::read(&id), None);
     }

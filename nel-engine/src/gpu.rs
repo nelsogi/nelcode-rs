@@ -3,6 +3,10 @@
 //! `cuda_device` charge chaque DLL par son chemin complet (le pilote depuis System32, les autres depuis le pack) ;
 //! le chargement différé retrouve ensuite ces modules déjà en mémoire. S'il en manque une, on n'appelle jamais CUDA
 //! (un chargement différé raté arrêterait le programme) : le CPU est utilisé.
+//! Windows seulement : sous Linux et macOS, Nel Code calcule sur le CPU.
+
+#[cfg(all(feature = "cuda", not(windows)))]
+compile_error!("la feature cuda (pack GPU, DLL en chargement différé) n'existe que pour Windows");
 
 use std::path::{Path, PathBuf};
 

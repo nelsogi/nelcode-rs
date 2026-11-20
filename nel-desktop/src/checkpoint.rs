@@ -18,10 +18,9 @@ const KEEP: usize = 20;
 /// Lance git dans `dir` (sans fenêtre), avec l'index `index` s'il est donné. Rend la sortie standard. Sans conversion
 /// des fins de ligne (core.autocrlf) : les fichiers reviennent octet pour octet. L'auteur des points : Nel Code.
 fn git(dir: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = Command::new("git");
-    cmd.args(["-c", "core.autocrlf=false", "-c", "user.name=Nel Code", "-c", "user.email=nelcode@localhost"]).args(args).current_dir(dir).stdin(Stdio::null()).creation_flags(CREATE_NO_WINDOW);
+    crate::process::hide_window(&mut cmd);
+    cmd.args(["-c", "core.autocrlf=false", "-c", "user.name=Nel Code", "-c", "user.email=nelcode@localhost"]).args(args).current_dir(dir).stdin(Stdio::null());
     if let Some(i) = index {
         cmd.env("GIT_INDEX_FILE", i);
     }

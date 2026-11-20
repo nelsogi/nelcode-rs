@@ -1,4 +1,5 @@
-//! Les fichiers de Nel Code, partagés avec la version C# : %APPDATA%\NelCode\{models, sessions, settings.json}.
+//! Les fichiers de Nel Code, partagés avec la version C# : %APPDATA%\NelCode\{models, sessions, settings.json} sous
+//! Windows ; ailleurs, le dossier de données du système (voir `os::data_dir`).
 
 use std::collections::HashMap;
 use std::fs;
@@ -16,7 +17,7 @@ pub fn root() -> PathBuf {
     // NELCODE_HOME : pour les tests, un dossier à part.
     std::env::var_os("NELCODE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("NelCode"))
+        .unwrap_or_else(crate::os::data_dir)
 }
 
 pub fn models_dir() -> PathBuf {

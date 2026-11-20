@@ -1,6 +1,6 @@
 # Nel Code (nelcode-rs)
 
-Application de bureau Windows (Tauri, Rust + interface HTML/JS sans framework) pour discuter avec des modèles
+Application de bureau Windows, Linux et macOS expérimentaux (Tauri, Rust + interface HTML/JS sans framework) pour discuter avec des modèles
 locaux (`.nelmodel`, GGUF) ou distants (API OpenAI), avec un mode Agent. Projet solo, en français (code, commentaires,
 CHANGELOG, README, messages de commit).
 
@@ -19,17 +19,22 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 ### nel-desktop/src (Rust)
 - `main.rs` : fenêtre Tauri, commandes exposées à l'interface, génération, mises à jour
 - `store.rs` : fichiers de données `%APPDATA%\NelCode\{models,sessions,settings.json}` (partagés avec la version C#)
-- `remote.rs` : fournisseurs distants compatibles OpenAI (SSE), clés dans le Gestionnaire d'identification
+- `remote.rs` : fournisseurs distants compatibles OpenAI (SSE) ; module `creds` : clés dans le trousseau (crate keyring :
+  Gestionnaire d'identification, cible inchangée sous Windows ; trousseau macOS ; Secret Service)
 - `server.rs` : serveur local compatible OpenAI (127.0.0.1 seulement, clé d'accès obligatoire, désactivé par défaut)
 - `agent.rs` : mode Agent (outils lecture/recherche/écriture dans un `Sandbox`, fichiers protégés, NELCODE.md, plan,
   explorateurs `spawn_explorer` en lecture seule)
 - `mcp.rs` : client MCP (stdio dans un Job Object, Streamable HTTP ; mcp.json global et .nelcode/mcp.json avec accord
   par empreinte ; secrets dans le Gestionnaire d'identification ; mcp-state.json : accords, « toujours », outils)
-- `command.rs` : outil `run_command` (sans shell, Job Object Windows, délai, variables secrètes retirées)
+- `command.rs` : outil `run_command` (sans shell, délai, variables secrètes retirées)
+- `process.rs` : lancement sans fenêtre dans un Job Object (Windows) ou un groupe de processus (Linux, macOS), kill,
+  interruption (Ctrl+C / SIGINT)
+- `os.rs` : ce qui dépend du système (dossier de données, personnel, PATH, ouvrir, disque, heure, version), règles
+  testables pour les trois systèmes
 - `checkpoint.rs` : points de restauration git de l'Agent (refs/nelcode/checkpoints, 20 par dossier)
 - `claude_agent.rs` : conversation « Claude Agent » : lance l'exécutable `claude` installé et affiche son flux stream-json
 - `catalog.rs` : catalogue de modèles Hugging Face (révision fixe, SHA-256 vérifié)
-- `gpu.rs`, `delayload.rs` : pack GPU téléchargé à la demande, chargement différé des DLL CUDA
+- `gpu.rs`, `delayload.rs` : pack GPU téléchargé à la demande, chargement différé des DLL CUDA (Windows seulement)
 - `log.rs` : journal quotidien (7 jours), jamais le texte des conversations
 - `usage.rs` : suivi `usage.jsonl` (tokens, coût estimé, table de prix, budget, regroupement à 90 jours), jamais le texte
 - `images.rs` : images des messages (réduites, réencodées sans métadonnées, fichiers `sessions\{id}\img-*`, content

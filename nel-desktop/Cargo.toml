@@ -17,14 +17,23 @@ tauri-plugin-process = "2"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 sha2 = "0.10"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 getrandom = "0.3"
+# Les clés (fournisseurs, MCP, Claude Agent) : Gestionnaire d'identification de Windows, trousseau macOS, Secret Service.
+keyring = "4.2"
+keyring-core = "1"
 tokio = { version = "1", features = ["time", "macros", "sync", "rt"] }
 # Les images des messages : décodage (PNG, JPEG, WebP, GIF), redimensionnement, réencodage sans métadonnées.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 base64 = "0.23"
 # Les explorateurs du mode Agent, lancés ensemble (join_all).
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+
+# Linux, macOS : groupes de processus, espace disque, heure locale.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 # GPU NVIDIA : voir nel-engine/src/gpu.rs et build.rs (DLL CUDA chargées en différé).

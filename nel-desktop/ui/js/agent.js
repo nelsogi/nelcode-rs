@@ -88,7 +88,7 @@ export async function claudeSection() {
     h('div', { class: 'hint cli' }, st.cli ? `Outil « claude » : ${st.cli}` : [`Outil « claude » d'Anthropic introuvable : `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_claude_install'); } }, 'l\'installer')]),
     h('div', { class: 'row-btns' }, key, h('button', { class: 'btn', onclick: () => saveKey(key.value) }, 'Ranger la clé'),
       st.hasKey ? h('button', { class: 'btn', onclick: () => saveKey('') }, 'Retirer la clé') : null),
-    h('div', { class: 'hint' }, 'Clé API Anthropic (Console Anthropic), rangée dans le Gestionnaire d\'identification de Windows et passée à l\'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.'),
+    h('div', { class: 'hint' }, `Clé API Anthropic (Console Anthropic), rangée dans le ${S.info.keystore} et passée à l'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.`),
     h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Modèle (--model)')), model, models,
       h('div', { class: 'hint' }, 'Un alias (opus, sonnet, haiku) ou un id complet (claude-opus-5-5). Vide : le modèle par défaut de l\'outil.')),
     h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Mode de permission')), mode),
@@ -160,24 +160,33 @@ export function stepsEl(steps, m) {
     if (st.detail && (!st.diff || st.status === 'rejected' || st.status === 'error')) body.append(h('pre', { class: 'detail' }, st.detail));
     if (st.diff) body.append(diffEl(st.diff));
     if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
-    const decide = (decision) => invoke('agent_decide', { request: st.request, step: st.id, decision }).catch((e) => toast(errText(e), 'error'));
+    // Les boutons de la décision sont grisés dès le premier clic (un double clic décidait deux fois), rendus si erreur.
+    const decide = (decision, e) => {
+      const btns = [...(e?.currentTarget?.closest('.row-btns')?.querySelectorAll('button') ?? [])];
+      if (btns.some((b) => b.disabled)) return;
+      for (const b of btns) b.disabled = true;
+      invoke('agent_decide', { request: st.request, step: st.id, decision }).catch((err) => {
+        for (const b of btns) b.disabled = false;
+        toast(errText(err), 'error');
+      });
+    };
     // Un fichier protégé : une confirmation à chaque fois (jamais « Accepter tout »).
     if (st.status === 'pending' && !m && st.protected) body.append(h('div', { class: 'row-btns' },
-      h('button', { class: 'btn danger', onclick: () => decide('accept') }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : 'Autoriser la lecture'),
-      h('button', { class: 'btn primary', onclick: () => decide('reject') }, 'Refuser')));
+      h('button', { class: 'btn danger', onclick: (e) => decide('accept', e) }, st.kind === 'search' ? 'Parcourir aussi ces fichiers' : 'Autoriser la lecture'),
+      h('button', { class: 'btn primary', onclick: (e) => decide('reject', e) }, 'Refuser')));
     // Une commande : Lancer ou Refuser, à chaque fois (jamais « Accepter tout »).
     if (st.status === 'pending' && !m && st.kind === 'command') body.append(h('div', { class: 'row-btns' },
-      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('terminal'), 'Lancer'),
-      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser')));
+      h('button', { class: 'btn primary', onclick: (e) => decide('accept', e) }, icon('terminal'), 'Lancer'),
+      h('button', { class: 'btn', onclick: (e) => decide('reject', e) }, 'Refuser')));
     // Un outil MCP : Autoriser, Toujours autoriser cet outil (gardé), ou Refuser.
     if (st.status === 'pending' && !m && st.kind === 'mcp') body.append(h('div', { class: 'row-btns' },
-      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Autoriser'),
-      h('button', { class: 'btn', title: 'Ne plus demander pour cet outil de ce serveur (tant que sa configuration ne change pas)', onclick: () => decide('always') }, 'Toujours autoriser cet outil'),
-      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser')));
+      h('button', { class: 'btn primary', onclick: (e) => decide('accept', e) }, icon('check'), 'Autoriser'),
+      h('button', { class: 'btn', title: 'Ne plus demander pour cet outil de ce serveur (tant que sa configuration ne change pas)', onclick: (e) => decide('always', e) }, 'Toujours autoriser cet outil'),
+      h('button', { class: 'btn', onclick: (e) => decide('reject', e) }, 'Refuser')));
     if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command' && st.kind !== 'mcp') body.append(h('div', { class: 'row-btns' },
-      h('button', { class: 'btn primary', onclick: () => decide('accept') }, icon('check'), 'Accepter'),
-      h('button', { class: 'btn', onclick: () => decide('reject') }, 'Refuser'),
-      h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: () => decide('accept_all') }, 'Accepter tout pour cette demande')));
+      h('button', { class: 'btn primary', onclick: (e) => decide('accept', e) }, icon('check'), 'Accepter'),
+      h('button', { class: 'btn', onclick: (e) => decide('reject', e) }, 'Refuser'),
+      h('button', { class: 'btn', title: 'Accepter cette écriture et les suivantes de cette demande, sans redemander', onclick: (e) => decide('accept_all', e) }, 'Accepter tout pour cette demande')));
     if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
     (subs.get(st.parent) ?? box).append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },

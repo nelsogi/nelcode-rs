@@ -230,7 +230,11 @@ test('bac à sable : .., chemin absolu, lien qui sort, fichier trop gros — ref
 test('écriture : diff, Accepter puis Refuser ; aucun fichier modifié sans accord', async () => {
   const program = read('src/Program.cs');
   await start('ecrivain', 'Crée une note puis renomme p');
-  await decide(0, 'Accepter');
+  // Double clic sur Accepter : les boutons de l'étape sont grisés dès le premier clic, le second ne décide rien.
+  await A.waitFor(`${stepEl(0)}?.dataset.status === 'pending'`, 10_000, 'écriture 0 à valider');
+  assert.deepEqual(await A.ev(`(() => { const btns = [...${stepEl(0)}.querySelectorAll('.row-btns button')];
+    const ok = btns.find((b) => b.textContent.includes('Accepter')); ok.click(); ok.click(); btns[1].click();
+    return btns.map((b) => b.disabled); })()`), [true, true, true]);
   // Avant l'accord, rien n'était écrit ; après, le fichier est là.
   await A.waitFor(`${stepEl(1)}?.dataset.status === 'pending'`, 10_000, 'deuxième écriture');
   assert.equal(read('notes/nouveau.txt'), 'premier\nsecond\n');

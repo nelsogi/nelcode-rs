@@ -38,7 +38,7 @@ export const COMMANDS = [
   { name: 'rename', args: '[titre]', desc: 'Renommer la conversation', run: async (a) => { if (!a) return renameSession(S.current); S.current.title = a; await saveSession(S.current); renderHeader(); } },
   { name: 'export', args: '[md|txt]', desc: 'Exporter la conversation', run: (a) => exportSession(S.current, a !== 'txt') },
   { name: 'dir', desc: 'Changer le dossier de travail de la conversation', run: () => chooseFolder() },
-  { name: 'open', desc: 'Ouvrir le dossier de travail dans l\'Explorateur', run: () => openFolder() },
+  { name: 'open', get desc() { return `Ouvrir le dossier de travail dans ${S.info.fileManager}`; }, run: () => openFolder() },
   { name: 'delete', desc: 'Supprimer la conversation', run: () => S.current.messages.length ? deleteSession(S.current) : null },
   { name: 'settings', desc: 'Réglages de génération', run: () => openSettings() },
   { name: 'info', desc: 'Modèle, réglages, dossiers', run: () => showInfo() },

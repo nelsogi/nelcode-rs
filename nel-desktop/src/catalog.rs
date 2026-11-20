@@ -63,14 +63,6 @@ fn url_of(e: &Entry) -> String {
     e.url.into()
 }
 
-pub fn free_bytes(path: &Path) -> Option<u64> {
-    use std::os::windows::ffi::OsStrExt;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
-    let mut free = 0u64;
-    let ok = unsafe { windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) };
-    (ok != 0).then_some(free)
-}
-
 /// Télécharge `url` dans `dest`, empreinte calculée au fil de l'eau et comparée à `sha256` : un fichier faux est
 /// effacé. Progression dans l'événement `event` ({ received, total } plus `tag`). Refuse plus de `bytes` + 1 Mo.
 #[allow(clippy::too_many_arguments)]
@@ -136,7 +128,7 @@ pub fn list() -> serde_json::Value {
 pub async fn install(app: &AppHandle, name: &str, cancel: &AtomicBool) -> Result<store::ImportReport> {
     let e = CATALOG.iter().find(|e| e.name == name).ok_or_else(|| format!("« {name} » n'est pas dans le catalogue"))?;
     fs::create_dir_all(store::root()).map_err(|e| e.to_string())?;
-    if let Some(free) = free_bytes(&store::root())
+    if let Some(free) = crate::os::free_bytes(&store::root())
         && free < 2 * e.bytes
     {
         return Err(format!("espace disque insuffisant : {} Mo libres, {} Mo nécessaires", free / 1_000_000, 2 * e.bytes / 1_000_000));

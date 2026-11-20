@@ -49,6 +49,11 @@ export function updateError(e) {
 // manual : depuis la palette ou les réglages (dit aussi « à jour », et l'erreur est un vrai toast d'erreur).
 export async function checkUpdate(manual) {
   if (U.checking || (U.state !== 'idle' && U.state !== 'available')) return;
+  // Linux, paquet .deb : pas de mise à jour automatique (seule l'AppImage se remplace elle-même).
+  if (S.info.selfUpdate === false) {
+    if (manual) toast('Nel Code est installé par le paquet .deb : télécharge le nouveau .deb sur la page des versions (GitHub) et installe-le.', '', 8000);
+    return;
+  }
   U.checking = true;
   try {
     const update = await window.__TAURI__.updater.check();
@@ -162,7 +167,7 @@ export async function openSettings() {
     h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
   body.push(h('div', { class: 'field updates' }, h('div', { class: 'row' }, h('span', {}, 'Problème ?')),
     h('button', { class: 'btn', onclick: copyBugReport }, icon('copy'), 'Copier un rapport de bug'),
-    h('div', { class: 'hint' }, 'Version, Windows, modèle actif et les 50 dernières lignes du journal (jamais tes conversations).')));
+    h('div', { class: 'hint' }, 'Version, système, modèle actif et les 50 dernières lignes du journal (jamais tes conversations).')));
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'

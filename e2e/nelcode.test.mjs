@@ -195,7 +195,11 @@ test('test de vitesse', async () => {
 test('rapport de bug et journal (jamais le texte des conversations)', async () => {
   const report = await ev(`window.__TAURI__.core.invoke('bug_report')`);
   assert.match(report, /^Nel Code \d+\.\d+\.\d+/);
-  assert.match(report, /Windows : /);
+  assert.match(report, /Système : .*Windows/);
+  // Sous Windows, les textes propres au système restent ceux d'avant.
+  assert.deepEqual(await ev(`(({ os, keystore, fileManager }) => ({ os, keystore, fileManager }))(S.info)`),
+    { os: 'windows', keystore: 'Gestionnaire d\'identification de Windows', fileManager: 'l\'Explorateur' });
+  assert.equal(await ev(`document.getElementById('folder-open').title`), 'Ouvrir le dossier dans l\'Explorateur');
   assert.match(report, /Modèle actif : mini-b \(CPU\)/);
   assert.match(report, /modèle « mini-a » chargé en [\d.]+ s/);
   const lines = report.split('Journal')[1].trim().split('\n').slice(1);

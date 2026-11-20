@@ -199,9 +199,9 @@ export async function openMcp() {
       const secrets = type.value === 'http' ? { headers: pairs(headers.value, ':') } : { env: pairs(env.value, '=') };
       await invoke('mcp_add_server', { name: name.value.trim(), def, secrets });
       form = null;
-      toast(`Serveur « ${name.value.trim()} » ajouté (valeurs secrètes dans le Gestionnaire d'identification).`, 'success');
+      toast(`Serveur « ${name.value.trim()} » ajouté (valeurs secrètes dans le ${S.info.keystore}).`, 'success');
     });
-    return h('div', { class: 'mcp-form' }, name, type, stdio, http, h('div', { class: 'hint' }, 'Les valeurs des variables et des en-têtes vont dans le Gestionnaire d\'identification de Windows, jamais dans mcp.json.'),
+    return h('div', { class: 'mcp-form' }, name, type, stdio, http, h('div', { class: 'hint' }, `Les valeurs des variables et des en-têtes vont dans le ${S.info.keystore}, jamais dans mcp.json.`),
       h('div', { class: 'row-btns' }, h('button', { class: 'btn primary', onclick: add }, 'Ajouter'), h('button', { class: 'btn', onclick: () => { form = null; draw(); } }, 'Annuler')));
   }
 

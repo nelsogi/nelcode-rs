@@ -242,6 +242,7 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 
 (async () => {
   [S.info, S.settings, S.sessions] = await Promise.all([invoke('app_info'), invoke('get_settings'), invoke('list_sessions')]);
+  $('folder-open').title = `Ouvrir le dossier dans ${S.info.fileManager}`;
   applyTheme();
   applyTextSize();
   await refreshModels();

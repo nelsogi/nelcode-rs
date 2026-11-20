@@ -118,7 +118,7 @@ async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
     }
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
     let need = PACK_BYTES + PACK_UNPACKED_BYTES + 50_000_000;
-    if let Some(free) = crate::catalog::free_bytes(&root())
+    if let Some(free) = crate::os::free_bytes(&root())
         && free < need
     {
         return Err(format!("espace disque insuffisant : {} Mo libres, {} Mo nécessaires", free / 1_000_000, need / 1_000_000));

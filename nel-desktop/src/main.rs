@@ -13,6 +13,8 @@ mod gpu;
 mod images;
 mod log;
 mod mcp;
+mod os;
+mod process;
 mod remote;
 mod server;
 mod store;
@@ -104,7 +106,11 @@ fn app_info() -> Value {
     let startup_file = std::env::args().nth(1).filter(|a| a.to_lowercase().ends_with(".nelmodel") || a.to_lowercase().ends_with(".gguf"));
     json!({
         "root": store::root(),
-        "home": std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(store::root),
+        "home": os::home().unwrap_or_else(store::root),
+        "os": os::CURRENT.id(),
+        "keystore": os::CURRENT.keystore(),
+        "fileManager": os::CURRENT.file_manager(),
+        "selfUpdate": os::self_update(),
         "version": env!("CARGO_PKG_VERSION"),
         "startupFile": startup_file,
     })
@@ -286,7 +292,7 @@ fn open_folder(path: String) -> Result<()> {
     if !std::path::Path::new(&path).is_dir() {
         return Err(format!("dossier introuvable : {path}"));
     }
-    std::process::Command::new("explorer").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string())
+    os::open(&path)
 }
 
 #[tauri::command]
@@ -487,19 +493,7 @@ fn log_event(level: String, message: String) {
     if level == "error" { log::error(&message) } else { log::info(&message) }
 }
 
-/// La version de Windows, comme `ver` l'écrit (« Microsoft Windows [version 10.0.26200.1234] »).
-fn windows_version() -> String {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::process::Command::new("cmd")
-        .args(["/c", "ver"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|e| format!("inconnue ({e})"))
-}
-
-/// « Copier un rapport de bug » : version, Windows, modèle actif, les 50 dernières lignes du journal.
+/// « Copier un rapport de bug » : version, système, modèle actif, les 50 dernières lignes du journal.
 #[tauri::command]
 fn bug_report(state: State<AppState>) -> String {
     let model = state.model.lock().unwrap().as_ref().map(|m| format!("{} ({})", m.name, m.device)).unwrap_or_else(|| "(aucun)".into());
@@ -515,9 +509,9 @@ fn bug_report(state: State<AppState>) -> String {
         ),
     };
     format!(
-        "Nel Code {}\nWindows : {}\nModèle actif : {model}\nGPU : {gpu}\n\nJournal (50 dernières lignes, heures UTC) :\n{}\n",
+        "Nel Code {}\nSystème : {}\nModèle actif : {model}\nGPU : {gpu}\n\nJournal (50 dernières lignes, heures UTC) :\n{}\n",
         env!("CARGO_PKG_VERSION"),
-        windows_version(),
+        os::version(),
         log::tail(50).join("\n")
     )
 }
@@ -624,7 +618,7 @@ fn benchmark(app: AppHandle, state: State<AppState>) -> Result<()> {
 /// Le lien « Télécharger le pilote NVIDIA » (adresse fixe : l'interface ne peut pas ouvrir autre chose).
 #[tauri::command]
 fn open_driver_page() -> Result<()> {
-    std::process::Command::new("explorer").arg("https://www.nvidia.com/fr-fr/drivers/").spawn().map(|_| ()).map_err(|e| e.to_string())
+    os::open("https://www.nvidia.com/fr-fr/drivers/")
 }
 
 #[tauri::command]
@@ -970,7 +964,7 @@ fn claude_agent_save_key(key: String) -> Result<()> {
 /// Le lien d'installation de l'outil `claude` (adresse fixe : l'interface ne peut pas ouvrir autre chose).
 #[tauri::command]
 fn open_claude_install() -> Result<()> {
-    std::process::Command::new("explorer").arg(claude_agent::INSTALL_URL).spawn().map(|_| ()).map_err(|e| e.to_string())
+    os::open(claude_agent::INSTALL_URL)
 }
 
 /// Un message d'une conversation Claude Agent (reprend `session_id` s'il est donné) : le flux part dans
@@ -1148,11 +1142,16 @@ fn stop_generation(state: State<AppState>) {
 }
 
 fn main() {
-    // Nel Code relancé pour envoyer un Ctrl+C à Claude Agent (Stop) : rien d'autre.
-    let argv: Vec<String> = std::env::args().collect();
-    if argv.get(1).map(String::as_str) == Some(claude_agent::CTRL_C_ARG) {
-        std::process::exit(argv.get(2).and_then(|p| p.parse().ok()).map_or(2, claude_agent::ctrl_c_helper));
+    // Windows : Nel Code relancé pour envoyer un Ctrl+C à Claude Agent (Stop) : rien d'autre.
+    #[cfg(windows)]
+    {
+        let argv: Vec<String> = std::env::args().collect();
+        if argv.get(1).map(String::as_str) == Some(process::CTRL_C_ARG) {
+            std::process::exit(argv.get(2).and_then(|p| p.parse().ok()).map_or(2, process::ctrl_c_helper));
+        }
     }
+    // Linux, macOS : les dossiers habituels des programmes (Homebrew, ~/.local/bin) dans le PATH.
+    os::extend_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

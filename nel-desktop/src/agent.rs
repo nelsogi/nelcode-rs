@@ -125,8 +125,11 @@ impl Sandbox {
     pub fn resolve(&self, rel: &str) -> Result<PathBuf> {
         // Seulement le début : une espace finale est refusée plus bas, pas effacée.
         let rel = rel.trim_start();
+        // Sous Linux et macOS, « \ » est un caractère de nom : « ..\x » ou « \etc » y passeraient pour des noms. Les
+        // modèles écrivent souvent des chemins Windows : « \ » est un séparateur partout.
+        let unified = if cfg!(windows) { rel.to_string() } else { rel.replace('\\', "/") };
         let mut clean = PathBuf::new();
-        for c in Path::new(rel).components() {
+        for c in Path::new(&unified).components() {
             match c {
                 Component::Normal(n) => {
                     let n = n.to_string_lossy();
@@ -1384,7 +1387,7 @@ mod tests {
         let outside = d.with_extension("dehors");
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("secret.txt"), "s").unwrap();
-        let ok = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(d.join("lien")).arg(&outside).output().unwrap().status.success();
+        let ok = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(d.join("lien")).arg(&outside).output().is_ok_and(|o| o.status.success());
         if ok {
             assert!(sb.resolve("lien/secret.txt").unwrap_err().contains("sort du dossier"));
             assert!(sb.resolve("lien/nouveau.txt").is_err(), "écrire à travers le lien");
@@ -1392,6 +1395,61 @@ mod tests {
         }
         fs::remove_dir_all(&d).unwrap();
         fs::remove_dir_all(&outside).unwrap();
+    }
+
+    /// Linux, macOS : liens symboliques (dossier, fichier, cassé, relatif) qui sortent du dossier ; « \ » séparateur.
+    #[cfg(unix)]
+    #[test]
+    fn liens_symboliques_unix() {
+        use std::os::unix::fs::symlink;
+        let d = tmp();
+        let outside = d.with_extension("dehors");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "s").unwrap();
+        symlink(&outside, d.join("lien")).unwrap();
+        symlink(outside.join("secret.txt"), d.join("src/fichier-lie.txt")).unwrap();
+        symlink("../../dehors-relatif", d.join("src/relatif")).unwrap();
+        symlink(d.join("inexistant"), d.join("casse")).unwrap();
+        symlink(d.join("src/a.txt"), d.join("interne.txt")).unwrap();
+        let sb = Sandbox::new(d.to_str().unwrap()).unwrap();
+        assert!(sb.resolve("lien/secret.txt").unwrap_err().contains("sort du dossier"));
+        assert!(sb.resolve("lien/nouveau.txt").is_err(), "écrire à travers le lien");
+        assert!(sb.resolve("src/fichier-lie.txt").unwrap_err().contains("sort du dossier"));
+        assert!(sb.resolve("src/relatif/x").is_err());
+        assert!(sb.resolve("casse").unwrap_err().contains("lien cassé"));
+        assert!(sb.resolve("casse/x.txt").is_err());
+        assert_eq!(sb.rel(&sb.resolve("interne.txt").unwrap()), "src/a.txt", "un lien qui reste dans le dossier");
+        assert!(!walk(&d).iter().any(|f| f.starts_with("lien") || f.contains("fichier-lie")), "list_files ne suit pas les liens");
+        for bad in ["..\\x", "src\\..\\..\\x", "\\etc\\passwd"] {
+            assert!(sb.resolve(bad).is_err(), "{bad}");
+        }
+        assert_eq!(sb.rel(&sb.resolve("src\\nouveau.txt").unwrap()), "src/nouveau.txt");
+        // Un dossier de travail donné par un lien : résolu, et ses fichiers restent dedans.
+        let via = d.with_extension("via");
+        symlink(&d, &via).unwrap();
+        let sb2 = Sandbox::new(via.to_str().unwrap()).unwrap();
+        assert!(sb2.resolve("src/a.txt").unwrap().starts_with(fs::canonicalize(&d).unwrap()));
+        fs::remove_file(&via).unwrap();
+        fs::remove_dir_all(&d).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    /// La casse : les fichiers protégés le sont quelle que soit leur casse (sous Linux, « .ENV » est un autre fichier
+    /// que « .env », mais tout aussi secret). Et selon le système de fichiers, un nom en d'autres capitales est le même
+    /// fichier (Windows, macOS) ou un autre (Linux) : il reste dans le dossier dans les deux cas.
+    #[test]
+    fn casse_des_noms() {
+        let none: Vec<String> = vec![];
+        for p in [".ENV", "App/.Env", "Cle.PEM", ".GIT/config", "ID_RSA"] {
+            assert!(protected_by(p, &none).is_some(), "{p}");
+        }
+        let d = tmp();
+        let sb = Sandbox::new(d.to_str().unwrap()).unwrap();
+        let other = sb.resolve("SRC/A.TXT").unwrap();
+        assert!(other.starts_with(fs::canonicalize(&d).unwrap()));
+        let insensitive = d.join("SRC").join("A.TXT").is_file();
+        assert_eq!(insensitive, cfg!(any(windows, target_os = "macos")), "système de fichiers de test inhabituel ?");
+        fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

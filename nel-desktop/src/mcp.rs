@@ -10,19 +10,17 @@
 //!   (serveurs de projet), au format `mcpServers` de Claude Desktop. Un serveur de projet ne démarre jamais sans
 //!   l'accord de l'utilisateur, donné pour ce dossier et cette configuration précise (empreinte SHA-256 du dossier, de
 //!   la configuration et du programme trouvé) : si elle change, l'accord est redemandé.
-//! - Les valeurs secrètes (variables `secretEnv`, en-têtes `secretHeaders`) sont dans le Gestionnaire
-//!   d'identification, jamais dans mcp.json. Un processus MCP ne reçoit pas les variables secrètes de Nel Code
-//!   (KEY, TOKEN, SECRET, PASSWORD…).
-//! - Un processus stdio et tous ses enfants sont dans un Job Object : ils sont arrêtés avec la conversation ou
-//!   l'application. Son stderr va dans logs\mcp\<serveur>.log.
+//! - Les valeurs secrètes (variables `secretEnv`, en-têtes `secretHeaders`) sont dans le trousseau du système
+//!   (Gestionnaire d'identification sous Windows), jamais dans mcp.json. Un processus MCP ne reçoit pas les variables
+//!   secrètes de Nel Code (KEY, TOKEN, SECRET, PASSWORD…).
+//! - Un processus stdio et tous ses enfants sont dans un Job Object (un groupe de processus sous Linux et macOS) : ils
+//!   sont arrêtés avec la conversation ou l'application. Son stderr va dans logs\mcp\<serveur>.log.
 //! - mcp-state.json : les accords des serveurs de projet, les outils « toujours autorisés », et les dernières listes
 //!   d'outils (barre de contexte, page MCP).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -34,7 +32,8 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager as _};
 use tokio::sync::{Notify, oneshot};
 
-use crate::command::{self, Job};
+use crate::command;
+use crate::process::{self, Job};
 use crate::remote::creds;
 use crate::store::{self, Result};
 
@@ -252,11 +251,13 @@ impl Scope {
         fs::canonicalize(dir).ok().filter(|d| d.is_dir()).map(Scope::Project)
     }
 
-    /// Le dossier, comme clé des accords (minuscules : Windows ne distingue pas la casse).
+    /// Le dossier, comme clé des accords (en minuscules sous Windows, qui ne distingue pas la casse ; tel quel ailleurs :
+    /// sous Linux, « Projet » et « projet » sont deux dossiers, et sous macOS un accord redemandé est sans danger).
     fn dir_key(&self) -> String {
         match self {
             Scope::Global => String::new(),
-            Scope::Project(d) => d.to_string_lossy().to_lowercase(),
+            Scope::Project(d) if cfg!(windows) => d.to_string_lossy().to_lowercase(),
+            Scope::Project(d) => d.to_string_lossy().into_owned(),
         }
     }
 
@@ -398,12 +399,6 @@ fn headers_for(key: &str, s: &Server) -> Result<reqwest::header::HeaderMap> {
 // ---------------------------------------------------------------------------------------------------------
 // Programme, dossier, empreinte
 
-/// Un programme cherché dans le PATH : tel quel s'il a une extension, sinon .exe, .cmd, .bat, .com (npx est npx.cmd).
-fn search_path(name: &str) -> Option<PathBuf> {
-    let exts: &[&str] = if Path::new(name).extension().is_some() { &[""] } else { &[".exe", ".cmd", ".bat", ".com"] };
-    std::env::split_paths(&std::env::var_os("PATH")?).flat_map(|d| exts.iter().map(move |e| d.join(format!("{name}{e}")))).find(|p| p.is_file())
-}
-
 /// Ce qui sera lancé : (programme trouvé, dossier). Pour un serveur de projet, un chemin relatif (programme, cwd) reste
 /// dans le dossier de travail.
 pub fn resolve(scope: &Scope, s: &Server) -> Result<(PathBuf, PathBuf)> {
@@ -416,7 +411,7 @@ pub fn resolve(scope: &Scope, s: &Server) -> Result<(PathBuf, PathBuf)> {
             }
             p
         }
-        (Scope::Global, None) => std::env::var_os("USERPROFILE").map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(store::root),
+        (Scope::Global, None) => crate::os::home().filter(|p| p.is_dir()).unwrap_or_else(store::root),
         (Scope::Project(d), Some(c)) => {
             let p = crate::agent::Sandbox::new(&d.to_string_lossy())?.resolve(c)?;
             if !p.is_dir() {
@@ -434,7 +429,7 @@ pub fn resolve(scope: &Scope, s: &Server) -> Result<(PathBuf, PathBuf)> {
             Scope::Global => dir.join(p),
         }
     } else {
-        search_path(command).ok_or_else(|| format!("« {command} » introuvable dans le PATH"))?
+        crate::os::find_program(command).ok_or_else(|| format!("« {command} » introuvable dans le PATH"))?
     };
     if !program.is_file() {
         return Err(format!("« {} » introuvable", program.display()));
@@ -1056,22 +1051,16 @@ impl Drop for Instance {
     }
 }
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-const CREATE_SUSPENDED: u32 = 0x0000_0004;
-
-/// Lance le processus d'un serveur stdio (dans un Job Object, sans fenêtre, stderr dans son journal).
+/// Lance le processus d'un serveur stdio (dans un Job Object ou un groupe de processus, sans fenêtre, stderr dans son
+/// journal).
 fn spawn_stdio(app: Option<AppHandle>, p: &Prepared) -> Result<(Arc<Shared>, Job, u32)> {
     let Transport::Stdio { args, .. } = &p.server.transport else { unreachable!() };
     let (program, dir) = p.launch.clone().ok_or("programme introuvable")?;
     let env = env_for(&p.key, &p.server)?;
     let mut cmd = Command::new(&program);
-    cmd.args(args).current_dir(&dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+    cmd.args(args).current_dir(&dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.env_clear().envs(env);
-    let job = Job::new()?;
-    let mut child = cmd.spawn().map_err(|e| format!("« {} » ne se lance pas : {e}", program.display()))?;
-    // Dans le job avant de démarrer : aucun enfant ne peut lui échapper.
-    unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(job.0, child.as_raw_handle() as _) };
-    command::resume(child.id());
+    let (mut child, job) = process::spawn(&mut cmd).map_err(|e| format!("« {} » ne se lance pas : {e}", program.display()))?;
     let pid = child.id();
     log_line(&p.key, &format!("--- démarrage : {} (pid {pid}) ---", program.display()));
 
@@ -1581,7 +1570,7 @@ pub fn import(path: &Path) -> Result<Value> {
 
 /// La configuration de Claude Desktop sur ce PC.
 pub fn claude_desktop_config() -> PathBuf {
-    PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("Claude").join("claude_desktop_config.json")
+    crate::os::claude_desktop_config()
 }
 
 #[cfg(test)]
@@ -1627,7 +1616,12 @@ mod tests {
         let s = parse_server("x", &json!({ "command": "node", "args": ["a.js"] })).unwrap();
         let d1 = Scope::Project(PathBuf::from("C:\\Projet"));
         let h = fingerprint(&d1, &s, Some(Path::new("C:\\node.exe")));
-        assert_eq!(h, fingerprint(&Scope::Project(PathBuf::from("c:\\projet")), &s, Some(Path::new("C:\\node.exe"))), "la casse du dossier ne compte pas");
+        let other_case = fingerprint(&Scope::Project(PathBuf::from("c:\\projet")), &s, Some(Path::new("C:\\node.exe")));
+        if cfg!(windows) {
+            assert_eq!(h, other_case, "Windows : la casse du dossier ne compte pas");
+        } else {
+            assert_ne!(h, other_case, "Linux, macOS : un autre dossier, un autre accord");
+        }
         let mut s2 = s.clone();
         s2.disabled = true;
         assert_eq!(h, fingerprint(&d1, &s2, Some(Path::new("C:\\node.exe"))), "désactiver ne change pas la configuration");
@@ -1699,13 +1693,14 @@ mod tests {
         let scope = Scope::project(d.to_str().unwrap()).unwrap();
         let ok = parse_server("p", &json!({ "command": "outils/serveur.exe", "cwd": "outils" })).unwrap();
         let (prog, cwd) = resolve(&scope, &ok).unwrap();
-        assert!(prog.ends_with("outils\\serveur.exe") && cwd.ends_with("outils"));
+        assert!(prog.ends_with(Path::new("outils").join("serveur.exe")) && cwd.ends_with("outils"));
         for bad in [json!({ "command": "../dehors.exe" }), json!({ "command": "outils/serveur.exe", "cwd": "../.." }), json!({ "command": "programme-introuvable-xyz" })] {
             assert!(resolve(&scope, &parse_server("p", &bad).unwrap()).is_err(), "{bad}");
         }
-        // cmd est trouvé dans le PATH (avec son extension).
-        let (cmd, _) = resolve(&Scope::Global, &parse_server("c", &json!({ "command": "cmd" })).unwrap()).unwrap();
-        assert!(cmd.to_string_lossy().to_lowercase().ends_with("cmd.exe"));
+        // Un programme trouvé dans le PATH : cmd (avec son extension) sous Windows, sh ailleurs.
+        let (name, file) = if cfg!(windows) { ("cmd", "cmd.exe") } else { ("sh", "sh") };
+        let (cmd, _) = resolve(&Scope::Global, &parse_server("c", &json!({ "command": name })).unwrap()).unwrap();
+        assert_eq!(cmd.file_name().unwrap().to_string_lossy().to_lowercase(), file);
         fs::remove_dir_all(&d).unwrap();
     }
 }

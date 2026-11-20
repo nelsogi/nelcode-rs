@@ -103,12 +103,11 @@ pub fn cost(prices: &Value, model: &str, input: u64, output: u64) -> f64 {
     price_of(prices, model).map_or(0.0, |(i, o)| (input as f64 * i + output as f64 * o) / 1e6)
 }
 
-/// L'heure locale de Windows : (secondes Unix, « AAAA-MM-JJTHH:MM:SS »).
+/// L'heure locale : (secondes Unix, « AAAA-MM-JJTHH:MM:SS »).
 pub fn local_now() -> (i64, String) {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
-    let mut t: windows_sys::Win32::Foundation::SYSTEMTIME = unsafe { std::mem::zeroed() };
-    unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t) };
-    (ts, format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond))
+    let (y, mo, d, h, mi, s) = crate::os::local_time(ts);
+    (ts, format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
 }
 
 /// Une réponse à enregistrer. `cost` : le coût donné par l'outil (Claude Agent) ; sinon calculé avec la table

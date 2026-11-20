@@ -1,8 +1,13 @@
-# Un tag v* (par exemple v0.1.0) : tests, installateur Windows, release brouillon sur GitHub.
+# Un tag v* (par exemple v0.1.0) : tests et paquets pour Windows, Linux et macOS, release brouillon sur GitHub.
 # La release reste un brouillon : rien n'est publié tant qu'on ne clique pas sur « Publish release ».
-# latest.json (mises à jour automatiques) est joint à la release : les installations le voient une fois la release publiée.
-# Les tests tournent sur CPU ; l'installateur est compilé avec la feature cuda (GPU NVIDIA avec le pack GPU), sans
-# aucune bibliothèque CUDA dedans.
+# latest.json (mises à jour automatiques des trois systèmes) est joint à la release : les installations le voient une
+# fois la release publiée.
+# - Windows : tests (cargo et interface), installateur NSIS compilé avec la feature cuda (GPU NVIDIA avec le pack GPU),
+#   sans aucune bibliothèque CUDA dedans.
+# - Linux (expérimental) : ubuntu-22.04 pour une glibc assez ancienne (les paquets marchent sur les distributions plus
+#   récentes) ; cargo test, AppImage et .deb, puis un test de démarrage de l'AppImage dans une fenêtre virtuelle (xvfb).
+# - macOS (expérimental) : cargo test, binaire universel (Intel et Apple Silicon), .app et .dmg non signés.
+# Les tests de l'interface (e2e, pilotés par le port de débogage de WebView2) ne tournent que sous Windows.
 name: Release
 
 on:
@@ -10,22 +15,54 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write # créer la release brouillon et y joindre l'installateur
+  contents: write # créer la release brouillon et y joindre les paquets
 
 jobs:
-  windows:
-    runs-on: windows-2025
+  # La release brouillon, créée une fois : les trois systèmes y joignent leurs paquets.
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.create.outputs.id }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Le tag correspond à la version de nel-desktop/Cargo.toml
-        shell: bash
         run: |
           version=$(grep -m1 '^version' nel-desktop/Cargo.toml | cut -d '"' -f2)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas à la version $version de nel-desktop/Cargo.toml"
             exit 1
           fi
+
+      # La section de CHANGELOG.md pour cette version, en tête de la release (et dans latest.json : le bandeau
+      # « Nel Code X.Y.Z est disponible » l'affiche, jusqu'au « --- »).
+      - name: Release brouillon
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '/^## \[/ { p = index($0, "[" v "]") > 0; next } p' CHANGELOG.md > notes.md
+          {
+            cat notes.md
+            echo
+            echo '---'
+            echo
+            echo "Nel Code pour Windows, Linux (expérimental) et macOS (expérimental). Les changements sont dans [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md), l'installation sur chaque système dans le [README](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/README.md#installation)."
+            echo
+            echo "- **Windows** : \`*_x64-setup.exe\`. L'installateur n'est pas signé : Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » → « Informations complémentaires » → « Exécuter quand même »."
+            echo "- **Linux** : \`*.AppImage\` (se met à jour tout seul) ou \`*.deb\` (Debian, Ubuntu ; mises à jour à la main)."
+            echo "- **macOS** : \`*.dmg\` (Intel et Apple Silicon). L'appli n'est pas signée : au premier lancement, clic droit sur Nel Code → Ouvrir, ou Réglages Système → Confidentialité et sécurité → « Ouvrir quand même »."
+            echo
+            echo "Un modèle à importer (glisser-déposer le \`.nelmodel\` dans la fenêtre) : voir la release [models](https://github.com/$GITHUB_REPOSITORY/releases/tag/models) et sa [carte](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/MODEL-CARD.md)."
+          } > body.md
+          gh release create "$GITHUB_REF_NAME" --draft --title "Nel Code $GITHUB_REF_NAME" --notes-file body.md
+          echo "id=$(gh release view "$GITHUB_REF_NAME" --json databaseId -q .databaseId)" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: release
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -87,45 +124,20 @@ jobs:
         with:
           toolset: "14.44"
 
-      # La section de CHANGELOG.md pour cette version : en tête de la release, et dans latest.json (le bandeau
-      # « Nel Code X.Y.Z est disponible » l'affiche, jusqu'au « --- »).
-      - name: Notes de version
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo 'body<<NOTES_EOF'
-            awk -v v="${GITHUB_REF_NAME#v}" '/^## \[/ { p = index($0, "[" v "]") > 0; next } p' CHANGELOG.md
-            echo NOTES_EOF
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Installateur et release brouillon
+      - name: Installateur
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pas de GPU sur le runner : les noyaux sont compilés pour Turing (GTX 16xx, RTX 20xx) et plus récent.
           CUDA_COMPUTE_CAP: "75"
-          # Signature des mises à jour (.sig et latest.json). La clé privée n'est que dans les secrets du dépôt.
+          # Signature des mises à jour (.sig). La clé privée n'est que dans les secrets du dépôt.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: nel-desktop
           args: --features cuda
-          tagName: ${{ github.ref_name }}
-          releaseName: Nel Code ${{ github.ref_name }}
-          releaseBody: |
-            ${{ steps.notes.outputs.body }}
-
-            ---
-
-            Installateur Windows de Nel Code. Les changements sont dans [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
-
-            Un modèle à importer (glisser-déposer le `.nelmodel` dans la fenêtre) : voir la release [models](https://github.com/${{ github.repository }}/releases/tag/models) et sa [carte](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/MODEL-CARD.md).
-
-            L'installateur n'est pas signé : Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » → « Informations complémentaires » → « Exécuter quand même ».
-          releaseDraft: true
-          prerelease: false
-          uploadUpdaterJson: true
+          releaseId: ${{ needs.release.outputs.id }}
+          uploadUpdaterJson: false
 
       # Sans ce contrôle, une DLL CUDA importée normalement empêcherait Nel Code de démarrer sur un PC sans GPU :
       # elles doivent toutes être en chargement différé (nel-desktop/build.rs). Et l'installateur reste petit.
@@ -140,3 +152,108 @@ jobs:
           $setup = Get-ChildItem target/release/bundle/nsis -Filter *-setup.exe | Select-Object -First 1
           "{0} : {1:N1} Mo" -f $setup.Name, ($setup.Length / 1MB)
           if ($setup.Length -gt 30MB) { throw "installateur de $([math]::Round($setup.Length / 1MB)) Mo : une bibliothèque CUDA y est-elle entrée ?" }
+
+  linux:
+    needs: release
+    # La plus ancienne image : les paquets demandent la glibc 2.35 au plus (Ubuntu 22.04, Debian 12 et plus récents).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # WebKitGTK et GTK (Tauri), xvfb (test de démarrage), gnome-keyring et dbus (le trousseau des tests : Secret
+      # Service).
+      - name: Bibliothèques du système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev patchelf file xvfb gnome-keyring dbus-x11
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Modèles de test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download models --pattern "minichat-v3b.nelmodel" --dir test-models
+          curl -fsSL -o test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/ebb2015119c907b064c512bf053e945850b5875f/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+          curl -fsSL -o test-models/qwen-tokenizer.json https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct/resolve/ea3f2471cf1b1f0db85067f1ef93848e38e88c25/tokenizer.json
+          echo "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32  test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" | sha256sum -c
+
+      # Le trousseau des tests : une session D-Bus avec GNOME Keyring déverrouillé (mot de passe jetable).
+      - name: Tests
+        run: dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && cargo test --workspace'
+
+      - name: AppImage et .deb
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: nel-desktop
+          releaseId: ${{ needs.release.outputs.id }}
+          uploadUpdaterJson: false
+
+      - name: Test de démarrage (xvfb)
+        run: bash scripts/linux-startup-test.sh "$(ls target/release/bundle/appimage/*.AppImage | head -n1)"
+
+      - name: Le .deb s'installe
+        run: |
+          deb=$(ls target/release/bundle/deb/*.deb | head -n1)
+          sudo apt-get install -y "./$deb"
+          dpkg -L "$(dpkg-deb -f "$deb" Package)" | grep /usr/bin/
+
+  macos:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Modèles de test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download models --pattern "minichat-v3b.nelmodel" --dir test-models
+          curl -fsSL -o test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/ebb2015119c907b064c512bf053e945850b5875f/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+          curl -fsSL -o test-models/qwen-tokenizer.json https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct/resolve/ea3f2471cf1b1f0db85067f1ef93848e38e88c25/tokenizer.json
+          echo "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32  test-models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" | shasum -a 256 -c
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # Pas de certificat Apple : l'appli n'est ni signée ni notarisée (voir le README pour l'ouvrir quand même).
+      - name: Binaire universel, .app et .dmg
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: nel-desktop
+          args: --target universal-apple-darwin
+          releaseId: ${{ needs.release.outputs.id }}
+          uploadUpdaterJson: false
+
+  # latest.json, une fois les trois systèmes joints (un seul fichier pour tous : pas d'écriture concurrente).
+  updater:
+    needs: [release, windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '/^## \[/ { p = index($0, "[" v "]") > 0; next } p' CHANGELOG.md > notes.md
+          bash scripts/updater-json.sh "$GITHUB_REF_NAME" notes.md > latest.json
+          jq -e '.platforms | has("windows-x86_64") and has("linux-x86_64") and has("darwin-aarch64")' latest.json
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber

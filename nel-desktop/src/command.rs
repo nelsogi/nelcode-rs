@@ -1,24 +1,29 @@
 //! Mode Agent : les commandes (outil `run_command`). Un programme et ses arguments, lancé **sans shell** (jamais
 //! cmd /c, PowerShell, bash ; pas de `|`, `>`, `&&`), dans le dossier de travail, avec un délai maximal. Le processus
-//! et tous ses enfants sont dans un Job Object Windows : Stop, le délai ou la fin de la commande les tuent tous. Les
-//! variables d'environnement dont le nom contient KEY, TOKEN ou SECRET ne sont pas transmises.
+//! et tous ses enfants sont dans un Job Object (Windows) ou un groupe de processus (Linux, macOS) : Stop, le délai ou
+//! la fin de la commande les tuent tous. Les variables d'environnement dont le nom contient KEY, TOKEN ou SECRET ne
+//! sont pas transmises.
 
 use std::ffi::OsString;
 use std::io::Read;
-use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use tokio::sync::Notify;
 
+use crate::process;
+
 /// La sortie gardée : le début et la fin (au-delà, le milieu est coupé).
 const KEEP_HEAD: usize = 16_000;
 const KEEP_TAIL: usize = 48_000;
 
 /// Les shells et lanceurs qui interpréteraient une ligne de commande : refusés.
-const SHELLS: [&str; 14] = ["cmd", "powershell", "pwsh", "powershell_ise", "bash", "sh", "zsh", "wsl", "conhost", "wscript", "cscript", "mshta", "start", "explorer"];
+/// (Windows, puis Linux et macOS : sh, open, xdg-open, osascript…)
+const SHELLS: &[&str] = &[
+    "cmd", "powershell", "pwsh", "powershell_ise", "bash", "sh", "zsh", "wsl", "conhost", "wscript", "cscript", "mshta", "start", "explorer",
+    "dash", "ksh", "csh", "tcsh", "fish", "osascript", "open", "xdg-open",
+];
 /// Les opérateurs d'un shell : sans shell, ils ne feraient rien, on les refuse pour que ce soit clair.
 const OPERATORS: [&str; 10] = ["|", "||", "&", "&&", ";", ">", ">>", "<", "2>", "2>&1"];
 
@@ -28,7 +33,7 @@ fn base(program: &str) -> String {
     name.strip_suffix(".exe").map(str::to_string).unwrap_or(name)
 }
 
-/// Refuse ce qui passerait par un shell : un shell, un script .bat/.cmd/.ps1 (Windows les lance par cmd.exe), un
+/// Refuse ce qui passerait par un shell : un shell, un script .bat/.cmd/.ps1 (Windows les lance par cmd.exe) ou .sh, un
 /// programme avec ses arguments dans le même texte, un opérateur de shell.
 pub fn validate(program: &str, args: &[String]) -> Result<(), String> {
     let p = program.trim();
@@ -42,7 +47,7 @@ pub fn validate(program: &str, args: &[String]) -> Result<(), String> {
         return Err(format!("« {p} » est un shell : refusé. run_command lance un programme directement, sans shell (pas de cmd /c, PowerShell, bash…)"));
     }
     let lower = p.to_lowercase();
-    if [".bat", ".cmd", ".ps1", ".vbs", ".js", ".wsf", ".psm1"].iter().any(|x| lower.ends_with(x)) {
+    if [".bat", ".cmd", ".ps1", ".vbs", ".js", ".wsf", ".psm1", ".sh", ".bash", ".zsh", ".command"].iter().any(|x| lower.ends_with(x)) {
         return Err(format!("« {p} » est un script qui passerait par un shell : refusé"));
     }
     if p.contains(['|', '&', '>', '<', ';']) {
@@ -125,79 +130,14 @@ impl Capture {
     }
 }
 
-/// Le Job Object : tuer le job tue le processus et tous ses enfants ; le fermer (drop) tue ce qui reste.
-pub(crate) struct Job(pub(crate) windows_sys::Win32::Foundation::HANDLE);
-
-impl Job {
-    pub(crate) fn new() -> Result<Self, String> {
-        use windows_sys::Win32::System::JobObjects::*;
-        unsafe {
-            let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if h.is_null() {
-                return Err(format!("Job Object : {}", std::io::Error::last_os_error()));
-            }
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(h, JobObjectExtendedLimitInformation, &info as *const _ as *const _, std::mem::size_of_val(&info) as u32);
-            Ok(Job(h))
-        }
-    }
-
-    pub(crate) fn kill(&self) {
-        unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) };
-    }
-}
-
-impl Drop for Job {
-    fn drop(&mut self) {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
-    }
-}
-
-// SAFETY : un HANDLE de job s'utilise depuis n'importe quel thread.
-unsafe impl Send for Job {}
-unsafe impl Sync for Job {}
-
-/// Reprend un processus créé suspendu (CREATE_SUSPENDED) : tous ses threads.
-pub(crate) fn resume(pid: u32) {
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
-    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
-    unsafe {
-        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-        if snap.is_null() || snap == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-            return;
-        }
-        let mut t: THREADENTRY32 = std::mem::zeroed();
-        t.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-        let mut ok = Thread32First(snap, &mut t);
-        while ok != 0 {
-            if t.th32OwnerProcessID == pid {
-                let th = OpenThread(THREAD_SUSPEND_RESUME, 0, t.th32ThreadID);
-                if !th.is_null() {
-                    ResumeThread(th);
-                    windows_sys::Win32::Foundation::CloseHandle(th);
-                }
-            }
-            ok = Thread32Next(snap, &mut t);
-        }
-        windows_sys::Win32::Foundation::CloseHandle(snap);
-    }
-}
-
 /// Lance `program args` dans `dir` (sans shell, sans fenêtre, sans entrée), arrête tout au bout de `timeout` ou sur
 /// `cancel` (Stop). `on_output` reçoit la sortie (stdout et stderr) au fil de l'eau.
 pub async fn execute(program: &str, args: &[String], dir: &Path, timeout: Duration, cancel: &Notify, mut on_output: impl FnMut(&str)) -> Result<Outcome, String> {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_SUSPENDED: u32 = 0x0000_0004;
     let mut cmd = Command::new(program);
-    cmd.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+    cmd.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let env: Vec<(OsString, OsString)> = std::env::vars_os().filter(|(k, _)| !hidden_var(&k.to_string_lossy())).collect();
     cmd.env_clear().envs(env);
-    let job = Job::new()?;
-    let mut child = cmd.spawn().map_err(|e| format!("« {program} » ne se lance pas : {e} (programme introuvable dans le PATH ?)"))?;
-    // Dans le job avant de démarrer : aucun enfant ne peut lui échapper.
-    unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(job.0, child.as_raw_handle() as _) };
-    resume(child.id());
+    let (mut child, job) = process::spawn(&mut cmd).map_err(|e| format!("« {program} » ne se lance pas : {e} (programme introuvable dans le PATH ?)"))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     for mut pipe in [child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)].into_iter().flatten() {
@@ -261,6 +201,12 @@ mod tests {
         for (p, args) in [("cmd", a(&["/c", "dir"])), ("CMD.EXE", a(&[])), ("powershell", a(&["-c", "ls"])), ("pwsh.exe", a(&[])), ("bash", a(&[])), ("C:\\Windows\\System32\\cmd.exe", a(&[])), ("wsl", a(&[]))] {
             assert!(validate(p, &args).unwrap_err().contains("shell"), "{p}");
         }
+        // Linux et macOS.
+        for p in ["/bin/sh", "/usr/bin/zsh", "fish", "open", "xdg-open", "osascript"] {
+            assert!(validate(p, &a(&["-c", "x"])).unwrap_err().contains("shell"), "{p}");
+        }
+        assert!(validate("./build.sh", &[]).unwrap_err().contains("script"));
+        assert!(validate("/usr/bin/git", &a(&["status"])).is_ok());
         assert!(validate("build.bat", &[]).unwrap_err().contains("script"));
         assert!(validate("tools\\x.cmd", &[]).is_err());
         assert!(validate("dotnet build", &[]).unwrap_err().contains("un seul nom"));
@@ -314,6 +260,7 @@ mod tests {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
     }
 
+    #[cfg(windows)]
     #[test]
     fn execution_sortie_code_et_environnement() {
         let dir = std::env::temp_dir();
@@ -336,6 +283,7 @@ mod tests {
 
     /// Stop et le délai tuent la commande et ses enfants : l'enfant (lancé par la commande) devait écrire un fichier
     /// au bout de 3 s ; tué avec elle, il ne l'écrit jamais.
+    #[cfg(windows)]
     #[test]
     fn stop_et_delai_tuent_les_enfants() {
         let dir = std::env::temp_dir().join(format!("nelcode-cmd-{}", std::process::id()));
@@ -355,6 +303,48 @@ mod tests {
             c2.notify_one();
         });
         let out = rt().block_on(execute("cmd.exe", &args, &dir, Duration::from_secs(60), &cancel, |_| {})).unwrap();
+        assert!(out.stopped);
+        std::thread::sleep(Duration::from_secs(5));
+        assert!(!dir.join("marque.txt").exists(), "un enfant a survécu");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execution_sous_linux_et_macos() {
+        let dir = std::env::temp_dir();
+        // SAFETY : seul ce test lit ces variables.
+        unsafe {
+            std::env::set_var("NELCODE_TEST_UNIX_TOKEN", "cache");
+            std::env::set_var("NELCODE_TEST_UNIX_VISIBLE", "visible");
+        }
+        let env = rt().block_on(execute("env", &[], &dir, Duration::from_secs(20), &Notify::new(), |_| {})).unwrap();
+        assert_eq!(env.code, Some(0));
+        assert!(env.output.contains("NELCODE_TEST_UNIX_VISIBLE=visible"), "{}", env.output);
+        assert!(!env.output.contains("cache"), "{}", env.output);
+        let bad = rt().block_on(execute("/bin/sh", &a(&["-c", "exit 3"]), &dir, Duration::from_secs(20), &Notify::new(), |_| {})).unwrap();
+        assert_eq!(bad.code, Some(3));
+        assert!(rt().block_on(execute("programme-qui-n-existe-pas", &[], &dir, Duration::from_secs(5), &Notify::new(), |_| {})).is_err());
+    }
+
+    /// Le groupe de processus : Stop et le délai tuent aussi l'enfant lancé en arrière-plan par la commande.
+    #[cfg(unix)]
+    #[test]
+    fn stop_et_delai_tuent_les_enfants_unix() {
+        let dir = std::env::temp_dir().join(format!("nelcode-cmd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let args = a(&["-c", "(sleep 3; echo fini > marque.txt) & sleep 30"]);
+        let t = Instant::now();
+        let out = rt().block_on(execute("/bin/sh", &args, &dir, Duration::from_secs(1), &Notify::new(), |_| {})).unwrap();
+        assert!(out.timed_out && out.code.is_none());
+        assert!(t.elapsed() < Duration::from_secs(5));
+        let cancel = std::sync::Arc::new(Notify::new());
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            c2.notify_one();
+        });
+        let out = rt().block_on(execute("/bin/sh", &args, &dir, Duration::from_secs(60), &cancel, |_| {})).unwrap();
         assert!(out.stopped);
         std::thread::sleep(Duration::from_secs(5));
         assert!(!dir.join("marque.txt").exists(), "un enfant a survécu");

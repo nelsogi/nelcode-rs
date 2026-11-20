@@ -175,6 +175,36 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
     projet (unitaires) ; poignée de main, appel, refus, « toujours », liste changée, délai, explorateurs, serveurs
     désactivés et contexte, HTTP, secrets, page MCP, arrêt avec la conversation et l'application, serveur de projet non
     autorisé puis nouvel accord, import (`e2e/mcp.test.mjs`, faux serveur MCP en Node `e2e/fake-mcp/server.mjs`).
+- **Linux et macOS (expérimental)** : Nel Code se compile et se publie aussi pour Linux (AppImage et `.deb`, x86_64,
+  glibc 2.35 ou plus récente) et macOS (binaire universel Intel et Apple Silicon, `.app` et `.dmg` non signés).
+  - Clés API (fournisseurs, MCP, Claude Agent) dans le trousseau de chaque système, par la crate `keyring` :
+    Gestionnaire d'identification sous Windows (les mêmes identifiants qu'avant), trousseau de macOS, Secret Service
+    sous Linux.
+  - Processus (commandes de l'agent, serveurs MCP stdio, `claude`) : Job Object sous Windows, groupe de processus sous
+    Linux et macOS (Stop, le délai et la fermeture tuent aussi les enfants ; sous Linux, ils s'arrêtent avec Nel Code).
+    Stop de Claude Agent : SIGINT au groupe hors Windows.
+  - Dossiers de données standards : `~/Library/Application Support/NelCode` (macOS), `$XDG_DATA_HOME/nelcode` ou
+    `~/.local/share/nelcode` (Linux) ; sous Windows, `%APPDATA%\NelCode` comme avant.
+  - Programmes cherchés dans le PATH selon le système (extensions `.exe`, `.cmd`… sous Windows ; droit d'exécution
+    ailleurs) ; sous Linux et macOS, `~/.local/bin`, `/usr/local/bin` et Homebrew sont ajoutés au PATH s'ils manquent
+    (une appli lancée depuis le Finder n'a qu'un PATH minimal). `claude` est aussi cherché dans `~/.local/bin` et
+    `~/.claude/local`. Configuration de Claude Desktop (import MCP) à sa place sur chaque système.
+  - Ouvrir un dossier ou une adresse : Explorateur, Finder ou `xdg-open` ; textes de l'interface selon le système
+    (trousseau, gestionnaire de fichiers) ; rapport de bug avec la version du système.
+  - Le pack GPU (CUDA, chargement différé des DLL) reste propre à Windows : la feature `cuda` refuse de compiler
+    ailleurs, où le calcul se fait sur le processeur.
+  - Mises à jour : `latest.json` couvre les trois systèmes (installateur NSIS, AppImage, `.app.tar.gz` universel). Un
+    Nel Code installé par le `.deb` ne cherche pas de mise à jour (à la main ; « Rechercher des mises à jour » le dit).
+  - Workflow de release : release brouillon créée une fois, puis Windows (tests cargo et de l'interface, installateur
+    avec CUDA), Linux sur ubuntu-22.04 (cargo test avec un trousseau GNOME Keyring, AppImage et `.deb`, test de
+    démarrage de l'AppImage sous xvfb, installation du `.deb`) et macOS (cargo test, binaire universel) ; `latest.json`
+    composé à la fin (`scripts/updater-json.sh`), test de démarrage `scripts/linux-startup-test.sh`.
+  - README : installation sur chaque système, ouvrir l'appli non signée sous macOS, tester sous WSL2.
+  - Tests unitaires : dossiers de données, configuration de Claude Desktop, noms de programmes et PATH (règles des trois
+    systèmes testées partout), droit d'exécution, mises à jour selon le paquet, version du système, espace disque et
+    heure locale, groupe de processus (kill, drop, SIGINT), commandes sous Linux/macOS (environnement, délai et Stop
+    qui tuent les enfants), trousseau (et, sous Windows, lecture des clés rangées par les versions d'avant), où
+    chercher `claude`, bac à sable avec liens symboliques Unix et casse des noms.
 
 ### Modifié
 
@@ -191,6 +221,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ### Corrigé
 
+- Mode Agent : les boutons d'une étape (Accepter, Refuser, Lancer, Autoriser…) sont **grisés dès le premier clic** ; un
+  double clic envoyait deux décisions (la seconde en erreur). Ils redeviennent cliquables si la décision échoue.
 - Claude Agent : un message de sous-agent ne double plus le texte de l'agent principal ni ne le coupe en étape ; les
   variables `ANTHROPIC_*` et `CLAUDE_CODE_USE_*` du PC ne sont plus transmises (la clé ne part que vers Anthropic) ; un
   dossier voisin au nom plus long n'est plus pris pour le dossier de travail ; la raison d'une modification refusée
@@ -215,6 +247,11 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - Les noms réservés de Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`…`COM9`, `LPT1`…`LPT9`, avec ou sans extension) et
   les noms qui finissent par un point ou une espace sont refusés (lecture, recherche, écriture, `@`). Une espace finale
   n'est plus effacée silencieusement avant la vérification.
+- Linux et macOS : dans les chemins de l'agent, `\` reste un séparateur (sinon `..\x` y serait un nom de fichier et non
+  une remontée) ; les shells et lanceurs de ces systèmes (`sh`, `zsh`, `fish`, `open`, `xdg-open`, `osascript`…) et les
+  scripts `.sh` sont refusés par `run_command` ; les fichiers protégés le restent quelle que soit la casse ; l'accord
+  d'un serveur MCP de projet tient compte de la casse du dossier hors Windows (« Projet » et « projet » sont deux
+  dossiers sous Linux).
 
 ## [0.8.0] - 2026-11-16
 

@@ -3,18 +3,16 @@
 //! `--resume <session_id>`), et affiche son flux dans l'interface habituelle de Nel Code : texte au fil de l'eau,
 //! chaque outil comme une étape, coût et durée à la fin.
 //!
-//! - Authentification par clé API seulement : ANTHROPIC_API_KEY, lue dans le Gestionnaire d'identification, est
+//! - Authentification par clé API seulement : ANTHROPIC_API_KEY, lue dans le trousseau du système, est
 //!   passée au processus ; les autres variables qui contiennent KEY, TOKEN ou SECRET ne le sont pas.
 //! - Le message part sur l'entrée standard (jamais en argument : rien à échapper, même pour un claude.cmd).
 //! - Mode de permission « default » (rien d'automatique : en -p, tout ce qui demande un accord est refusé) ou
 //!   « acceptEdits », et `--allowedTools` (réglages).
-//! - Stop : Ctrl+C sur la console du processus (SIGINT pour lui), puis attente de sa fin propre ; au-delà de 15 s,
-//!   le processus et ses enfants sont tués (Job Object).
+//! - Stop : Ctrl+C sur la console du processus sous Windows, SIGINT à son groupe ailleurs, puis attente de sa fin
+//!   propre ; au-delà de 15 s, le processus et ses enfants sont tués (Job Object, groupe de processus).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -25,39 +23,41 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use crate::agent::diff;
-use crate::command::{Job, hidden_var, resume};
+use crate::command::hidden_var;
+use crate::os::{self, Os};
+use crate::process;
 use crate::remote::creds;
 use crate::store::{self, Result};
 
-/// La clé API d'Anthropic de Claude Agent, dans le Gestionnaire d'identification.
+/// La clé API d'Anthropic de Claude Agent, dans le trousseau du système.
 pub const KEY_ID: &str = "claude-agent";
 /// Où installer l'outil `claude` s'il manque.
 pub const INSTALL_URL: &str = "https://code.claude.com/docs/en/setup";
-/// L'argument caché qui fait de Nel Code l'envoyeur d'un Ctrl+C (voir `ctrl_c_helper`).
-pub const CTRL_C_ARG: &str = "--nelcode-ctrl-c";
 const STOP_GRACE: Duration = Duration::from_secs(15);
 const MAX_DETAIL: usize = 20_000;
 pub const PERMISSION_MODES: [&str; 2] = ["default", "acceptEdits"];
 
-/// L'outil `claude` : claude.exe puis claude.cmd dans le PATH, sinon %USERPROFILE%\.local\bin\claude.exe (installeur
-/// natif). En debug, NELCODE_CLAUDE_PATH le remplace (vide : introuvable ; tests).
+/// Les noms de l'outil, et où le chercher hors du PATH (installeur natif ; sous Linux et macOS, aussi l'ancienne
+/// installation locale ~/.claude/local).
+fn cli_places(os: Os, home: &Path) -> (&'static [&'static str], Vec<PathBuf>) {
+    match os {
+        Os::Windows => (&["claude.exe", "claude.cmd"], vec![home.join(".local").join("bin").join("claude.exe")]),
+        _ => (&["claude"], vec![home.join(".local").join("bin").join("claude"), home.join(".claude").join("local").join("claude")]),
+    }
+}
+
+/// L'outil `claude` : sous Windows claude.exe puis claude.cmd dans le PATH, sinon %USERPROFILE%\.local\bin\claude.exe ;
+/// sous Linux et macOS claude dans le PATH, sinon ~/.local/bin/claude. En debug, NELCODE_CLAUDE_PATH le remplace
+/// (vide : introuvable ; tests).
 pub fn find_cli() -> Option<PathBuf> {
     #[cfg(debug_assertions)]
     if let Some(p) = std::env::var_os("NELCODE_CLAUDE_PATH") {
         let p = PathBuf::from(p);
         return p.is_file().then_some(p);
     }
+    let (names, fallback) = cli_places(os::CURRENT, &os::home().unwrap_or_default());
     let path = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path) {
-        for name in ["claude.exe", "claude.cmd"] {
-            let p = dir.join(name);
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
-    let local = PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join(".local").join("bin").join("claude.exe");
-    local.is_file().then_some(local)
+    std::env::split_paths(&path).flat_map(|dir| names.iter().map(move |n| dir.join(n))).chain(fallback).find(|p| os::is_executable(p))
 }
 
 /// Un nom de modèle pour `--model` : alias (« opus », « sonnet ») ou id complet (« claude-opus-5-5[1m] »).
@@ -123,33 +123,6 @@ pub fn args(session: Option<&str>, mode: &str, allowed: &[String], model: &str) 
 fn passed_var(name: &str) -> bool {
     let n = name.to_uppercase();
     !hidden_var(&n) && !n.starts_with("ANTHROPIC_") && !n.starts_with("CLAUDE_CODE_USE_")
-}
-
-// ---------------------------------------------------------------------------------------------------------
-// Stop : Ctrl+C
-
-/// Exécuté par un Nel Code lancé avec `--nelcode-ctrl-c <pid>` : s'attache à la console du processus et y envoie
-/// Ctrl+C (que Node, comme tout programme console, reçoit comme SIGINT). À part, pour ne jamais toucher à la console
-/// du Nel Code principal.
-pub fn ctrl_c_helper(pid: u32) -> i32 {
-    use windows_sys::Win32::System::Console::{AttachConsole, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler};
-    unsafe {
-        FreeConsole();
-        if AttachConsole(pid) == 0 {
-            return 2;
-        }
-        SetConsoleCtrlHandler(None, 1); // ce processus ignore lui-même le Ctrl+C
-        let ok = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) != 0;
-        std::thread::sleep(Duration::from_millis(200));
-        FreeConsole();
-        if ok { 0 } else { 1 }
-    }
-}
-
-fn send_ctrl_c(pid: u32) -> bool {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let Ok(exe) = std::env::current_exe() else { return false };
-    Command::new(exe).args([CTRL_C_ARG, &pid.to_string()]).creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -450,8 +423,6 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
     };
     let (mode, allowed, model) = settings();
     let resumed = session.is_some();
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_SUSPENDED: u32 = 0x0000_0004;
     let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().filter(|(k, _)| passed_var(&k.to_string_lossy())).collect();
     let mut cmd = Command::new(&cli);
     cmd.args(args(session.as_deref(), &mode, &allowed, &model))
@@ -461,22 +432,12 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
         .env("ANTHROPIC_API_KEY", &key)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
-    // Le drapeau « ignorer Ctrl+C » de Windows passe du parent à l'enfant : s'il était levé pour Nel Code (lancé par un
-    // programme qui le lève), claude n'entendrait jamais le Ctrl+C de Stop. On le baisse avant de lancer claude.
-    unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 0) };
-    let job = match Job::new() {
-        Ok(j) => j,
-        Err(e) => return fail(e),
-    };
-    let mut child = match cmd.spawn() {
+        .stderr(Stdio::piped());
+    process::allow_ctrl_c();
+    let (mut child, job) = match process::spawn(&mut cmd) {
         Ok(c) => c,
         Err(e) => return fail(format!("« {} » ne se lance pas : {e}", cli.display())),
     };
-    unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(job.0, child.as_raw_handle() as _) };
-    resume(child.id());
-    let pid = child.id();
     crate::log::info(&format!("Claude Agent : demande lancée ({}, mode {mode})", if resumed { "reprise de la session" } else { "nouvelle session" }));
 
     // Le message sur l'entrée standard, puis fermée.
@@ -518,7 +479,7 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
             _ = cancel.notified(), if !stopped => {
                 // Stop : Ctrl+C (SIGINT), puis on attend la fin propre (le résultat) ; au-delà, on tue.
                 stopped = true;
-                if !send_ctrl_c(pid) {
+                if !job.interrupt() {
                     crate::log::error("Claude Agent : Ctrl+C non envoyé, le processus est arrêté");
                     job.kill();
                     killed = true;
@@ -587,7 +548,20 @@ mod tests {
         for v in ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "claude_code_use_vertex"] {
             assert!(!passed_var(v), "{v}");
         }
-        assert!(passed_var("PATH") && passed_var("USERPROFILE"));
+        assert!(passed_var("PATH") && passed_var("USERPROFILE") && passed_var("HOME"));
+    }
+
+    #[test]
+    fn ou_chercher_claude() {
+        let home = Path::new("h");
+        let (names, fallback) = cli_places(Os::Windows, home);
+        assert_eq!(names, ["claude.exe", "claude.cmd"]);
+        assert_eq!(fallback, [home.join(".local").join("bin").join("claude.exe")]);
+        for os in [Os::Linux, Os::MacOs] {
+            let (names, fallback) = cli_places(os, home);
+            assert_eq!(names, ["claude"]);
+            assert_eq!(fallback, [home.join(".local").join("bin").join("claude"), home.join(".claude").join("local").join("claude")]);
+        }
     }
 
     #[test]

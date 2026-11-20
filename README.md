@@ -3,7 +3,7 @@
 Discuter avec les petits modèles de langage entraînés par [MiniChat](https://github.com/nelsogi/MiniChat), ou avec des
 modèles ouverts (Qwen2.5-Coder…), **sur ton PC, sans connexion**.
 
-Nel Code est une application Windows (Tauri v2) qui fait tourner les modèles `.nelmodel` et les modèles GGUF (Qwen2, Llama)
+Nel Code est une application de bureau pour Windows (Linux et macOS : expérimental ; Tauri v2) qui fait tourner les modèles `.nelmodel` et les modèles GGUF (Qwen2, Llama)
 sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust de [Nel Code](https://github.com/nelsogi/NelCode)
 (C#, TorchSharp), dont elle reprend les conversations et les réglages.
 
@@ -15,7 +15,13 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 
 ## Installation
 
-1. Télécharge `Nel Code_0.9.0_x64-setup.exe` dans les [Releases](https://github.com/nelsogi/nelcode-rs/releases).
+Nel Code est fait d'abord pour **Windows**. Les versions **Linux** et **macOS** sont **expérimentales** : mêmes
+fonctions (sauf le pack GPU, Windows seulement), mais moins éprouvées. Tous les fichiers sont dans les
+[Releases](https://github.com/nelsogi/nelcode-rs/releases).
+
+### Windows
+
+1. Télécharge `Nel Code_0.9.0_x64-setup.exe`.
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -23,6 +29,54 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 
 Windows 10 ou 11, 64 bits. Pas besoin de carte graphique ; avec une carte NVIDIA, le [pack GPU](#calcul-sur-gpu-nvidia)
 accélère les réponses.
+
+### Linux (expérimental)
+
+Deux paquets, pour les PC 64 bits (x86_64) avec une glibc 2.35 ou plus récente (Ubuntu 22.04, Debian 12, Fedora 36…) :
+
+- **AppImage** (`Nel Code_0.9.0_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
+  Sans FUSE (certaines distributions récentes), installe `libfuse2`, ou lance-la avec `APPIMAGE_EXTRACT_AND_RUN=1`.
+- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_0.9.0_amd64.deb"`. Le paquet **ne se met pas à jour
+  tout seul** : pour une nouvelle version, télécharge le nouveau `.deb` et installe-le de la même façon.
+
+Il faut WebKitGTK 4.1 (déjà là sur un bureau GNOME ou KDE récent ; sinon le `.deb` l'installe). Les clés API sont
+rangées dans le trousseau du bureau (**Secret Service** : GNOME Keyring, KWallet…) : sans trousseau, Nel Code
+fonctionne, mais ne peut pas garder de clé.
+
+### macOS (expérimental)
+
+1. Télécharge `Nel Code_0.9.0_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
+   glisse Nel Code dans **Applications**.
+2. L'appli n'est **pas signée** par un développeur Apple : au premier lancement, macOS dit qu'il ne peut pas vérifier
+   le développeur (ou que l'appli est « endommagée »). Pour l'ouvrir quand même :
+   - clic droit (ou Ctrl+clic) sur Nel Code dans Applications → **Ouvrir**, puis **Ouvrir** dans la fenêtre ;
+   - ou, depuis macOS 15 : lance-la une fois, puis **Réglages Système → Confidentialité et sécurité** → en bas,
+     « Ouvrir quand même » ;
+   - si macOS dit « endommagée » : dans le Terminal, `xattr -dr com.apple.quarantine "/Applications/Nel Code.app"`.
+
+Ensuite elle s'ouvre normalement et **se met à jour toute seule**. Les clés API sont rangées dans le **trousseau** de
+macOS. Le calcul se fait sur le processeur (pas de pack GPU).
+
+### Tester la version Linux sous Windows (WSL2)
+
+Sous Windows 11 (ou 10 à jour), WSLg affiche les fenêtres Linux sans rien configurer :
+
+```powershell
+wsl --install -d Ubuntu-24.04     # une fois, puis redémarrer
+```
+
+Puis, dans Ubuntu :
+
+```bash
+sudo apt update && sudo apt install -y libfuse2t64 gnome-keyring
+# Le .deb (ou l'AppImage, avec chmod +x) téléchargé dans les Releases :
+sudo apt install -y "./Nel Code_0.9.0_amd64.deb"
+# Puis Nel Code dans le menu des applications (WSLg ouvre sa fenêtre sous Windows).
+```
+
+Les données de cette version Linux sont dans `~/.local/share/nelcode` (dans WSL), à part de celles de Windows. Sans
+session de trousseau dans WSL, lance `gnome-keyring-daemon --start --components=secrets` avant Nel Code pour garder
+les clés API.
 
 ## Utilisation
 
@@ -442,6 +496,8 @@ l'installation attend qu'elle soit finie.
 - la vérification automatique se désactive dans les Réglages (« Rechercher les mises à jour au démarrage ») ;
 - les mises à jour sont **signées** : Nel Code refuse un fichier dont la signature ne correspond pas à sa clé publique ;
 - sans connexion, rien ne bloque : une notification le dit, et Nel Code fonctionne normalement.
+- sous Linux, seule l'**AppImage** se met à jour toute seule ; le paquet **.deb** se met à jour à la main (télécharger
+  le nouveau `.deb` et l'installer par-dessus).
 
 Les conversations, réglages et modèles (`%APPDATA%\NelCode`) ne sont pas touchés par une mise à jour.
 Depuis la 0.1.0 ou la 0.2.0, il faut installer la 0.3.0 à la main une fois.
@@ -486,12 +542,18 @@ demander). Au-delà de 90 jours, les lignes sont regroupées par jour.
 
 Nel Code tient un journal dans `%APPDATA%\NelCode\logs` (un fichier par jour, 7 jours gardés) : démarrage, modèles,
 erreurs, mises à jour, GPU, jamais le texte des conversations. **Copier un rapport de bug** (Réglages, palette Ctrl+K)
-copie la version, Windows, le modèle actif et les 50 dernières lignes du journal : à coller dans une
+copie la version, le système, le modèle actif et les 50 dernières lignes du journal : à coller dans une
 [issue](https://github.com/nelsogi/nelcode-rs/issues).
 
 ### Où sont les données
 
-Dans `%APPDATA%\NelCode`, comme pour Nel Code C# : les deux versions partagent les modèles (`models\`), les conversations
+| Système | Dossier des données | Clés API (fournisseurs, MCP, Claude Agent) |
+| --- | --- | --- |
+| Windows | `%APPDATA%\NelCode` | Gestionnaire d'identification de Windows |
+| macOS | `~/Library/Application Support/NelCode` | Trousseau de macOS |
+| Linux | `$XDG_DATA_HOME/nelcode` (sinon `~/.local/share/nelcode`) | Secret Service (GNOME Keyring, KWallet…) |
+
+Les clés ne sont jamais dans les fichiers de données. Sous Windows, dans `%APPDATA%\NelCode`, comme pour Nel Code C# : les deux versions partagent les modèles (`models\`), les conversations
 (`sessions\`, un fichier JSON chacune, et les images d'une conversation dans `sessions\<id>\`) et `settings.json`. Les modèles installés par la version C# (poids `weights.dat`)
 se chargent aussi.
 
@@ -504,6 +566,14 @@ Il faut :
 
 - [Rust](https://rustup.rs/) (stable) et les **outils de build C++ de Visual Studio** (« Développement Desktop en C++ ») ;
 - la CLI Tauri : `cargo install tauri-cli --version "^2" --locked`.
+
+Sous Linux, les bibliothèques de Tauri (Debian, Ubuntu :
+`sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev`),
+et pour les tests du trousseau une session Secret Service (sur un serveur ou dans WSL :
+`dbus-run-session -- bash -c 'echo -n x | gnome-keyring-daemon --unlock --components=secrets; cargo test --workspace'`).
+Sous macOS, les outils en ligne de commande de Xcode (`xcode-select --install`). Les paquets : AppImage et `.deb` sous
+Linux, `.app` et `.dmg` sous macOS (`cargo tauri build --target universal-apple-darwin` pour Intel et Apple Silicon).
+Les tests de l'interface (`e2e/`) ne tournent que sous Windows.
 
 ```powershell
 git clone https://github.com/nelsogi/nelcode-rs
