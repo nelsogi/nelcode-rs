@@ -10,9 +10,11 @@ export NELCODE_HOME="$home"
 # Une AppImage sans FUSE (runners) : extraite puis lancée.
 export APPIMAGE_EXTRACT_AND_RUN=1
 chmod +x "$exe"
-xvfb-run -a "$exe" >"$out" 2>&1 &
+# Dans son propre groupe de processus (setsid) : la fin du test arrête xvfb, Nel Code et WebKit d'un coup. (Un
+# « pkill -f "$exe" » tuait aussi ce script, dont la ligne de commande contient le même chemin : code 143.)
+setsid xvfb-run -a "$exe" >"$out" 2>&1 &
 pid=$!
-trap 'kill $pid 2>/dev/null || true; pkill -f "$exe" 2>/dev/null || true' EXIT
+trap 'kill -TERM -- -$pid 2>/dev/null || true' EXIT
 
 for _ in $(seq 60); do
   if grep -qs "démarrage de Nel Code" "$home"/logs/*.log; then break; fi

@@ -288,7 +288,7 @@ test('serveur de projet : jamais lancé sans accord ; accord pour cette configur
   // La question : la commande exacte, les arguments, le dossier.
   await A.waitFor(`T.dialog()?.getAttribute('aria-label') === 'Serveur MCP du projet'`, 10_000, 'demande d\'accord');
   const text = await A.ev(`T.dialog().innerText`);
-  for (const s of [process.execPath, SERVER, 'stdio', state, fs.realpathSync(DIR)]) assert.ok(text.includes(s), `${s}\n${text}`);
+  for (const s of [process.execPath, SERVER, 'stdio', state, fs.realpathSync.native(DIR)]) assert.ok(text.includes(s), `${s}\n${text}`);
   await A.ev(`T.button('Refuser', T.dialog())`);
   await A.waitFor(`!T.dialog()`, 5_000);
   const list = () => A.ev(`window.__TAURI__.core.invoke('mcp_list', { dir: ${JSON.stringify(DIR)} })`);
@@ -304,7 +304,7 @@ test('serveur de projet : jamais lancé sans accord ; accord pour cette configur
   await start('mcp-seul', 'Projet autorisé');
   await finish();
   assert.equal(events('projet').filter((e) => e.event === 'start').length, 1);
-  assert.equal(events('projet')[0].cwd.toLowerCase(), fs.realpathSync(DIR).toLowerCase(), 'lancé dans le dossier du projet');
+  assert.equal(events('projet')[0].cwd.toLowerCase(), fs.realpathSync.native(DIR).toLowerCase(), 'lancé dans le dossier du projet');
   assert.ok(toolNames(chats.at(-1)).includes('mcp__projet__echo'));
   // La configuration change : nouvel accord, et l'ancien processus est arrêté.
   const oldPid = events('projet')[0].pid;

@@ -98,7 +98,7 @@ test('conversation : texte au fil de l\'eau, outil Lecture en étape, coût et d
   assert.equal(r.prompt, 'lecture de Program.cs ?', 'le message passe par l\'entrée standard');
   assert.equal(r.key, KEY, 'ANTHROPIC_API_KEY depuis le Gestionnaire d\'identification');
   assert.equal(r.secret, false, 'les variables *TOKEN* ne sont pas transmises');
-  assert.equal(fs.realpathSync(r.cwd), fs.realpathSync(DIR));
+  assert.equal(fs.realpathSync.native(r.cwd), fs.realpathSync.native(DIR));
   // Message suivant : --resume avec la session rendue par claude.
   await A.ask('texte encore');
   assert.deepEqual(starts().at(-1).args.slice(-2), ['--resume', 'sess-neuve']);

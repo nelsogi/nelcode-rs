@@ -603,7 +603,7 @@ test('run_command : Lancer, sortie en direct, dossier de travail ; Refuser ne la
   assert.deepEqual(m.agent.steps.map((s) => s.status), ['done', 'done']);
   assert.match(m.agent.steps[0].title, /— code de sortie 0$/);
   assert.match(toolResults()[0], /code de sortie 0\n--- sortie ---\nligne0\nligne1\nligne2\nligne3\nligne4/);
-  assert.equal(fs.realpathSync(fs.readFileSync(path.join(DIR, 'marqueur.txt'), 'utf8')), fs.realpathSync(DIR), 'lancée dans le dossier de travail');
+  assert.equal(fs.realpathSync.native(fs.readFileSync(path.join(DIR, 'marqueur.txt'), 'utf8')), fs.realpathSync.native(DIR), 'lancée dans le dossier de travail');
   fs.rmSync(path.join(DIR, 'marqueur.txt'));
   // Refuser : rien n'est lancé.
   await start('cmd-refus', 'Écris un fichier');
