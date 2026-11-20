@@ -198,7 +198,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   - Workflow de release : release brouillon créée une fois, puis Windows (tests cargo et de l'interface, installateur
     avec CUDA), Linux sur ubuntu-22.04 (cargo test avec un trousseau GNOME Keyring, AppImage et `.deb`, test de
     démarrage de l'AppImage sous xvfb, installation du `.deb`) et macOS (cargo test, binaire universel) ; `latest.json`
-    composé à la fin (`scripts/updater-json.sh`), test de démarrage `scripts/linux-startup-test.sh`.
+    composé à la fin (`scripts/updater-json.sh`), test de démarrage `scripts/linux-startup-test.sh`. Lancé à la main
+    (Actions → Release → Run workflow) : mêmes compilations et tests, paquets gardés 14 jours comme artefacts du
+    workflow, sans release ni `latest.json`. Le job `updater-test` vérifie `updater-json.sh` avec de faux fichiers
+    (`UPDATER_DIR`) : JSON affiché et contrôlé, échec si un paquet manque.
   - README : installation sur chaque système, ouvrir l'appli non signée sous macOS, tester sous WSL2.
   - Tests unitaires : dossiers de données, configuration de Claude Desktop, noms de programmes et PATH (règles des trois
     systèmes testées partout), droit d'exécution, mises à jour selon le paquet, version du système, espace disque et
