@@ -468,6 +468,17 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["serverPort"] = (num(&s["serverPort"], 8765.0).clamp(1024.0, 65535.0) as u64).into();
     // Mode Agent : le nombre maximal de tours (une demande d'outils et son résultat = un tour).
     s["agentMaxTurns"] = (num(&s["agentMaxTurns"], 10.0).clamp(1.0, 50.0) as u64).into();
+    // Les explorateurs du mode Agent : combien en même temps (2 : beaucoup de serveurs, comme Ollama, traitent les
+    // requêtes l'une après l'autre), combien par demande (0 : pas d'explorateurs), leurs tours, et leur modèle
+    // ({ provider, model } ; null : celui de l'agent).
+    s["explorerConcurrency"] = (num(&s["explorerConcurrency"], 2.0).clamp(1.0, 8.0) as u64).into();
+    s["explorerMax"] = (num(&s["explorerMax"], 5.0).clamp(0.0, 20.0) as u64).into();
+    s["explorerTurns"] = (num(&s["explorerTurns"], 6.0).clamp(1.0, 20.0) as u64).into();
+    let em = &s["explorerModel"];
+    s["explorerModel"] = match (em["provider"].as_str(), em["model"].as_str()) {
+        (Some(p), Some(m)) if !p.is_empty() && !m.trim().is_empty() => serde_json::json!({ "provider": p, "model": m }),
+        _ => serde_json::Value::Null,
+    };
     // Fichiers protégés en plus de ceux par défaut : des motifs, sans vide ni doublon, 200 au plus.
     let mut protected: Vec<String> = Vec::new();
     for p in s["protectedFiles"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|p| p.trim().to_string()) {
@@ -839,6 +850,19 @@ mod tests {
         assert!(valid_name("minichat-v3"));
         for bad in ["", " a", "..", ".", "a/b", r"a\b", "con", "x:y", "a."] {
             assert!(!valid_name(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn reglages_des_explorateurs() {
+        let s = normalize(serde_json::json!({}));
+        assert_eq!((s["explorerConcurrency"].as_u64(), s["explorerMax"].as_u64(), s["explorerTurns"].as_u64()), (Some(2), Some(5), Some(6)));
+        assert!(s["explorerModel"].is_null());
+        let s = normalize(serde_json::json!({ "explorerConcurrency": 99, "explorerMax": -3, "explorerTurns": 0, "explorerModel": { "provider": "p1", "model": "qwen3:4b" } }));
+        assert_eq!((s["explorerConcurrency"].as_u64(), s["explorerMax"].as_u64(), s["explorerTurns"].as_u64()), (Some(8), Some(0), Some(1)));
+        assert_eq!(s["explorerModel"], serde_json::json!({ "provider": "p1", "model": "qwen3:4b" }));
+        for bad in [serde_json::json!("p1/qwen"), serde_json::json!({ "provider": "", "model": "m" }), serde_json::json!({ "provider": "p" })] {
+            assert!(normalize(serde_json::json!({ "explorerModel": bad })) ["explorerModel"].is_null());
         }
     }
 }

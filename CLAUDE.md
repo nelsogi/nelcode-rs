@@ -21,7 +21,8 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 - `store.rs` : fichiers de données `%APPDATA%\NelCode\{models,sessions,settings.json}` (partagés avec la version C#)
 - `remote.rs` : fournisseurs distants compatibles OpenAI (SSE), clés dans le Gestionnaire d'identification
 - `server.rs` : serveur local compatible OpenAI (127.0.0.1 seulement, clé d'accès obligatoire, désactivé par défaut)
-- `agent.rs` : mode Agent (outils lecture/recherche/écriture dans un `Sandbox`, fichiers protégés, NELCODE.md, plan)
+- `agent.rs` : mode Agent (outils lecture/recherche/écriture dans un `Sandbox`, fichiers protégés, NELCODE.md, plan,
+  explorateurs `spawn_explorer` en lecture seule)
 - `command.rs` : outil `run_command` (sans shell, Job Object Windows, délai, variables secrètes retirées)
 - `checkpoint.rs` : points de restauration git de l'Agent (refs/nelcode/checkpoints, 20 par dossier)
 - `claude_agent.rs` : conversation « Claude Agent » : lance l'exécutable `claude` installé et affiche son flux stream-json
@@ -40,7 +41,7 @@ génération, saisie) · `agent.js` (mode Agent, étapes, plan, confirmations) �
 
 ### e2e/
 `harness.mjs` lance l'exe debug avec dossiers de données temporaires et le pilote par le port de débogage WebView2.
-Fichiers : `nelcode`, `ux`, `agent`, `remote`, `server`, `usage`, `images`, `context`, `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
+Fichiers : `nelcode`, `ux`, `agent`, `explorer`, `remote`, `server`, `usage`, `images`, `context`, `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
 `gguf` et `gpu` (ignorés sans modèle / sans carte NVIDIA).
 
 ## Tests

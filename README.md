@@ -201,6 +201,7 @@ la conversation. Les `.nelmodel` et les modèles GGUF de ce PC n'y ont pas accè
 | `edit_file` | Remplace un passage d'un fichier — **avec ton accord** |
 | `update_plan` | Donne ou met à jour le plan de la demande (à faire, en cours, fait) |
 | `run_command` | Lance un programme, **sans shell** — **avec ton accord** (sauf liste autorisée) |
+| `spawn_explorer` | Lance un explorateur qui lit le projet et rend un résumé (lecture seulement) |
 
 Le modèle demande un outil, Nel Code l'exécute et lui renvoie le résultat, jusqu'à sa réponse finale (10 tours au plus,
 réglable dans les Réglages). Tout s'affiche en direct dans la conversation : la **Réflexion** repliable, puis une ligne
@@ -215,6 +216,15 @@ fichier existant).
 **Plan** : pour une demande en plusieurs étapes, le modèle donne un plan (`update_plan`). Il s'affiche dans le panneau
 **Plan** à droite de la conversation (repliable), mis à jour en direct (à faire, en cours, fait), et il est gardé avec
 la conversation.
+
+**Explorateurs** : pour un grand projet, ou pour chercher à plusieurs endroits à la fois, l'agent peut lancer des
+explorateurs (`spawn_explorer`). Chacun a sa propre conversation, **ne fait que lire** (`list_files`, `read_file`,
+`search` : jamais d'écriture, de commande ni de plan) et rend un résumé à l'agent. Ils ne lisent pas les fichiers
+protégés (ils ne peuvent pas te demander de confirmation) : l'agent est prévenu et peut les lire lui-même, avec ton
+accord. Une étape « Explorateur : … » montre ses propres étapes, son état, sa durée et ses tokens ; **Stop** les arrête
+aussi. Réglages : explorateurs en même temps (2 : beaucoup de serveurs, comme Ollama, répondent l'un après l'autre),
+par demande (5 ; 0 pour s'en passer), tours par explorateur (6), et leur modèle (le même que l'agent, ou un plus
+léger). Leurs tokens apparaissent dans le Suivi (`subagent`) et comptent dans le budget.
 
 **Commandes** : `run_command` lance un programme et ses arguments (`dotnet` avec `build`), **sans shell** : `cmd`,
 PowerShell, bash, les scripts `.bat` / `.cmd` / `.ps1` et les opérateurs `|`, `>`, `&&` sont refusés. La commande

@@ -867,6 +867,13 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
                 seconds: done["seconds"].as_f64().unwrap_or(0.0), cost: None, local: false,
             });
         }
+        // Les explorateurs ont leurs propres lignes (« subagent ») ; l'en-tête de la conversation compte tout.
+        let sub = done["explorerUsage"].take();
+        if !sub.is_null() {
+            let u = &mut done["usage"];
+            let add = |a: &Value, b: &Value| a.as_f64().unwrap_or(0.0) + b.as_f64().unwrap_or(0.0);
+            *u = json!({ "input": add(&u["input"], &sub["input"]) as u64, "output": add(&u["output"], &sub["output"]) as u64, "cost": add(&u["cost"], &sub["cost"]) });
+        }
         if let Some(id) = checkpoint {
             done["agent"]["checkpoint"] = json!({ "id": id, "dir": dir });
         }

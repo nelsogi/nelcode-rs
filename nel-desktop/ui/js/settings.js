@@ -111,6 +111,9 @@ export async function openSettings() {
     { key: 'repetitionPenalty', label: 'Pénalité de répétition', min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
     { key: 'agentMaxTurns', label: 'Mode Agent : tours au plus', min: 1, max: 50, step: 1, hint: 'Combien de fois le modèle peut demander des outils (lire, chercher, écrire) avant de devoir répondre.' },
     { key: 'commandTimeout', label: 'Mode Agent : durée max d\'une commande (s)', min: 5, max: 600, step: 5, hint: 'Au-delà, la commande et tous ses processus sont arrêtés (120 s par défaut).' },
+    { key: 'explorerConcurrency', label: 'Explorateurs en même temps', min: 1, max: 8, step: 1, hint: 'L\'agent peut lancer des explorateurs qui lisent le projet pour lui (2 par défaut : beaucoup de serveurs, comme Ollama, traitent les requêtes l\'une après l\'autre).' },
+    { key: 'explorerMax', label: 'Explorateurs par demande', min: 0, max: 20, step: 1, hint: 'Au plus ce nombre d\'explorateurs par demande (5 par défaut ; 0 : pas d\'explorateurs).' },
+    { key: 'explorerTurns', label: 'Tours par explorateur', min: 1, max: 20, step: 1, hint: 'Combien de fois un explorateur peut lire ou chercher avant de rendre son résumé (6 par défaut).' },
     { key: 'textSize', label: 'Taille du texte (%)', min: 80, max: 150, step: 10, hint: 'Toute l\'interface grandit ou rapetisse (Ctrl + = / Ctrl + - ; Ctrl + 0 : 100 %).' },
     { key: 'summaryThreshold', label: 'Résumé automatique à (% du contexte)', min: 0, max: 95, step: 5, hint: 'Quand la conversation dépasse cette part du contexte du modèle (distant ou GGUF), les anciens échanges sont résumés par le modèle actif ; les 4 derniers restent tels quels. 0 : jamais (/compact résume à la main).' },
     { key: 'imageMaxSide', label: 'Images : plus grand côté (px)', min: 512, max: 4096, step: 32, hint: 'Avant l\'envoi, chaque image est réduite à cette taille (1568 par défaut, ce que les modèles Claude lisent sans la réduire encore) et réencodée sans ses métadonnées (EXIF, position GPS…).' },
@@ -127,6 +130,13 @@ export async function openSettings() {
   accent.value = s.accent === 'orange' ? 'orange' : 'red';
   accent.addEventListener('change', () => (document.documentElement.dataset.accent = accent.value));
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
+  // Le modèle des explorateurs : celui de l'agent, ou un modèle distant plus léger.
+  const explorerModel = h('select', { class: 'text-input explorer-model' }, h('option', { value: '' }, 'Le même que l\'agent (par défaut)'),
+    ...S.providers.flatMap((p) => (p.models ?? []).map((m) => h('option', { value: JSON.stringify({ provider: p.id, model: m.id }) }, `${m.id} — ${p.name}`))));
+  const em = s.explorerModel && JSON.stringify({ provider: s.explorerModel.provider, model: s.explorerModel.model });
+  explorerModel.value = em && [...explorerModel.options].some((o) => o.value === em) ? em : '';
+  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Modèle des explorateurs')), explorerModel,
+    h('div', { class: 'hint' }, 'Un modèle plus léger lit plus vite et coûte moins ; il doit gérer les outils. S\'il n\'existe plus, celui de l\'agent est pris.')));
   const calc = await calcSection(s);
   body.push(calc.el);
   const srv = await serverSection(s);
@@ -150,8 +160,8 @@ export async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, imageMaxSide: 1568, agentMaxTurns: 10, commandTimeout: 120, textSize: 100, claudePermissionMode: 'default', claudeModel: '', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
-      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value,
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, imageMaxSide: 1568, agentMaxTurns: 10, commandTimeout: 120, explorerConcurrency: 2, explorerMax: 5, explorerTurns: 6, explorerModel: null, textSize: 100, claudePermissionMode: 'default', claudeModel: '', accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
+      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value, explorerModel: explorerModel.value ? JSON.parse(explorerModel.value) : null,
         serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
         allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean),
         claudePermissionMode: claude.mode.value, claudeModel: claude.model.value.trim(), claudeAllowedTools: claude.tools.value.split('\n').map((l) => l.trim()).filter(Boolean), ...usage.changes() };

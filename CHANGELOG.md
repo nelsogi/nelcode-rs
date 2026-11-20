@@ -120,6 +120,26 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   - tests unitaires (redimensionnement, métadonnées retirées et orientation, formats refusés, GIF, noms de fichiers,
     estimation, dossier de la conversation) et de l'interface (`e2e/images.test.mjs`, le faux serveur vérifie le contenu
     reçu).
+- Mode Agent, **explorateurs** (sous-agents) : outil `spawn_explorer(task)` de l'agent principal. Un explorateur a sa
+  propre conversation et **seulement les outils de lecture** (`list_files`, `read_file`, `search`) : jamais d'écriture,
+  de commande, de plan ni d'autre explorateur (refusés même si son modèle les demande). Il rend un **résumé** (6 000
+  caractères au plus) à l'agent ; son texte ne va jamais dans la réponse.
+  - **Fichiers protégés** : refusés aux explorateurs (ils ne peuvent pas demander de confirmation), lecture comme
+    recherche ; le résumé rendu à l'agent les liste et lui dit qu'il peut les lire lui-même, avec ta confirmation.
+  - **Limites réglables** (Réglages) : explorateurs en même temps (2 par défaut : beaucoup de serveurs, comme Ollama,
+    traitent les requêtes l'une après l'autre), par demande (5 ; 0 : pas d'explorateurs, ni l'outil ni ses consignes),
+    tours par explorateur (6 ; au dernier, il doit conclure, sinon l'agent reçoit la liste de ce qu'il a fait).
+    **Modèle des explorateurs** : le même que l'agent, ou un autre plus léger (s'il n'existe plus, celui de l'agent).
+  - Plusieurs `spawn_explorer` d'un même tour tournent **en parallèle**. Interface : une étape « Explorateur : … » avec
+    ses propres étapes regroupées en dessous (comme les sous-agents de Claude Agent), son état (en attente, en cours,
+    arrêtée, erreur), sa durée et ses tokens, mis à jour à chaque tour. **Stop** arrête tout, explorateurs en cours et
+    en attente compris.
+  - **Suivi** : une ligne `subagent` par explorateur dans `usage.jsonl` (son modèle, ses tokens, son coût), comptée dans
+    le budget du mois et dans l'en-tête de la conversation.
+  - Le message système dit à l'agent quand lancer des explorateurs (grand projet, recherche à plusieurs endroits) et
+    quand s'en passer (petite tâche, fichier déjà connu).
+  - Tests : outils et consignes, réglages (unitaires) ; parallélisme, regroupement, limites, refus d'écriture et des
+    fichiers protégés, Stop, modèle des explorateurs, suivi et budget (`e2e/explorer.test.mjs`, faux serveur à outils).
 
 ### Modifié
 

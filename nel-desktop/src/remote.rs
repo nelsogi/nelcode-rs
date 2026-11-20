@@ -572,6 +572,15 @@ pub fn chat_body(provider: &Value, model: &str, settings: &Value, messages: Vec<
 /// Envoie `body` à {url}/chat/completions et lit la réponse en streaming SSE : le texte part dans « gen-token », la
 /// réflexion dans « gen-reasoning ». `cancel` (Stop) ferme la connexion tout de suite.
 pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &Value, cancel: &Notify) -> Result<Turn> {
+    stream(app, provider_id, url, body, cancel, true).await
+}
+
+/// Comme `stream_chat`, sans rien envoyer à l'interface (les explorateurs du mode Agent : leur texte n'est pas la réponse).
+pub async fn stream_chat_quiet(app: &AppHandle, provider_id: &str, url: &str, body: &Value, cancel: &Notify) -> Result<Turn> {
+    stream(app, provider_id, url, body, cancel, false).await
+}
+
+async fn stream(app: &AppHandle, provider_id: &str, url: &str, body: &Value, cancel: &Notify, live: bool) -> Result<Turn> {
     let host = host_of(url);
     let model = body["model"].as_str().unwrap_or_default().to_string();
     let mut req = client()?.post(format!("{url}/chat/completions")).json(body);
@@ -611,14 +620,18 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
         if !thought.is_empty() {
             think_start.get_or_insert_with(Instant::now);
             turn.reasoning.push_str(&thought);
-            let _ = app.emit("gen-reasoning", json!({ "text": thought }));
+            if live {
+                let _ = app.emit("gen-reasoning", json!({ "text": thought }));
+            }
         }
         if !a.is_empty() {
             if think_start.is_some() {
                 think_end.get_or_insert_with(Instant::now);
             }
             turn.content.push_str(&a);
-            let _ = app.emit("gen-token", json!({ "text": a, "side": "" }));
+            if live {
+                let _ = app.emit("gen-token", json!({ "text": a, "side": "" }));
+            }
         }
     };
     // Les outils demandés arrivent par morceaux : { index, id, function: { name, arguments } }.
@@ -704,11 +717,15 @@ pub async fn stream_chat(app: &AppHandle, provider_id: &str, url: &str, body: &V
     let (t, a) = split.finish();
     if !t.is_empty() {
         turn.reasoning.push_str(&t);
-        let _ = app.emit("gen-reasoning", json!({ "text": t }));
+        if live {
+            let _ = app.emit("gen-reasoning", json!({ "text": t }));
+        }
     }
     if !a.is_empty() {
         turn.content.push_str(&a);
-        let _ = app.emit("gen-token", json!({ "text": a, "side": "" }));
+        if live {
+            let _ = app.emit("gen-token", json!({ "text": a, "side": "" }));
+        }
     }
     if let Some(s) = think_start {
         turn.reasoning_seconds = Some(think_end.unwrap_or_else(Instant::now).duration_since(s).as_secs_f64());

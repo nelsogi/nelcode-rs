@@ -199,7 +199,7 @@ test('lecture : list_files, read_file, search, suivi en direct, détail dépliab
   assert.equal(found.split('\n').length, 4);
   assert.match(found, /^src\/Player\.cs:1: class Player \{/m);
   // Les tours suivants : les outils demandés et leurs résultats, jamais la réflexion.
-  assert.equal(chats.at(-1).tools.map((t) => t.function.name).join(), 'list_files,read_file,search,write_file,edit_file,update_plan,run_command');
+  assert.equal(chats.at(-1).tools.map((t) => t.function.name).join(), 'list_files,read_file,search,write_file,edit_file,update_plan,run_command,spawn_explorer');
   assert.ok(!JSON.stringify(chats.at(-1).messages).includes('Je réfléchis'));
   // Affichage : Réflexion au-dessus, puis les étapes, repliées ; un clic montre le détail.
   const msg = `[...document.querySelectorAll('#messages .msg.assistant')].pop()`;
@@ -660,7 +660,7 @@ test('fournisseur Claude : modèle prérempli, en-têtes Anthropic, sans tempera
   const bodies = chats.slice(before);
   assert.equal(bodies.length, 4, 'trois plans puis la réponse');
   assert.ok(bodies.every((b) => !('temperature' in b) && !('top_p' in b)), 'ni temperature ni top_p');
-  assert.ok(bodies.every((b) => b.max_tokens === 64000 && b.tools.length === 7));
+  assert.ok(bodies.every((b) => b.max_tokens === 64000 && b.tools.length === 8));
   assert.equal((await lastMsg()).content, 'Plan terminé.');
   // L'option se décoche : temperature et top_p reviennent.
   await A.ev(`window.__TAURI__.core.invoke('save_provider', { id: ${JSON.stringify(claude.id)}, name: 'Claude', url: ${JSON.stringify(claude.url)}, key: null, kind: 'anthropic', omitSampling: false })`);

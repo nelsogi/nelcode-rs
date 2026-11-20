@@ -23,6 +23,8 @@ tokio = { version = "1", features = ["time", "macros", "sync"] }
 # Les images des messages : décodage (PNG, JPEG, WebP, GIF), redimensionnement, réencodage sans métadonnées.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 base64 = "0.23"
+# Les explorateurs du mode Agent, lancés ensemble (join_all).
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [features]
 # GPU NVIDIA : voir nel-engine/src/gpu.rs et build.rs (DLL CUDA chargées en différé).

@@ -134,16 +134,17 @@ export function toggleAgent() {
   toast(s.agent ? `Mode Agent : ${S.model.name} peut lire les fichiers de « ${s.workingDirectory || '(aucun dossier)'} », et les modifier avec ton accord.` : 'Mode Agent désactivé.', '', 4000);
 }
 
-export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks' };
+export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot' };
 
-export const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur', running: 'en cours', stopped: 'arrêtée' };
+export const STEP_STATUS = { pending: 'à valider', accepted: 'acceptée', rejected: 'refusée', undone: 'annulée', error: 'erreur', running: 'en cours', stopped: 'arrêtée', waiting: 'en attente' };
 
 export function diffEl(lines) {
   return h('div', { class: 'diff' }, lines.map(([c, l]) => h('div', { class: { '+': 'add', '-': 'del', '…': 'skip' }[c] ?? 'ctx' }, h('span', { class: 'sign' }, c === '…' ? '' : c), l)));
 }
 
 // Les étapes de l'agent. `m` : le message fini (Annuler y met à jour les étapes) ; null pendant la réponse.
-// Claude Agent : une étape lancée par un sous-agent a `parent` (l'étape « Sous-agent : … ») et s'affiche dans son corps.
+// Une étape d'un sous-agent (Claude Agent) ou d'un explorateur (mode Agent) a `parent` (l'étape « Sous-agent : … » ou
+// « Explorateur : … ») et s'affiche dans son corps.
 export function stepsEl(steps, m) {
   const box = h('div', { class: 'steps' });
   const subs = new Map();   // id d'une étape → le conteneur de ses étapes de sous-agent
@@ -176,12 +177,20 @@ export function stepsEl(steps, m) {
       h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
     (subs.get(st.parent) ?? box).append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
       h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title),
-        n ? h('span', { class: 'count' }, `${n} étape${n > 1 ? 's' : ''}`) : null, status), body));
+        n ? h('span', { class: 'count' }, `${n} étape${n > 1 ? 's' : ''}`) : null, st.kind === 'explorer' ? explorerMeta(st) : null, status), body));
   }
   const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');
   if (undoable?.length) box.append(h('div', { class: 'row-btns undo-all' },
     h('button', { class: 'btn', onclick: () => undoSteps(m, undoable.map((st) => st.id), () => invoke('agent_undo_all', { request: m.agent.request })) }, icon('undo-2'), 'Annuler toute la demande')));
   return box;
+}
+
+// Un explorateur : sa durée et ses tokens (entrée + sortie), mis à jour à chaque tour.
+function explorerMeta(st) {
+  const tokens = (st.tokens?.input ?? 0) + (st.tokens?.output ?? 0);
+  const text = [st.seconds !== undefined && `${st.seconds.toLocaleString('fr-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`,
+    tokens && `${tokens.toLocaleString('fr-CH')} tokens`].filter(Boolean).join(' · ');
+  return text ? h('span', { class: 'meta', title: st.model ? `Modèle : ${st.model}` : '' }, text) : null;
 }
 
 // Annule des écritures (le Rust refuse si un fichier a changé depuis), puis les marque « annulée » dans la conversation.
