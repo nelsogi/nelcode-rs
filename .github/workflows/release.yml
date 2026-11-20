@@ -8,11 +8,16 @@
 #   récentes) ; cargo test, AppImage et .deb, puis un test de démarrage de l'AppImage dans une fenêtre virtuelle (xvfb).
 # - macOS (expérimental) : cargo test, binaire universel (Intel et Apple Silicon), .app et .dmg non signés.
 # Les tests de l'interface (e2e, pilotés par le port de débogage de WebView2) ne tournent que sous Windows.
+# Lancé à la main (workflow_dispatch) : mêmes compilations et tests, paquets en artefacts du workflow, sans release ni
+# latest.json. Dans les deux cas, updater-test vérifie scripts/updater-json.sh avec de faux fichiers.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  # Lancement à la main (onglet Actions → Release → Run workflow) : les trois systèmes sont compilés et testés, les
+  # paquets gardés comme artefacts du workflow ; ni release, ni latest.json.
+  workflow_dispatch:
 
 permissions:
   contents: write # créer la release brouillon et y joindre les paquets
@@ -20,6 +25,7 @@ permissions:
 jobs:
   # La release brouillon, créée une fois : les trois systèmes y joignent leurs paquets.
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.create.outputs.id }}
@@ -60,6 +66,8 @@ jobs:
 
   windows:
     needs: release
+    # Lancement à la main : sans la release (sautée), mais jamais après une release ratée.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
@@ -153,8 +161,20 @@ jobs:
           "{0} : {1:N1} Mo" -f $setup.Name, ($setup.Length / 1MB)
           if ($setup.Length -gt 30MB) { throw "installateur de $([math]::Round($setup.Length / 1MB)) Mo : une bibliothèque CUDA y est-elle entrée ?" }
 
+      # Lancement à la main : les paquets restent des artefacts du workflow (14 jours).
+      - name: Paquets (artefact)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nelcode-windows
+          path: target/release/bundle/nsis/*
+          if-no-files-found: error
+          retention-days: 14
+
   linux:
     needs: release
+    # Lancement à la main : sans la release (sautée), mais jamais après une release ratée.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     # La plus ancienne image : les paquets demandent la glibc 2.35 au plus (Ubuntu 22.04, Debian 12 et plus récents).
     runs-on: ubuntu-22.04
     steps:
@@ -205,8 +225,21 @@ jobs:
           sudo apt-get install -y "./$deb"
           dpkg -L "$(dpkg-deb -f "$deb" Package)" | grep /usr/bin/
 
+      - name: Paquets (artefact)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nelcode-linux
+          path: |
+            target/release/bundle/appimage/*.AppImage*
+            target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
   macos:
     needs: release
+    # Lancement à la main : sans la release (sautée), mais jamais après une release ratée.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -242,9 +275,61 @@ jobs:
           releaseId: ${{ needs.release.outputs.id }}
           uploadUpdaterJson: false
 
+      - name: Paquets (artefact)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nelcode-macos
+          path: |
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz*
+          if-no-files-found: error
+          retention-days: 14
+
+  # scripts/updater-json.sh avec de faux artefacts (UPDATER_DIR) : le JSON produit est affiché et vérifié, et un
+  # artefact manquant doit faire échouer le script. Rien n'est lu ni écrit sur GitHub.
+  updater-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: latest.json avec de faux fichiers
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          dir=$(mktemp -d)
+          for f in "Nel.Code_0.9.0_x64-setup.exe" "Nel.Code_0.9.0_amd64.AppImage" "Nel.Code_universal.app.tar.gz"; do
+            echo "faux paquet" > "$dir/$f"
+            echo "signature-de-$f" > "$dir/$f.sig"
+          done
+          echo "pas signé" > "$dir/Nel.Code_0.9.0_amd64.deb"
+          printf '### Ajouté\n\n- Une nouveauté.\n' > notes.md
+          UPDATER_DIR="$dir" bash scripts/updater-json.sh v0.9.0 notes.md > latest.json
+          echo "--- latest.json produit :"
+          cat latest.json
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/v0.9.0"
+          jq -e --arg base "$base" '
+            .version == "0.9.0" and (.notes | startswith("### Ajouté"))
+            and .platforms["windows-x86_64"].url == "\($base)/Nel.Code_0.9.0_x64-setup.exe"
+            and .platforms["windows-x86_64-nsis"].signature == "signature-de-Nel.Code_0.9.0_x64-setup.exe"
+            and .platforms["linux-x86_64"].url == "\($base)/Nel.Code_0.9.0_amd64.AppImage"
+            and .platforms["linux-x86_64-appimage"].signature == "signature-de-Nel.Code_0.9.0_amd64.AppImage"
+            and .platforms["darwin-aarch64"].url == "\($base)/Nel.Code_universal.app.tar.gz"
+            and .platforms["darwin-x86_64"] == .platforms["darwin-aarch64"]
+            and (.platforms | keys | length) == 8
+            and ([.platforms[].url] | all(endswith(".deb") | not))' latest.json
+          # Sans paquet macOS : erreur, pas de latest.json incomplet.
+          rm "$dir"/Nel.Code_universal.app.tar.gz*
+          if UPDATER_DIR="$dir" bash scripts/updater-json.sh v0.9.0 notes.md > incomplet.json 2> erreur.txt; then
+            echo "::error::latest.json produit sans le paquet macOS"; exit 1
+          fi
+          cat erreur.txt
+          grep -q "macOS" erreur.txt
+
   # latest.json, une fois les trois systèmes joints (un seul fichier pour tous : pas d'écriture concurrente).
   updater:
-    needs: [release, windows, linux, macos]
+    if: github.event_name == 'push'
+    needs: [release, windows, linux, macos, updater-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

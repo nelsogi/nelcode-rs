@@ -3,12 +3,19 @@
 # l'installateur NSIS (Windows), l'AppImage (Linux ; le .deb se met à jour à la main) et le .app.tar.gz universel
 # (macOS, Intel et Apple Silicon). Usage : scripts/updater-json.sh <tag> <fichier des notes> > latest.json
 # (gh et jq ; GH_TOKEN et GITHUB_REPOSITORY dans l'environnement.)
+# Avec UPDATER_DIR=<dossier>, les artefacts et leurs .sig sont pris dans ce dossier au lieu de la release (test du
+# script, déclenchement manuel du workflow) : rien n'est lu ni écrit sur GitHub.
 set -euo pipefail
 tag="$1"
 notes="$2"
-dir="$(mktemp -d)"
-gh release download "$tag" --pattern '*.sig' --dir "$dir"
-assets="$(gh release view "$tag" --json assets -q '.assets[].name')"
+if [ -n "${UPDATER_DIR:-}" ]; then
+  dir="$UPDATER_DIR"
+  assets="$(ls -1 "$dir")"
+else
+  dir="$(mktemp -d)"
+  gh release download "$tag" --pattern '*.sig' --dir "$dir"
+  assets="$(gh release view "$tag" --json assets -q '.assets[].name')"
+fi
 
 entry() {
   local name
