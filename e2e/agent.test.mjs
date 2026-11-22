@@ -194,7 +194,7 @@ test('lecture : list_files, read_file, search, suivi en direct, détail dépliab
   assert.equal(m.content, 'Program.cs crée un Player.');
   assert.equal(m.reasoning, 'Je réfléchis à la demande.');
   const titles = m.agent.steps.map((s) => s.title);
-  assert.deepEqual(titles, ['Je regarde le dossier.', 'Liste de dossier de travail — 4 fichiers', 'Lecture de src/Program.cs', 'Recherche de "Player" — 4 résultats']);
+  assert.deepEqual(titles, ['Je regarde le dossier.', 'Liste du dossier de travail — 4 fichiers', 'Lecture de src/Program.cs', 'Recherche de "Player" — 4 résultats']);
   assert.ok(m.agent.steps.every((s) => s.status === 'done'));
   // Ce que le modèle a reçu : les fichiers (sans la jonction), le contenu numéroté, les lignes trouvées.
   const [list, file, found] = toolResults();

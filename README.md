@@ -20,8 +20,9 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
 - **Modèles sur ton PC, sans connexion** : `.nelmodel` de MiniChat et modèles ouverts **GGUF** (Qwen2, Llama), par
   glisser-déposer ou depuis un **catalogue** vérifié ; processeur ou **GPU NVIDIA** (pack téléchargé à la demande).
 - **Conversations** : réponse au fil des tokens, Stop, Régénérer avec versions, Modifier, recherche, export, **projets**,
-  commandes `/` et **commandes personnalisées**, palette **Ctrl+K**, blocs de code coloriés, fichiers **`@`**,
-  **images** (réduites, sans métadonnées), **résumé automatique** du contexte et `/compact`.
+  commandes `/` et **commandes personnalisées**, palette **Ctrl+K**, réponses mises en forme (**Markdown**), blocs
+  de code coloriés, fichiers **`@`**, **images** (réduites, sans métadonnées), **résumé automatique** du contexte et
+  `/compact`.
 - **Mode transparence** (les 5 choix du modèle pour chaque mot) et **mode comparaison** (deux modèles côte à côte, votes
   et classement).
 - **Modèles distants** compatibles OpenAI (llama.cpp, Ollama, LM Studio…) et **Claude** d'Anthropic ; clés dans le
@@ -44,7 +45,7 @@ fonctions (sauf le pack GPU, Windows seulement), mais moins éprouvées. Tous le
 
 ### Windows
 
-1. Télécharge `Nel Code_1.0.0_x64-setup.exe`.
+1. Télécharge `Nel Code_1.0.1_x64-setup.exe`.
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -57,9 +58,9 @@ accélère les réponses.
 
 Deux paquets, pour les PC 64 bits (x86_64) avec une glibc 2.35 ou plus récente (Ubuntu 22.04, Debian 12, Fedora 36…) :
 
-- **AppImage** (`Nel Code_1.0.0_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
+- **AppImage** (`Nel Code_1.0.1_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
   Sans FUSE (certaines distributions récentes), installe `libfuse2`, ou lance-la avec `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_1.0.0_amd64.deb"`. Le paquet **ne se met pas à jour
+- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_1.0.1_amd64.deb"`. Le paquet **ne se met pas à jour
   tout seul** : pour une nouvelle version, télécharge le nouveau `.deb` et installe-le de la même façon.
 
 Il faut WebKitGTK 4.1 (déjà là sur un bureau GNOME ou KDE récent ; sinon le `.deb` l'installe). Les clés API sont
@@ -68,7 +69,7 @@ fonctionne, mais ne peut pas garder de clé.
 
 ### macOS (expérimental)
 
-1. Télécharge `Nel Code_1.0.0_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
+1. Télécharge `Nel Code_1.0.1_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
    glisse Nel Code dans **Applications**.
 2. L'appli n'est **pas signée** par un développeur Apple : au premier lancement, macOS dit qu'il ne peut pas vérifier
    le développeur (ou que l'appli est « endommagée »). Pour l'ouvrir quand même :
@@ -93,7 +94,7 @@ Puis, dans Ubuntu :
 ```bash
 sudo apt update && sudo apt install -y libfuse2t64 gnome-keyring
 # Le .deb (ou l'AppImage, avec chmod +x) téléchargé dans les Releases :
-sudo apt install -y "./Nel Code_1.0.0_amd64.deb"
+sudo apt install -y "./Nel Code_1.0.1_amd64.deb"
 # Puis Nel Code dans le menu des applications (WSLg ouvre sa fenêtre sous Windows).
 ```
 
@@ -181,8 +182,11 @@ de commandes ne sont repris dans le résumé qu'en une ligne (« fichier lu : sr
 même demande les anciens résultats d'outils sont réduits de la même façon quand le contexte approche du seuil.
 `/compact [consigne]` résume à la main (par exemple `/compact garde surtout les tests`).
 
-Dans les réponses, les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript, HTML, CSS, JSON) et ont
-un bouton **Copier**.
+Les réponses sont mises en forme (**Markdown** : titres, gras, listes et listes de tâches, citations, tableaux, liens,
+code), aussi pendant qu'elles s'écrivent. Les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript,
+HTML, CSS, JSON) et ont un bouton **Copier**. Un clic sur un lien montre son adresse complète et demande avant d'ouvrir
+le navigateur ; les images des réponses ne sont pas chargées, leur lien s'affiche à la place. **Copier** sous une
+réponse copie le Markdown d'origine. **Réglages → Mettre en forme les réponses (Markdown)** revient au texte brut.
 
 **Images** (modèles distants qui voient les images, Claude compris, en chat et en mode Agent) : colle une image
 (**Ctrl+V**), glisse-la sur la fenêtre ou clique sur le bouton image de la saisie ; PNG, JPEG, WebP et GIF (sa première
@@ -610,6 +614,9 @@ d'une relecture complète du code ; le détail est dans le [CHANGELOG](CHANGELOG
   protégés** ne sont lus ou écrits qu'avec une confirmation à chaque fois ; les commandes tournent **sans shell**, avec
   ton accord (sauf liste autorisée, par nom de programme), et sont tuées avec tous leurs enfants au délai ou sur Stop.
   Le contenu d'un fichier ou d'un outil n'est jamais une instruction pour Nel Code.
+- **Réponses** : le texte d'un modèle ne devient jamais du HTML (éléments créés un par un, HTML brut affiché comme du
+  texte) ; un lien ne s'ouvre que dans le navigateur, après confirmation, en http ou https ; les images des réponses ne
+  sont pas chargées ; la fenêtre ne quitte jamais l'interface.
 - **Variables secrètes** : une seule liste pour les commandes de l'agent, les serveurs MCP et Claude Agent. Une
   variable de Nel Code dont le nom contient `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`,
   `CREDENTIAL` ou `PRIVATE`, ou commence par `ANTHROPIC_` ou `OPENAI_`, ne leur est jamais transmise.
@@ -736,6 +743,8 @@ direct, liste autorisée, variables cachées, délai et Stop qui tuent les proce
 `e2e/mcp.test.mjs` couvre le client MCP avec un faux serveur MCP en Node (`e2e/fake-mcp/server.mjs`, stdio et HTTP) :
 poignée de main, appel validé, refus, « toujours autoriser », liste changée, délai, explorateurs, serveurs désactivés
 et contexte, en-têtes et variables secrets, page MCP, arrêt des processus, serveur de projet non autorisé, import.
+`e2e/markdown.test.mjs` couvre le rendu Markdown : tests unitaires de `markdown.js` sur un faux DOM (réponses piégées,
+textes coupés à chaque caractère), puis l'application (réponse en morceaux, liens, images, réglage, Copier).
 `e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
 petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et la taille du texte.
 `e2e/usage.test.mjs` couvre le suivi (ligne sans texte, coût, en-tête, mode Agent, budget à 80 et 100 %, page Suivi,
@@ -800,6 +809,7 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `util.js` | Appels au Rust, éléments du DOM, notifications, fenêtres et menus, coloration du code |
 | `state.js` | L'état partagé : `S` (conversations, modèles, réponse en cours) et `UI` (petits états de l'interface) |
 | `conversation.js` | Conversations, modèles, fichiers `@`, génération, réflexion, transparence, comparaison, affichage, saisie |
+| `markdown.js` | Rendu Markdown des réponses : jetons de markdown-it → éléments du DOM, réponse en cours, liens |
 | `agent.js` | Mode Agent et Claude Agent : étapes, plan, NELCODE.md |
 | `mcp.js` | Serveurs MCP : page MCP, accord des serveurs de projet, puce et contexte de la conversation |
 | `settings.js` | Réglages, mises à jour, serveur local, calcul (GPU, test de vitesse), taille du texte |
@@ -827,3 +837,7 @@ Le pack GPU contient des bibliothèques du NVIDIA CUDA Toolkit, redistribuées s
 
 Les icônes de l'interface (`nel-desktop/ui/icons.js`) sont tirées de [Lucide](https://lucide.dev), sous licence
 [ISC](https://github.com/lucide-icons/lucide/blob/main/LICENSE) : © Lucide Contributors (2022), © Cole Bemis (2013-2022, Feather).
+
+Le Markdown des réponses est découpé par [markdown-it](https://github.com/markdown-it/markdown-it) 15.0.3
+(`nel-desktop/ui/vendor/markdown-it.js`), sous licence MIT : © Vitaly Puzrin, Alex Kocharin ; les licences de ce qu'il
+contient sont dans `nel-desktop/ui/vendor/markdown-it.LICENSE.txt`.

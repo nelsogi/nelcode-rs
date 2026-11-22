@@ -538,6 +538,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["budgetMonthly"] = ((num(&s["budgetMonthly"], 0.0).clamp(0.0, 1e6) * 100.0).round() / 100.0).into();
+    // Le rendu Markdown des réponses (désactivé : texte brut).
+    s["markdown"] = s["markdown"].as_bool().unwrap_or(true).into();
     s["budgetConfirm"] = s["budgetConfirm"].as_bool().unwrap_or(true).into();
     s
 }

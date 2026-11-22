@@ -189,6 +189,58 @@ pub fn open(target: &str) -> Result<(), String> {
     Command::new(program).arg(target).spawn().map(|_| ()).map_err(|e| format!("{program} : {e}"))
 }
 
+/// L'adresse d'un lien d'une réponse, normalisée : http ou https seulement, avec un hôte, sans identifiants ni
+/// caractère de contrôle (4096 caractères au plus).
+pub fn web_link(link: &str) -> Result<String, String> {
+    let refused = |why: &str| Err(format!("adresse refusée : {why}"));
+    if link.len() > 4096 || link.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return refused("trop longue, ou avec des caractères interdits");
+    }
+    let Ok(url) = reqwest::Url::parse(link) else { return refused("elle n'est pas valide") };
+    if !matches!(url.scheme(), "http" | "https") {
+        return refused("seuls http et https s'ouvrent");
+    }
+    if url.host_str().is_none_or(str::is_empty) || !url.username().is_empty() || url.password().is_some() {
+        return refused("pas d'hôte, ou des identifiants dans l'adresse");
+    }
+    Ok(url.into())
+}
+
+/// Ouvre une adresse http(s) (voir `web_link`) dans le navigateur. Windows : ShellExecute, sans ligne de commande.
+/// En debug, NELCODE_OPEN_LOG la note dans un fichier à la place (tests).
+pub fn open_link(link: &str) -> Result<(), String> {
+    let url = web_link(link)?;
+    #[cfg(debug_assertions)]
+    if let Some(file) = std::env::var_os("NELCODE_OPEN_LOG") {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file).map_err(|e| e.to_string())?;
+        return writeln!(f, "{url}").map_err(|e| e.to_string());
+    }
+    #[cfg(windows)]
+    {
+        let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let (verb, target) = (wide("open"), wide(&url));
+        // SAFETY : deux chaînes UTF-16 terminées par 0, vivantes pendant l'appel.
+        let code = unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL)
+        } as usize;
+        if code > 32 { Ok(()) } else { Err(format!("le navigateur ne s'ouvre pas (code {code})")) }
+    }
+    #[cfg(not(windows))]
+    open(&url)
+}
+
+/// Une adresse de l'interface elle-même (tauri://localhost, http(s)://tauri.localhost sous Windows) : la fenêtre ne va
+/// jamais ailleurs.
+pub fn is_app_url(url: &reqwest::Url) -> bool {
+    match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        "http" | "https" => url.host_str() == Some("tauri.localhost"),
+        "about" => url.as_str() == "about:blank",
+        _ => false,
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Disque, heure, version
 
@@ -252,6 +304,37 @@ fn os_release_name(text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn links_open_only_in_http_and_https() {
+        for (link, url) in [
+            ("https://exemple.ch/a?b=1,2#c", "https://exemple.ch/a?b=1,2#c"),
+            ("HTTP://Exemple.ch", "http://exemple.ch/"),
+            ("https://exemple.ch/\"&calc", "https://exemple.ch/%22&calc"),
+            ("https://\u{430}pple.com/", "https://xn--pple-43d.com/"),
+        ] {
+            assert_eq!(web_link(link).as_deref(), Ok(url), "{link}");
+        }
+        for link in [
+            "", "javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,<script>alert(1)</script>", "file:///C:/Windows/System32/calc.exe", "vbscript:x", "ftp://exemple.ch/",
+            "ms-settings:display", "C:\\Windows\\System32\\calc.exe", "calc.exe", "//exemple.ch", "/select,C:\\", "http://", "https://user:mdp@exemple.ch/", "https://banque.ch@pirate.ch/",
+            "https://exemple.ch/ a", "java\nscript:alert(1)", "https://exemple.ch/\n", " https://exemple.ch/",
+        ] {
+            assert!(web_link(link).is_err(), "{link}");
+        }
+        assert!(web_link(&format!("https://exemple.ch/{}", "a".repeat(5000))).is_err());
+    }
+
+    #[test]
+    fn the_window_stays_on_the_app() {
+        let ok = |u: &str| is_app_url(&reqwest::Url::parse(u).unwrap());
+        for u in ["tauri://localhost/index.html", "http://tauri.localhost/", "https://tauri.localhost/index.html", "about:blank"] {
+            assert!(ok(u), "{u}");
+        }
+        for u in ["https://exemple.ch/", "http://tauri.localhost.exemple.ch/", "http://localhost/", "tauri://exemple/", "data:text/html,x", "file:///C:/x.html", "javascript:alert(1)", "about:config"] {
+            assert!(!ok(u), "{u}");
+        }
+    }
 
     fn vars(list: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let m: HashMap<String, String> = list.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();

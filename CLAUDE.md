@@ -42,13 +42,13 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 
 ### nel-desktop/ui (modules ES, `js/main.js` charge le reste)
 `util.js` (appels Rust, DOM, fenêtres) · `state.js` (état partagé `S`, `UI`) · `conversation.js` (conversations,
-génération, saisie) · `agent.js` (mode Agent, étapes, plan, confirmations) · `files.js` (panneau Fichiers, diff) ·
+génération, saisie) · `markdown.js` (rendu Markdown des réponses : jetons → DOM, liens) · `agent.js` (mode Agent, étapes, plan, confirmations) · `files.js` (panneau Fichiers, diff) ·
 `projects.js` · `providers.js` (modèles distants) · `catalog.js` · `settings.js` · `mcp.js` (page MCP, accords, puce) · `usage.js` (page Suivi, budget, prix) · `images.js` (images des messages) · `onboarding.js` · `palette.js`
-(Ctrl+K). Aussi `index.html`, `style.css`, `icons.js`.
+(Ctrl+K). Aussi `index.html`, `style.css`, `icons.js`, `vendor/` (markdown-it, copié tel quel).
 
 ### e2e/
 `harness.mjs` lance l'exe debug avec dossiers de données temporaires et le pilote par le port de débogage WebView2.
-Fichiers : `nelcode`, `ux`, `agent`, `explorer`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
+Fichiers : `nelcode`, `ux`, `agent`, `explorer`, `markdown`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
 `gguf` et `gpu` (ignorés sans modèle / sans carte NVIDIA).
 
 ## Tests
@@ -75,9 +75,9 @@ pour tout vérifier : la sortie complète coûte cher en tokens.
 - **Pas de connexion Claude.ai** : on utilise l'exécutable `claude` déjà connecté sur le PC, ou une clé API Anthropic.
 - **CHANGELOG à jour** : chaque nouveauté ou correction va dans `CHANGELOG.md` ; README mis à jour si l'usage change.
 - **Un test par nouveauté** : test unitaire Rust et/ou e2e. Pas de commit avec un test qui échoue.
-- **Version 1.0.0 ouverte** : les nouveautés s'ajoutent à la section [1.0.0] ; ni tag ni release tant que demandé.
+- **Version 1.0.1 ouverte** : les nouveautés s'ajoutent à la section [1.0.1] ; ni tag ni release tant que demandé.
 - **Git** : commiter directement sur `master` (pas de branche) ; ne pas pousser sans demande. Messages au format
-  `1.0.0 (en cours) : sujet`.
+  `1.0.1 (en cours) : sujet`.
 
 ## Compact instructions
 

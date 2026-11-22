@@ -2,6 +2,38 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [1.0.1] - 2026-11-22
+
+### Ajouté
+
+- **Rendu Markdown des réponses** (CommonMark, tableaux, listes de tâches, barré) : titres, gras, italique, listes,
+  citations, tableaux, liens, code en ligne, séparateurs. Dans les réponses des modèles, les messages intermédiaires du
+  mode Agent (lignes ✱), Claude Agent et ses sous-agents, les résumés des explorateurs et le résumé du contexte. Les
+  blocs de code gardent leur coloration et leur bouton Copier ; la sortie des outils reste telle quelle, et un retour à
+  la ligne du modèle reste un retour à la ligne.
+- **Pendant la réponse** : le rendu est refait au plus toutes les 100 ms, et seulement pour les blocs qui ont changé
+  (un bloc de code garde son défilement). Un bloc de code, un tableau, du gras ou un lien pas encore terminé s'affiche
+  déjà mis en forme.
+- **Liens** : un clic montre l'adresse complète et demande confirmation, puis la partie Rust ouvre le navigateur.
+- **Réglages → Mettre en forme les réponses (Markdown)** : désactivé, le texte brut. **Copier** copie toujours le
+  Markdown d'origine.
+
+### Sécurité
+
+- **Le texte d'un modèle ne devient jamais du HTML** : [markdown-it](https://github.com/markdown-it/markdown-it) 15.0.3
+  (MIT), inclus dans l'application, ne sert qu'à découper le texte en jetons ; Nel Code crée les éléments un par un,
+  d'une liste fermée, sans `innerHTML`. Le HTML brut s'affiche comme du texte. La CSP n'a pas changé.
+- **Liens** : http et https seulement, sans identifiants dans l'adresse, vérifiés par l'interface puis par la partie
+  Rust ; pas de `href` dans la page. Les autres adresses (`javascript:`, `data:`, `file:`, chemins…) ne sont pas
+  cliquables. Un nom d'hôte trompeur (lettres d'un autre alphabet) est montré en punycode.
+- **Images** : jamais chargées (une image distante dirait au serveur que la réponse a été lue) ; un lien à la place.
+- **La fenêtre reste sur l'interface** : la partie Rust annule toute navigation ailleurs et refuse les nouvelles
+  fenêtres.
+
+### Corrigé
+
+- Mode Agent et Claude Agent : « Liste de dossier de travail » → « Liste du dossier de travail ».
+
 ## [1.0.0] - 2026-11-20
 
 Première version stable. La 0.9.0 n'a jamais été publiée : tout ce qui a changé depuis la 0.8.0 est détaillé ici.

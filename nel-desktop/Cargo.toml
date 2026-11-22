@@ -1,6 +1,6 @@
 [package]
 name = "nel-desktop"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 
 [dependencies]
@@ -29,7 +29,7 @@ base64 = "0.23"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # Linux, macOS : groupes de processus, espace disque, heure locale.
 [target.'cfg(unix)'.dependencies]

@@ -5,7 +5,7 @@
 
 import { $, dialog, errText, h, invoke, logEvent, sizeText, toast } from './util.js';
 import { S, UI } from './state.js';
-import { loadModel, renderStatus, turnsOf } from './conversation.js';
+import { loadModel, renderMessages, renderStatus, turnsOf } from './conversation.js';
 import { claudeSection } from './agent.js';
 import { providersSection } from './providers.js';
 import { usageSection } from './usage.js';
@@ -138,6 +138,9 @@ export async function openSettings() {
   accent.value = s.accent === 'orange' ? 'orange' : 'red';
   accent.addEventListener('change', () => (document.documentElement.dataset.accent = accent.value));
   body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
+  const markdown = h('input', { type: 'checkbox', class: 'markdown', checked: s.markdown !== false });
+  body.push(h('div', { class: 'field' }, h('label', { class: 'check' }, markdown, 'Mettre en forme les réponses (Markdown)'),
+    h('div', { class: 'hint' }, 'Titres, listes, tableaux, code… Désactivé : le texte brut, tel que le modèle l\'a écrit. « Copier » copie toujours le Markdown d\'origine.')));
   // Le modèle des explorateurs : celui de l'agent, ou un modèle distant plus léger.
   const explorerModel = h('select', { class: 'text-input explorer-model' }, h('option', { value: '' }, 'Le même que l\'agent (par défaut)'),
     ...S.providers.flatMap((p) => (p.models ?? []).map((m) => h('option', { value: JSON.stringify({ provider: p.id, model: m.id }) }, `${m.id} — ${p.name}`))));
@@ -171,8 +174,8 @@ export async function openSettings() {
   const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
   if (choice) {
     const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, imageMaxSide: 1568, agentMaxTurns: 10, commandTimeout: 120, mcpStartTimeout: 30, mcpCallTimeout: 60, explorerConcurrency: 2, explorerMax: 5, explorerTurns: 6, explorerModel: null, textSize: 100, claudePermissionMode: 'default', claudeModel: '', claudeProjectSettings: false, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
-      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, autoUpdate: auto.checked, device: calc.device.value, explorerModel: explorerModel.value ? JSON.parse(explorerModel.value) : null,
+      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, imageMaxSide: 1568, agentMaxTurns: 10, commandTimeout: 120, mcpStartTimeout: 30, mcpCallTimeout: 60, explorerConcurrency: 2, explorerMax: 5, explorerTurns: 6, explorerModel: null, textSize: 100, markdown: true, claudePermissionMode: 'default', claudeModel: '', claudeProjectSettings: false, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
+      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, markdown: markdown.checked, autoUpdate: auto.checked, device: calc.device.value, explorerModel: explorerModel.value ? JSON.parse(explorerModel.value) : null,
         serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
         allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean),
         claudePermissionMode: claude.mode.value, claudeModel: claude.model.value.trim(), claudeAllowedTools: claude.tools.value.split('\n').map((l) => l.trim()).filter(Boolean), claudeProjectSettings: claude.project.checked, ...usage.changes() };
@@ -181,6 +184,7 @@ export async function openSettings() {
     applyTextSize();
     try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }
     renderStatus();
+    if (UI.editing === null) renderMessages();   // Markdown ou texte brut
     // Un autre périphérique, ou un autre contexte pour un modèle GGUF : le modèle est rechargé.
     const gguf = S.models.find((m) => m.name === S.model.name)?.weights === 'gguf';
     if (S.model.name && ((S.settings.device ?? 'auto') !== before || (gguf && S.settings.contextLimit !== limit))) loadModel(S.model.name);

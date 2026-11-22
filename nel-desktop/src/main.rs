@@ -295,6 +295,12 @@ fn open_folder(path: String) -> Result<()> {
     os::open(&path)
 }
 
+/// Un lien d'une réponse, confirmé par l'utilisateur : dans le navigateur, http et https seulement.
+#[tauri::command]
+fn open_link(url: String) -> Result<()> {
+    os::open_link(&url)
+}
+
 #[tauri::command]
 fn get_settings() -> Value {
     store::load_settings()
@@ -1162,8 +1168,11 @@ fn main() {
             gpu::startup();
             log::info(&format!("démarrage de Nel Code {}", env!("CARGO_PKG_VERSION")));
             let config = app.config().app.windows[0].clone();
+            // La fenêtre reste sur l'interface : aucun lien ne s'y ouvre, ni dans une nouvelle fenêtre.
             #[allow(unused_mut)]
-            let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+            let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                .on_navigation(os::is_app_url)
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
             // En debug, NELCODE_DEBUG_PORT ouvre le port de débogage de WebView2 (tests de l'interface).
             #[cfg(debug_assertions)]
             if let Ok(port) = std::env::var("NELCODE_DEBUG_PORT") {
@@ -1189,6 +1198,7 @@ fn main() {
             export_session,
             pick_folder,
             open_folder,
+            open_link,
             get_settings,
             save_settings,
             context_info,

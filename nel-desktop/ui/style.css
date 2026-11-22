@@ -660,3 +660,42 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .mcp-launch .args { margin: 0; padding-left: 18px; }
 .mcp-choice { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .mcp-choice .meta { font: 12px var(--mono); color: var(--faint); margin-left: auto; }
+
+/* --- Markdown des réponses (markdown.js) --- */
+.msg .body.md, .side .body.md, .reasoning .think.md, .step-body .detail.md { white-space: normal; overflow-wrap: anywhere; }
+.step-body .detail.md { font: 13px/1.5 var(--sans); }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md .table-wrap { margin: 0 0 9px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 16px 0 7px; line-height: 1.3; font-weight: 650; color: var(--text); }
+.md h1 { font-size: 1.4em; }
+.md h2 { font-size: 1.22em; }
+.md h3 { font-size: 1.1em; }
+.md h4, .md h5, .md h6 { font-size: 1em; }
+.md h6 { color: var(--dim); }
+.md ul, .md ol { padding-left: 24px; }
+.md li { margin: 2px 0; }
+.md li > p { margin-bottom: 5px; }
+.md li > ul, .md li > ol { margin-bottom: 2px; }
+.md li::marker { color: var(--faint); }
+.md li.task { list-style: none; }
+.md li.task input { margin: 0 7px 0 -20px; vertical-align: -1px; accent-color: var(--accent); }
+.md blockquote { padding: 1px 0 1px 12px; border-left: 3px solid var(--border-strong); color: var(--text-2); }
+.md blockquote > :last-child { margin-bottom: 0; }
+.md hr { border: none; border-top: 1px solid var(--border-strong); margin: 14px 0; }
+.md-code { font: .9em var(--mono); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; white-space: break-spaces; }
+.md .table-wrap { overflow-x: auto; max-width: 100%; }
+.md table { border-collapse: collapse; font-size: .95em; overflow-wrap: normal; }
+.md th, .md td { border: 1px solid var(--border); padding: 4px 10px; text-align: left; vertical-align: top; min-width: 44px; }
+.md th { background: var(--surface); font-weight: 600; }
+.md .al-center { text-align: center; }
+.md .al-right { text-align: right; }
+.md-link { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; border-radius: 3px; }
+.md-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.md-image .icon { width: 13px; height: 13px; margin-right: 4px; vertical-align: -2px; }
+.msg.faded .body.md :is(h1, h2, h3, h4, h5, h6, blockquote, .md-link) { color: inherit; }
+/* Le curseur d'une réponse en cours : à la fin du dernier bloc. */
+.streaming .body.md::after { content: none; }
+.streaming .body.md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after, .streaming .body.md > :is(ul, ol):last-child > li:last-child:not(:has(> :is(ul, ol, p)))::after,
+.streaming .body.md > .code-block:last-child code::after { content: ""; display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 2px; background: var(--accent); animation: blink 1s steps(1) infinite; }
+.dialog .link-url { margin: 4px 0 8px; padding: 8px 10px; max-height: 180px; overflow-y: auto; background: var(--surface-2); border-radius: 8px; }

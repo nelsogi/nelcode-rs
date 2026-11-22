@@ -170,7 +170,7 @@ test('limites : explorateurs par demande et tours par explorateur (réglables) ;
   assert.equal(mine.length, 4);
   assert.ok(mine.filter((b) => b.messages.at(-1).content?.startsWith('Dernier tour')).length === 2);
   const results = chats.at(-1).messages.filter((x) => x.role === 'tool').map((x) => x.content);
-  assert.match(results[0], /limite de 2 tours sans résumé\. Ce qu'il a fait :\n- Liste de dossier de travail/);
+  assert.match(results[0], /limite de 2 tours sans résumé\. Ce qu'il a fait :\n- Liste du dossier de travail/);
   assert.match(results[2], /limite atteinte/);
   // 0 : ni l'outil ni les consignes.
   await settings({ explorerMax: 0 });

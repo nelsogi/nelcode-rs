@@ -716,7 +716,7 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
     }
     match name {
         "list_files" => {
-            let title = |n: Option<usize>| format!("Liste de {}{}", if path == "." || path.is_empty() { "dossier de travail".to_string() } else { path.to_string() }, n.map(|n| format!(" — {}", plural(n, "fichier"))).unwrap_or_default());
+            let title = |n: Option<usize>| format!("Liste {}{}", if path == "." || path.is_empty() { "du dossier de travail".to_string() } else { format!("de {path}") }, n.map(|n| format!(" — {}", plural(n, "fichier"))).unwrap_or_default());
             match sb.resolve(path).and_then(|d| if d.is_dir() { Ok(d) } else { Err(format!("« {path} » n'est pas un dossier")) }) {
                 Ok(dir) => {
                     let files = walk(&dir);

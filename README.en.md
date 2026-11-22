@@ -20,7 +20,7 @@ and GGUF models (Qwen2, Llama) on the CPU or an NVIDIA GPU, with an engine writt
 - **Models on your PC, offline**: MiniChat `.nelmodel` files and open **GGUF** models (Qwen2, Llama), by drag and drop
   or from a verified **catalog**; CPU or **NVIDIA GPU** (pack downloaded on demand).
 - **Conversations**: token-by-token streaming, Stop, Regenerate with versions, Edit, search, export, **projects**, `/`
-  commands and **custom commands**, **Ctrl+K** palette, highlighted code blocks, **`@` files**, **images** (resized,
+  commands and **custom commands**, **Ctrl+K** palette, **Markdown** replies, highlighted code blocks, **`@` files**, **images** (resized,
   metadata stripped), **automatic context summary** and `/compact`.
 - **Transparency mode** (the model's top 5 choices for each word) and **comparison mode** (two models side by side,
   votes and leaderboard).
@@ -44,7 +44,7 @@ Everything is in the [Releases](https://github.com/nelsogi/nelcode-rs/releases).
 
 ### Windows
 
-1. Download `Nel Code_1.0.0_x64-setup.exe` and run it. The installer is **not signed**: if Windows SmartScreen shows
+1. Download `Nel Code_1.0.1_x64-setup.exe` and run it. The installer is **not signed**: if Windows SmartScreen shows
    "Windows protected your PC", click "More info", then "Run anyway".
 2. **WebView2** is needed (already present on up-to-date Windows 10 and 11); the installer installs it if missing.
 
@@ -54,9 +54,9 @@ Windows 10 or 11, 64-bit. No graphics card needed; with an NVIDIA card, the [GPU
 
 For 64-bit PCs (x86_64) with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36…):
 
-- **AppImage** (`Nel Code_1.0.0_amd64.AppImage`): `chmod +x`, then run it. It **updates itself**. Without FUSE,
+- **AppImage** (`Nel Code_1.0.1_amd64.AppImage`): `chmod +x`, then run it. It **updates itself**. Without FUSE,
   install `libfuse2` or run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **.deb** (Debian, Ubuntu): `sudo apt install "./Nel Code_1.0.0_amd64.deb"`. It does **not** update itself: install the
+- **.deb** (Debian, Ubuntu): `sudo apt install "./Nel Code_1.0.1_amd64.deb"`. It does **not** update itself: install the
   new `.deb` the same way.
 
 WebKitGTK 4.1 is needed. API keys go to the desktop keychain (**Secret Service**: GNOME Keyring, KWallet…); without
@@ -64,7 +64,7 @@ one, Nel Code works but cannot keep keys.
 
 ### macOS (experimental)
 
-1. Download `Nel Code_1.0.0_universal.dmg` (Intel and Apple Silicon, macOS 11 or later), open it and drag Nel Code to
+1. Download `Nel Code_1.0.1_universal.dmg` (Intel and Apple Silicon, macOS 11 or later), open it and drag Nel Code to
    **Applications**.
 2. The app is **not signed** by an Apple developer. To open it the first time: right-click Nel Code → **Open**; or,
    since macOS 15, **System Settings → Privacy & Security** → "Open Anyway"; if macOS says the app is "damaged":
@@ -180,6 +180,9 @@ protections never assume the model is trustworthy. Version 1.0.0 went through a 
   **protected files** are read or written only after a confirmation each time; commands run **without a shell**, with
   your approval (except the allow list, by program name), and are killed with all their children on timeout or Stop.
   File and tool contents are never instructions for Nel Code.
+- **Replies**: model text never becomes HTML (elements are created one by one, raw HTML is shown as text); a link only
+  opens in the browser, after a confirmation showing the full address, over http or https; images in replies are not
+  loaded; the window never leaves the interface.
 - **Secret variables**: one list for agent commands, MCP servers and Claude Agent. A Nel Code environment variable
   whose name contains `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`, `CREDENTIAL` or `PRIVATE`, or
   starts with `ANTHROPIC_` or `OPENAI_`, is never passed to them.
@@ -258,4 +261,5 @@ has the full details: CUDA build, interface tests, code organization.
 The code is under the [MIT](LICENSE) license. Models have their own licenses (see the [model card](MODEL-CARD.md)):
 `minichat-v3b` is non-commercial, the catalog models are Apache 2.0. The GPU pack contains NVIDIA CUDA Toolkit libraries
 redistributed unmodified under the [CUDA EULA](https://docs.nvidia.com/cuda/eula/index.html). Interface icons come from
-[Lucide](https://lucide.dev) (ISC license).
+[Lucide](https://lucide.dev) (ISC license). Markdown is tokenized by a bundled copy of
+[markdown-it](https://github.com/markdown-it/markdown-it) (MIT license, see `nel-desktop/ui/vendor/`).

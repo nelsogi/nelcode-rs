@@ -6,6 +6,7 @@
 import { $, dialog, errText, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { closeEdit, newSession, renderAll, renderHeader, renderMessages, saveSession } from './conversation.js';
+import { drawMarkdown, inlineMarkdown } from './markdown.js';
 import { openSettings } from './settings.js';
 import { refreshFiles } from './files.js';
 
@@ -145,6 +146,17 @@ export function diffEl(lines) {
   return h('div', { class: 'diff' }, lines.map(([c, l]) => h('div', { class: { '+': 'add', '-': 'del', '…': 'skip' }[c] ?? 'ctx' }, h('span', { class: 'sign' }, c === '…' ? '' : c), l)));
 }
 
+// Le texte écrit par un modèle (message intermédiaire, rapport d'un sous-agent, résumé d'un explorateur) : en Markdown ;
+// la sortie d'un outil reste telle quelle.
+const isProse = (st) => st.status !== 'error' && st.status !== 'rejected' && (st.kind === 'explorer' || (st.kind === 'note' && (!st.tool || st.tool === 'Task' || st.tool === 'Agent')));
+
+function detailEl(st) {
+  if (!isProse(st) || S.settings.markdown === false) return h('pre', { class: 'detail' }, st.detail);
+  const el = h('div', { class: 'detail' });
+  drawMarkdown(el, st.detail);
+  return el;
+}
+
 // Les étapes de l'agent. `m` : le message fini (Annuler y met à jour les étapes) ; null pendant la réponse.
 // Une étape d'un sous-agent (Claude Agent) ou d'un explorateur (mode Agent) a `parent` (l'étape « Sous-agent : … » ou
 // « Explorateur : … ») et s'affiche dans son corps.
@@ -160,7 +172,7 @@ export function stepsEl(steps, m) {
     const n = count[st.id];
     if (n) { subs.set(st.id, h('div', { class: 'substeps' })); body.append(subs.get(st.id)); }
     // La raison d'un refus ou d'une erreur (Claude Agent) accompagne le diff.
-    if (st.detail && (!st.diff || st.protected || st.status === 'rejected' || st.status === 'error')) body.append(h('pre', { class: 'detail' }, st.detail));
+    if (st.detail && (!st.diff || st.protected || st.status === 'rejected' || st.status === 'error')) body.append(detailEl(st));
     if (st.diff) body.append(diffEl(st.diff));
     if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
     // Les boutons de la décision sont grisés dès le premier clic (un double clic décidait deux fois), rendus si erreur.
@@ -193,7 +205,7 @@ export function stepsEl(steps, m) {
     if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), 'Annuler')));
     (subs.get(st.parent) ?? box).append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
-      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.title),
+      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.kind === 'note' && !st.tool ? inlineMarkdown(st.title) : st.title),
         n ? h('span', { class: 'count' }, `${n} étape${n > 1 ? 's' : ''}`) : null, st.kind === 'explorer' ? explorerMeta(st) : null, status), body));
   }
   const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');

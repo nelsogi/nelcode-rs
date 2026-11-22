@@ -13,6 +13,7 @@ import { projectName, rememberProject, renderProject, sameProject, sessionsByPro
 import { refreshFiles } from './files.js';
 import { autoSummarize, summaryEl } from './summary.js';
 import { addUsage, afterPaid, budgetOk, renderUsageChip } from './usage.js';
+import { drawMarkdown, scheduleLive } from './markdown.js';
 import { closeOtherMcp, mcpOff, mcpStarted, refreshMcp } from './mcp.js';
 import { addPaths, attached, giveBack, imageLines, imageTokens, isImagePath, messageImages, pendingOf, refreshVision, renderAttach, takePending, vision } from './images.js';
 
@@ -365,8 +366,10 @@ export function onToken(p) {
   if (el && S.current === g.session) {
     el.classList.remove('thinking');
     el.classList.add('streaming');
-    el.querySelector('.body').replaceChildren(...richText(out.text.trimStart()));
-    followEnd();
+    scheduleLive(out, () => {
+      if (S.gen !== g || g.done || S.current !== g.session || !g.el) return null;
+      return (g.kind === 'compare' ? g.el.querySelector(`[data-side=${p.side}]`) : g.el).querySelector(':scope > .body');
+    }, followEnd);
   }
 }
 
@@ -496,7 +499,7 @@ export const chosenProb = ([text, choices]) => choices.find(([t]) => t === text)
 // Le texte d'une réponse ; en mode transparence, un <span> par token, teinté selon la confiance.
 export function bodyEl(content, tokens) {
   const body = h('div', { class: 'body' });
-  if (!S.settings.transparency || !tokens || tokens.map(([t]) => t).join('').trim() !== content) { body.append(...richText(content)); return body; }
+  if (!S.settings.transparency || !tokens || tokens.map(([t]) => t).join('').trim() !== content) { drawMarkdown(body, content); return body; }
   let lead = true;
   tokens.forEach((tok, k) => {
     const text = lead ? tok[0].trimStart() : tok[0];
@@ -555,7 +558,7 @@ export function compareEl(m, i) {
 
 export function compareStreamingEl() {
   const g = S.gen, s = g.session.compare;
-  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), h('div', { class: 'body' }, g[k].text ? richText(g[k].text.trimStart()) : waiting('en attente…')));
+  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), liveBody(g[k].text, 'en attente…'));
   return h('div', { class: 'msg compare' }, h('div', { class: 'pair' }, side('a', s.a), side('b', s.b)));
 }
 
@@ -718,12 +721,19 @@ export function renderMessages() {
 
 export const waiting = (text) => h('span', { class: 'waiting' }, icon('asterisk'), text);
 
+// Le texte d'une réponse en cours (ou l'attente).
+function liveBody(text, wait) {
+  const body = h('div', { class: 'body' });
+  if (text) drawMarkdown(body, text.trimStart(), true); else body.append(waiting(wait));
+  return body;
+}
+
 export function streamingEl() {
   const g = S.gen;
   return h('div', { class: 'msg assistant ' + (g.text ? 'streaming' : 'thinking') },
     g.reasoning ? reasoningEl(g.reasoning, ((g.thinkEnd ?? Date.now()) - g.thinkStart) / 1000, !g.thinkEnd) : null,
     g.steps.length ? stepsEl(g.steps, null) : null,
-    h('div', { class: 'body' }, g.text ? richText(g.text.trimStart()) : waiting('réfléchit…')));
+    liveBody(g.text, 'réfléchit…'));
 }
 
 export function messageEl(m, i, faded) {

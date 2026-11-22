@@ -129,13 +129,14 @@ export function highlight(code, lang) {
 
 export function codeBlock(code, info) {
   const lang = langOf(info);
+  const text = h('code', {}, highlight(code, lang));
   const copy = h('button', { class: 'copy', title: 'Copier le code', onclick: async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(text.textContent);   // le code affiché (il grandit pendant la réponse)
     copy.replaceChildren(icon('check'), 'Copié'); setTimeout(() => copy.replaceChildren(icon('copy'), 'Copier'), 1200);
   } }, icon('copy'), 'Copier');
   return h('div', { class: 'code-block', 'data-lang': lang },
     h('div', { class: 'code-head' }, h('span', {}, LANG_NAMES[lang] ?? (lang || 'code')), copy),
-    h('pre', {}, h('code', {}, highlight(code, lang))));
+    h('pre', {}, text));
 }
 
 // Le texte d'un message, avec ses blocs ``` (langage facultatif après les ```).

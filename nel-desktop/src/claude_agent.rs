@@ -281,7 +281,7 @@ impl<'a> Translator<'a> {
                 "command": input["command"], "detail": input["description"].as_str().unwrap_or_default() }),
             "Glob" => json!({ "kind": "search", "title": format!("Recherche de fichiers {}", input["pattern"].as_str().unwrap_or_default()) }),
             "Grep" => json!({ "kind": "search", "title": format!("Recherche de \"{}\"", short(input["pattern"].as_str().unwrap_or_default(), 60)) }),
-            "LS" => json!({ "kind": "list", "title": format!("Liste de {}", if p.is_empty() { "dossier de travail".into() } else { p.clone() }) }),
+            "LS" => json!({ "kind": "list", "title": format!("Liste {}", if p.is_empty() { "du dossier de travail".into() } else { format!("de {p}") }) }),
             "WebFetch" => json!({ "kind": "note", "title": format!("Lecture web : {}", input["url"].as_str().unwrap_or_default()) }),
             "WebSearch" => json!({ "kind": "note", "title": format!("Recherche web : {}", input["query"].as_str().unwrap_or_default()) }),
             "Task" | "Agent" => json!({ "kind": "note", "title": format!("Sous-agent : {}", input["description"].as_str().unwrap_or_default()) }),

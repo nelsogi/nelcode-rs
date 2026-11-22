@@ -8,6 +8,7 @@
 import { h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { historyOf, startGen, summaryOf } from './conversation.js';
+import { drawMarkdown } from './markdown.js';
 import { imageLines, imageTokens, vision } from './images.js';
 
 export const KEEP_TURNS = 4;
@@ -106,5 +107,7 @@ export async function compactNow(instruction = '') {
 
 // Le bloc repliable, à la place des messages résumés.
 export function summaryEl(sm) {
-  return h('details', { class: 'reasoning summary-block' }, h('summary', {}, icon('chevron-right'), 'Résumé des échanges précédents'), h('div', { class: 'think' }, sm.text));
+  const text = h('div', { class: 'think' });
+  drawMarkdown(text, sm.text);
+  return h('details', { class: 'reasoning summary-block' }, h('summary', {}, icon('chevron-right'), 'Résumé des échanges précédents'), text);
 }
