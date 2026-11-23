@@ -1,6 +1,7 @@
 // Nel Code Desktop — util.js : Les petits outils de l'interface : appels au Rust, éléments du DOM, notifications, fenêtres, menus, coloration du code.
 // Les textes (messages, noms) passent toujours par textContent, jamais par innerHTML.
 
+import { locale, t, toEnglish, tr } from './i18n.js';
 import { UI } from './state.js';
 
 export const { invoke } = window.__TAURI__.core;
@@ -36,7 +37,8 @@ export function localIso(d = new Date()) {
 
 export const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
-export const errText = (e) => String(e?.message ?? e);
+// Le texte d'une erreur : un message codé de la partie Rust est traduit (i18n.js, tr()).
+export const errText = (e) => tr(String(e?.message ?? e));
 
 export const sizeText = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + ' Go' : (b / 1e6).toFixed(0) + ' Mo';
 
@@ -48,12 +50,12 @@ export function relDate(iso) {
   const days = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
   if (days === 0) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (days === 1) return 'hier';
-  if (days < 7) return d.toLocaleDateString('fr-CH', { weekday: 'short' });
-  return d.toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' });
+  if (days < 7) return d.toLocaleDateString(locale(), { weekday: 'short' });
+  return d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
 }
 
-// Une ligne du journal (%APPDATA%\NelCode\logs). Seulement des événements, jamais le texte d'une conversation.
-export const logEvent = (message, level = 'info') => invoke('log_event', { level, message: String(message) }).catch(() => {});
+// Une ligne du journal (%APPDATA%\NelCode\logs), en anglais. Seulement des événements, jamais le texte d'une conversation.
+export const logEvent = (message, level = 'info') => invoke('log_event', { level, message: toEnglish(String(message)) }).catch(() => {});
 
 /** Les notifications : discrètes, en bas à droite, 4 au plus (la plus ancienne part), une croix pour fermer.
  *  Durée par défaut selon le genre : succès 3 s, info 4,5 s, avertissement 6 s, erreur 9 s ; 0 : jusqu'à la croix. */
@@ -62,7 +64,7 @@ const MAX_TOASTS = 4;
 export function toast(text, kind = '', ms = TOAST_MS[kind] ?? 4500) {
   if (kind === 'error' && typeof text === 'string') logEvent(text, 'error');
   const box = $('toasts');
-  const close = h('button', { class: 'toast-close', title: 'Fermer', 'aria-label': 'Fermer la notification', onclick: () => el.remove() }, icon('x'));
+  const close = h('button', { class: 'toast-close', title: t('util.fermer'), 'aria-label': t('util.fermer_notification'), onclick: () => el.remove() }, icon('x'));
   const el = h('div', { class: 'toast ' + kind, role: kind === 'error' ? 'alert' : 'status' },
     kind === 'error' ? icon('circle-alert') : kind === 'success' ? icon('check') : kind === 'warning' ? icon('circle-alert') : null,
     h('div', { class: 'toast-text' }, text), close);
@@ -76,6 +78,7 @@ export function toast(text, kind = '', ms = TOAST_MS[kind] ?? 4500) {
 // Les blocs ``` d'un message : coloration par expressions régulières, un <span> par morceau (textContent, jamais
 // innerHTML), et un bouton Copier. Un bloc pas encore fermé (réponse en cours) est déjà affiché comme du code.
 
+// i18n-ignore-start (mots-clés et noms des langages de programmation)
 export const KEYWORDS = {
   rust: 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while',
   cs: 'abstract as async await base bool break byte case catch char class const continue decimal default delegate do double else enum event false finally float for foreach get if in init int interface internal is lock long namespace new null object out override params private protected public readonly record ref return sealed set static string struct switch this throw true try typeof uint ulong using var virtual void while yield',
@@ -87,6 +90,7 @@ export const LANG_ALIAS = { 'c#': 'cs', csharp: 'cs', rs: 'rust', python: 'py', 
 
 export const LANG_NAMES = { rust: 'Rust', cs: 'C#', py: 'Python', js: 'JavaScript', html: 'HTML', css: 'CSS', json: 'JSON' };
 
+// i18n-ignore-end
 export const RE_STR = String.raw`"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'`;
 
 export const RE_NUM = String.raw`\b0x[\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?[a-zA-Z\d]*\b`;
@@ -130,10 +134,10 @@ export function highlight(code, lang) {
 export function codeBlock(code, info) {
   const lang = langOf(info);
   const text = h('code', {}, highlight(code, lang));
-  const copy = h('button', { class: 'copy', title: 'Copier le code', onclick: async () => {
+  const copy = h('button', { class: 'copy', title: t('util.copier_code'), onclick: async () => {
     await navigator.clipboard.writeText(text.textContent);   // le code affiché (il grandit pendant la réponse)
-    copy.replaceChildren(icon('check'), 'Copié'); setTimeout(() => copy.replaceChildren(icon('copy'), 'Copier'), 1200);
-  } }, icon('copy'), 'Copier');
+    copy.replaceChildren(icon('check'), t('util.copie')); setTimeout(() => copy.replaceChildren(icon('copy'), t('util.copier')), 1200);
+  } }, icon('copy'), t('util.copier'));
   return h('div', { class: 'code-block', 'data-lang': lang },
     h('div', { class: 'code-head' }, h('span', {}, LANG_NAMES[lang] ?? (lang || 'code')), copy),
     h('pre', {}, text));
@@ -178,13 +182,13 @@ export function dialog(title, body, buttons, focus) {
 }
 
 export const confirmDialog = (title, text, label, danger) =>
-  dialog(title, h('p', {}, text), [{ label: 'Annuler', value: false }, { label, value: true, primary: !danger, danger }]);
+  dialog(title, h('p', {}, text), [{ label: t('util.annuler'), value: false }, { label, value: true, primary: !danger, danger }]);
 
 export async function promptDialog(title, value, hint) {
   const input = h('input', { class: 'text-input', spellcheck: 'false' });
   input.value = value;
   setTimeout(() => input.select(), 0);
-  const ok = await dialog(title, [input, hint && h('div', { class: 'field' }, h('div', { class: 'hint' }, hint))], [{ label: 'Annuler', value: false }, { label: 'OK', value: true, primary: true }], input);
+  const ok = await dialog(title, [input, hint && h('div', { class: 'field' }, h('div', { class: 'hint' }, hint))], [{ label: t('util.annuler'), value: false }, { label: t('util.ok'), value: true, primary: true }], input);
   return ok ? input.value : null;
 }
 

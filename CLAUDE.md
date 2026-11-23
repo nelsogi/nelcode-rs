@@ -1,6 +1,6 @@
 # Nel Code (nelcode-rs)
 
-Application de bureau Windows, Linux et macOS expérimentaux (Tauri, Rust + interface HTML/JS sans framework) pour discuter avec des modèles
+Application de bureau Windows, Linux et macOS expérimentaux (Tauri, Rust + interface HTML/JS sans framework, en français et en anglais) pour discuter avec des modèles
 locaux (`.nelmodel`, GGUF) ou distants (API OpenAI), avec un mode Agent. Projet solo, en français (code, commentaires,
 CHANGELOG, README, messages de commit).
 
@@ -37,19 +37,21 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 - `gpu.rs`, `delayload.rs` : pack GPU téléchargé à la demande, chargement différé des DLL CUDA (Windows seulement)
 - `log.rs` : journal quotidien (7 jours), jamais le texte des conversations
 - `usage.rs` : suivi `usage.jsonl` (tokens, coût estimé, table de prix, budget, regroupement à 90 jours), jamais le texte
+- `i18n.rs` : catalogues `ui/i18n/{fr,en}.json` inclus (commande `i18n_catalog`), messages codés `t!("clé", p = v)`,
+  rendu anglais (journal) et français (ce qui part au modèle : `i18n::french`)
 - `window.rs` : taille, position et état agrandi de la fenêtre (clé `windowState`), contrôle contre les écrans actuels
 - `images.rs` : images des messages (réduites, réencodées sans métadonnées, fichiers `sessions\{id}\img-*`, content
   OpenAI en data URL, estimation des tokens, détection des modèles qui voient les images)
 
 ### nel-desktop/ui (modules ES, `js/main.js` charge le reste)
-`util.js` (appels Rust, DOM, fenêtres) · `state.js` (état partagé `S`, `UI`) · `conversation.js` (conversations,
+`i18n.js` (`t('clé', params)`, pluriels, `num`/`date`, `tr()` des messages codés) · `util.js` (appels Rust, DOM, fenêtres) · `state.js` (état partagé `S`, `UI`) · `conversation.js` (conversations,
 génération, saisie) · `markdown.js` (rendu Markdown des réponses : jetons → DOM, liens) · `agent.js` (mode Agent, étapes, plan, confirmations) · `files.js` (panneau Fichiers, diff) ·
 `projects.js` · `providers.js` (modèles distants) · `catalog.js` · `settings-page.js` (page Réglages : catégories, recherche, enregistrement automatique, export) · `settings.js` · `mcp.js` (Réglages → MCP, accords, fenêtre de la puce) · `usage.js` (page Suivi, budget, prix) · `images.js` (images des messages) · `onboarding.js` · `palette.js`
 (Ctrl+K). Aussi `index.html`, `style.css`, `icons.js`, `vendor/` (markdown-it, copié tel quel).
 
 ### e2e/
 `harness.mjs` lance l'exe debug avec dossiers de données temporaires et le pilote par le port de débogage WebView2.
-Fichiers : `nelcode`, `ux`, `settings` (page Réglages), `window` (état de la fenêtre), `agent`, `explorer`, `markdown`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
+Fichiers : `nelcode`, `ux`, `settings` (page Réglages), `i18n` (catalogues, clés, textes en dur, deux langues), `window` (état de la fenêtre), `agent`, `explorer`, `markdown`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
 `gguf` et `gpu` (ignorés sans modèle / sans carte NVIDIA).
 
 ## Tests
@@ -72,6 +74,11 @@ pour tout vérifier : la sortie complète coûte cher en tokens.
   fournisseurs et de MCP seulement vers la même origine ; clés (serveur local compris) jamais dans `settings.json`,
   jamais dans le journal ni dans les tests (clés de test à part) ; l'interface n'appelle jamais le réseau (CSP inchangée).
   Ne jamais affaiblir une de ces protections sans demande explicite.
+- **Traductions** : aucun texte de l'interface en dur. JS : `t('clé', { params })` (pluriel : objet `{ one, other }` et
+  paramètre `n`), clé dans `fr.json` ET `en.json` ; HTML : `data-i18n*` ; Rust : `t!("rs.…", p = v)` pour ce que voit
+  l'utilisateur, `i18n::french()` pour ce qui part au modèle, journal en anglais (texte anglais ou `i18n::english`).
+  Ce qui part au modèle (prompts, descriptions d'outils, résultats) n'est pas traduit (`// i18n-ignore` côté JS).
+  `e2e/i18n.test.mjs` vérifie tout cela.
 - **Jamais le nom « Claude Code » dans l'interface** (textes, boutons, messages). Écrire « Claude Agent » ou « claude ».
 - **Pas de connexion Claude.ai** : on utilise l'exécutable `claude` déjà connecté sur le PC, ou une clé API Anthropic.
 - **CHANGELOG à jour** : chaque nouveauté ou correction va dans `CHANGELOG.md` ; README mis à jour si l'usage change.

@@ -2,6 +2,7 @@
 // fichiers modifiés par l'agent dans la conversation, l'aperçu d'un fichier (avec coloration) et son diff de la session.
 // Lecture seule : rien n'est écrit d'ici. Les textes passent toujours par textContent, jamais par innerHTML.
 
+import { t, tr } from './i18n.js';
 import { $, codeBlock, confirmDialog, errText, h, invoke, toast } from './util.js';
 import { S } from './state.js';
 import { EXT_LANG } from './conversation.js';
@@ -66,7 +67,7 @@ function tree(paths) {
   return root;
 }
 
-const BADGE_TITLE = { A: 'créé par l\'agent dans cette conversation', M: 'modifié par l\'agent dans cette conversation' };
+const BADGE_TITLE = { A: 'files.cree_par_agent_dans_cette', M: 'files.modifie_par_agent_dans_cette' };
 
 function treeEl(node, prefix, changes, depth) {
   const items = [];
@@ -76,7 +77,7 @@ function treeEl(node, prefix, changes, depth) {
     const changed = [...changes.keys()].some((p) => p.startsWith(path + '/'));
     items.push(h('li', { class: 'dir' + (open ? ' open' : ''), 'data-path': path },
       h('button', { class: 'row', style: `padding-left:${8 + depth * 14}px`, 'aria-expanded': String(open), onclick: () => { open ? FP.expanded.delete(path) : FP.expanded.add(path); renderFiles(); } },
-        icon(open ? 'chevron-down' : 'chevron-right'), icon('folder'), h('span', { class: 'name' }, name), changed ? h('span', { class: 'dot changed', title: 'contient des fichiers modifiés par l\'agent' }) : null),
+        icon(open ? 'chevron-down' : 'chevron-right'), icon('folder'), h('span', { class: 'name' }, name), changed ? h('span', { class: 'dot changed', title: t('files.contient_fichiers_modifies_par_agent') }) : null),
       open ? h('ul', {}, treeEl(sub, path + '/', changes, depth + 1)) : null));
   }
   for (const name of [...node.files].sort((a, b) => a.localeCompare(b))) {
@@ -84,7 +85,7 @@ function treeEl(node, prefix, changes, depth) {
     const c = changes.get(path);
     items.push(h('li', { class: 'file' + (FP.selected === path ? ' sel' : ''), 'data-path': path },
       h('button', { class: 'row', style: `padding-left:${22 + depth * 14}px`, onclick: () => selectFile(path) },
-        icon('file'), h('span', { class: 'name' }, name), c ? h('span', { class: 'badge ' + c.kind, title: BADGE_TITLE[c.kind] }, c.kind) : null)));
+        icon('file'), h('span', { class: 'name' }, name), c ? h('span', { class: 'badge ' + c.kind, title: BADGE_TITLE[c.kind] ? t(BADGE_TITLE[c.kind]) : undefined }, c.kind) : null)));
   }
   return items;
 }
@@ -108,17 +109,17 @@ async function showPreview(path, confirm = false) {
   const dir = FP.dir;
   const change = sessionChanges().get(path);
   const tabs = h('div', { class: 'tabs' },
-    h('button', { class: FP.mode === 'content' ? 'on' : '', onclick: () => { FP.mode = 'content'; showPreview(path, confirm); } }, 'Contenu'),
-    change ? h('button', { class: FP.mode === 'diff' ? 'on' : '', onclick: () => { FP.mode = 'diff'; showPreview(path, confirm); } }, 'Diff de la session') : null);
+    h('button', { class: FP.mode === 'content' ? 'on' : '', onclick: () => { FP.mode = 'content'; showPreview(path, confirm); } }, t('files.contenu')),
+    change ? h('button', { class: FP.mode === 'diff' ? 'on' : '', onclick: () => { FP.mode = 'diff'; showPreview(path, confirm); } }, t('files.diff_session')) : null);
   const head = h('div', { class: 'preview-head' }, h('span', { class: 'path', title: path }, path), tabs,
-    h('button', { class: 'icon-btn', title: 'Fermer l\'aperçu', 'aria-label': 'Fermer l\'aperçu', onclick: () => { FP.selected = null; renderFiles(); } }, icon('x')));
-  box.replaceChildren(head, h('div', { class: 'hint' }, 'Lecture…'));
+    h('button', { class: 'icon-btn', title: t('files.fermer_apercu'), 'aria-label': t('files.fermer_apercu'), onclick: () => { FP.selected = null; renderFiles(); } }, icon('x')));
+  box.replaceChildren(head, h('div', { class: 'hint' }, t('files.lecture')));
   if (FP.mode === 'diff' && change) {
     let full = null;
     try { full = await invoke('agent_session_diff', { dir, path, steps: change.steps }); } catch { /* repli sur les diffs des étapes */ }
     const body = full
-      ? [h('div', { class: 'hint' }, full.created ? 'Créé dans cette conversation.' : full.deleted ? 'Supprimé depuis.' : 'Depuis avant la première modification de l\'agent dans cette conversation.'), diffEl(full.diff)]
-      : change.diffs.flatMap((d) => [h('div', { class: 'hint' }, d.title), diffEl(d.diff)]);
+      ? [h('div', { class: 'hint' }, full.created ? t('files.cree_dans_cette_conversation') : full.deleted ? t('files.supprime_depuis') : t('files.depuis_avant_premiere_modification_agent')), diffEl(full.diff)]
+      : change.diffs.flatMap((d) => [h('div', { class: 'hint' }, tr(d.title)), diffEl(d.diff)]);
     return box.replaceChildren(head, ...body);
   }
   try {
@@ -128,10 +129,10 @@ async function showPreview(path, confirm = false) {
   } catch (e) {
     const [tag, pattern] = errText(e).split('\t');
     if (tag === 'PROTECTED') {
-      return box.replaceChildren(head, h('div', { class: 'protected' }, icon('circle-alert'), h('span', {}, `Fichier protégé (${pattern}) : il peut contenir des mots de passe ou des clés.`),
+      return box.replaceChildren(head, h('div', { class: 'protected' }, icon('circle-alert'), h('span', {}, t('files.fichier_protege_il_peut_contenir', { pattern: pattern })),
         h('button', { class: 'btn', onclick: async () => {
-          if (await confirmDialog('Fichier protégé', `Afficher « ${path} » ? Il n'est montré qu'ici, rien n'est envoyé au modèle.`, 'Afficher')) showPreview(path, true);
-        } }, 'Afficher quand même')));
+          if (await confirmDialog(t('files.fichier_protege'), t('files.afficher_il_est_montre_qu', { path: path }), t('files.afficher'))) showPreview(path, true);
+        } }, t('files.afficher_quand_meme'))));
     }
     box.replaceChildren(head, h('div', { class: 'warn-text' }, errText(e)));
   }
@@ -145,14 +146,14 @@ export function renderFiles() {
   if (box.hidden) return;
   const changes = sessionChanges();
   const count = changes.size;
-  const head = h('div', { class: 'files-head' }, icon('folder-tree'), h('span', { class: 'files-title' }, 'Fichiers'),
-    count ? h('span', { class: 'files-count', title: `${count} fichier(s) modifié(s) par l'agent dans cette conversation` }, `${count} modifié${count > 1 ? 's' : ''}`) : null,
-    h('button', { class: 'icon-btn', title: 'Relire le dossier', 'aria-label': 'Relire le dossier', onclick: () => refreshFiles(true) }, icon('refresh-cw')),
-    h('button', { class: 'icon-btn', title: 'Fermer le panneau (Ctrl+Maj+E)', 'aria-label': 'Fermer le panneau', onclick: () => toggleFiles(false) }, icon('x')));
-  const dir = h('div', { class: 'files-dir', title: FP.dir || '' }, FP.dir || 'Aucun dossier de travail');
-  const body = FP.loading ? h('div', { class: 'hint pad' }, 'Lecture du dossier…')
+  const head = h('div', { class: 'files-head' }, icon('folder-tree'), h('span', { class: 'files-title' }, t('files.fichiers')),
+    count ? h('span', { class: 'files-count', title: t('files.modified_title', { n: count }) }, t('files.modified_count', { n: count })) : null,
+    h('button', { class: 'icon-btn', title: t('files.relire_dossier'), 'aria-label': t('files.relire_dossier'), onclick: () => refreshFiles(true) }, icon('refresh-cw')),
+    h('button', { class: 'icon-btn', title: t('files.fermer_panneau_ctrl_maj'), 'aria-label': t('files.fermer_panneau'), onclick: () => toggleFiles(false) }, icon('x')));
+  const dir = h('div', { class: 'files-dir', title: FP.dir || '' }, FP.dir || t('files.aucun_dossier_travail'));
+  const body = FP.loading ? h('div', { class: 'hint pad' }, t('files.lecture_dossier'))
     : FP.error ? h('div', { class: 'warn-text pad' }, FP.error)
-      : FP.list.length ? h('ul', { class: 'tree' }, treeEl(tree(FP.list), '', changes, 0)) : h('div', { class: 'hint pad' }, 'Dossier vide.');
+      : FP.list.length ? h('ul', { class: 'tree' }, treeEl(tree(FP.list), '', changes, 0)) : h('div', { class: 'hint pad' }, t('files.dossier_vide'));
   box.replaceChildren(head, dir, body, FP.selected ? h('div', { class: 'preview' }) : '');
   if (FP.selected) showPreview(FP.selected);
 }

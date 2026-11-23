@@ -6,6 +6,7 @@
 //! appliquée, puis le plus grand côté ramené à `imageMaxSide` (1568 px par défaut), et l'image réencodée : rien des
 //! métadonnées d'origine (EXIF, position GPS, profils, textes) ne passe dans le fichier gardé ni dans l'envoi.
 
+use crate::t;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -43,7 +44,7 @@ impl Attached {
 /// Le dossier des images de la conversation `id`.
 pub fn dir(session: &str) -> Result<PathBuf> {
     if !store::valid_name(session) {
-        return Err("conversation sans id valide".into());
+        return Err(t!("rs.store.bad_session_id"));
     }
     Ok(store::sessions_dir().join(session))
 }
@@ -52,7 +53,7 @@ pub fn dir(session: &str) -> Result<PathBuf> {
 fn file(session: &str, name: &str) -> Result<PathBuf> {
     let ok = name.strip_prefix("img-").and_then(|r| r.strip_suffix(".jpg").or(r.strip_suffix(".png"))).is_some_and(|h| !h.is_empty() && h.len() <= 32 && h.bytes().all(|b| b.is_ascii_hexdigit()));
     if !ok {
-        return Err(format!("nom d'image invalide : {name}"));
+        return Err(t!("rs.images.bad_name", name = name));
     }
     Ok(dir(session)?.join(name))
 }
@@ -296,6 +297,8 @@ pub async fn detect(provider: &Value, model: &str, client: &reqwest::Client, key
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
     use image::{ImageEncoder, RgbImage, RgbaImage};
 
     /// Un JPEG w × h avec un segment EXIF (orientation `orientation`, une description « secrète ») et un commentaire.
@@ -375,7 +378,7 @@ mod tests {
 
     #[test]
     fn formats_refuses_et_gif() {
-        assert!(convert(b"<svg xmlns='http://www.w3.org/2000/svg'/>", 1568).unwrap_err().contains("non pris en charge"));
+        assert!(convert(b"<svg xmlns='http://www.w3.org/2000/svg'/>", 1568).unwrap_err().fr().contains("non pris en charge"));
         assert!(convert(b"BM\0\0\0\0", 1568).is_err(), "BMP refusé");
         let mut gif = Vec::new();
         {

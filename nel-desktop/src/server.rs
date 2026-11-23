@@ -58,9 +58,9 @@ pub fn key() -> Option<String> {
                     }
                     Ok(())
                 });
-                log::info("serveur local : clé d'accès déplacée de settings.json vers le trousseau");
+                log::info("local server: access key moved from settings.json to the keychain");
             }
-            Err(e) => log::error(&format!("serveur local : clé d'accès non déplacée dans le trousseau ({e})")),
+            Err(e) => log::error(&format!("local server: access key not moved to the keychain ({e})")),
         }
     }
     creds::read(KEY_ID).filter(|k| !k.is_empty())
@@ -86,7 +86,7 @@ pub fn apply(app: &AppHandle) -> Result<Option<u16>, String> {
         return Ok(Some(port));
     }
     if server.take().is_some() {
-        log::info("serveur local arrêté");
+        log::info("local server stopped");
     }
     let port = if enabled {
         match start(app, port) {
@@ -96,7 +96,7 @@ pub fn apply(app: &AppHandle) -> Result<Option<u16>, String> {
                 Some(p)
             }
             Err(e) => {
-                log::error(&format!("serveur local : {e}"));
+                log::error(&format!("local server: {e}"));
                 let _ = app.emit("server-changed", json!({ "port": null, "error": e }));
                 return Err(e);
             }
@@ -129,7 +129,7 @@ fn start(app: &AppHandle, port: u16) -> Result<Running, String> {
             }
         }
     });
-    log::info(&format!("serveur local démarré sur 127.0.0.1:{port}"));
+    log::info(&format!("local server started on 127.0.0.1:{port}"));
     Ok(Running { port, stop, thread: Some(thread) })
 }
 
@@ -283,7 +283,7 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
     let model = if installed { compare_model(&state, asked).map(|m| (asked.to_string(), m)) } else { current(&state) };
     let (name, model) = match model {
         Ok(m) => m,
-        Err(e) => return error(conn, 400, &format!("no model available ({e}): load a model in Nel Code, or ask for one listed by GET /v1/models"), "invalid_request_error"),
+        Err(e) => return error(conn, 400, &format!("no model available ({}): load a model in Nel Code, or ask for one listed by GET /v1/models", crate::i18n::english(&e)), "invalid_request_error"),
     };
     // Un seul calcul à la fois, avec l'interface comme avec les autres requêtes.
     if state.generating.swap(true, Ordering::SeqCst) {
@@ -310,7 +310,7 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
     let (id, created) = (format!("chatcmpl-{:x}", crate::seed()), now());
     let _ = app.emit("server-busy", true);
     let clock = std::time::Instant::now();
-    log::info(&format!("serveur local : réponse avec « {name} » ({} tokens de prompt{})", prompt.len(), if stream { ", streaming" } else { "" }));
+    log::info(&format!("local server: reply with \"{name}\" ({} prompt tokens{})", prompt.len(), if stream { ", streaming" } else { "" }));
 
     let chunk = |delta: Value, finish: Value| {
         json!({ "id": id, "object": "chat.completion.chunk", "created": created, "model": name, "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }] })
@@ -347,11 +347,11 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
             }
         }
         Err(e) => {
-            log::error(&format!("serveur local, génération : {e}"));
+            log::error(&format!("local server, generation: {e}"));
             if stream {
-                let _ = write!(conn, "data: {}\n\n", json!({ "error": { "message": format!("generation failed: {e}"), "type": "server_error" } }));
+                let _ = write!(conn, "data: {}\n\n", json!({ "error": { "message": format!("generation failed: {}", crate::i18n::english(&e.to_string())), "type": "server_error" } }));
             } else {
-                error(conn, 500, &format!("generation failed: {e}"), "server_error");
+                error(conn, 500, &format!("generation failed: {}", crate::i18n::english(&e.to_string())), "server_error");
             }
         }
     }
@@ -360,6 +360,8 @@ fn chat(app: &AppHandle, conn: &mut TcpStream, body: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn msgs(v: Value) -> Vec<Value> {
         v.as_array().unwrap().clone()

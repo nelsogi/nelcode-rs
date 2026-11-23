@@ -5,6 +5,7 @@
 //! touchés : git travaille sur un index temporaire (GIT_INDEX_FILE).
 //! Création et restauration se limitent au dossier de travail (git lancé dedans, chemins relatifs à lui).
 
+use crate::t;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -72,7 +73,7 @@ fn git(dir: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
     if let Some(i) = index {
         cmd.env("GIT_INDEX_FILE", i);
     }
-    let o = cmd.output().map_err(|e| format!("git introuvable : {e}"))?;
+    let o = cmd.output().map_err(|e| t!("rs.git.missing", error = e.to_string()))?;
     if !o.status.success() {
         return Err(format!("git {} : {}", args[0], String::from_utf8_lossy(&o.stderr).trim()));
     }
@@ -102,7 +103,7 @@ impl Drop for TempFile {
 
 fn valid_id(id: &str) -> Result<()> {
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err("point de restauration invalide".into());
+        return Err(t!("rs.git.bad_checkpoint"));
     }
     Ok(())
 }
@@ -127,7 +128,7 @@ pub fn create(dir: &str) -> Result<Option<String>> {
     let dir = Path::new(dir);
     match git(dir, None, &["rev-parse", "--is-inside-work-tree"]) {
         Ok(s) if s.trim() == "true" => {}
-        Err(e) if e.starts_with("git introuvable") => return Err(e),
+        Err(e) if crate::i18n::parse(&e).is_some_and(|(k, _)| k == "rs.git.missing") => return Err(e),
         _ => return Ok(None),
     }
     // L'heure en tête de l'id : l'ordre des noms est celui de la création.
@@ -159,7 +160,7 @@ pub fn create(dir: &str) -> Result<Option<String>> {
     let all: Vec<&str> = all.lines().filter(|l| !l.is_empty()).collect();
     for old in &all[..all.len().saturating_sub(KEEP)] {
         if let Err(e) = git(dir, None, &["update-ref", "-d", old]) {
-            crate::log::error(&format!("point de restauration ancien non supprimé : {e}"));
+            crate::log::error(&format!("old restore point not deleted: {e}"));
         }
     }
     Ok(Some(id))
@@ -171,7 +172,7 @@ pub fn create(dir: &str) -> Result<Option<String>> {
 pub fn restore(dir: &str, id: &str) -> Result<()> {
     valid_id(id)?;
     let dir = Path::new(dir);
-    let missing = || "ce point de restauration n'existe plus dans le dépôt (trop ancien : seuls les 20 derniers sont gardés, ou dossier de travail déplacé)".to_string();
+    let missing = || t!("rs.git.checkpoint_gone");
     let refs = refs_of(dir).map_err(|_| missing())?;
     let tree = git(dir, None, &["rev-parse", "--verify", "-q", &format!("{refs}{id}^{{tree}}")]).map_err(|_| missing())?;
     let index = TempFile::new();
@@ -181,16 +182,18 @@ pub fn restore(dir: &str, id: &str) -> Result<()> {
     // Ce qui n'est pas dans le point (ni ignoré, ni protégé) : créé depuis. Seulement des fichiers, un par un.
     for rel in unprotected_others(dir, &index.0)? {
         if let Err(e) = fs::remove_file(dir.join(&rel)) {
-            crate::log::error(&format!("point de restauration : « {rel} » non supprimé : {e}"));
+            crate::log::error(&format!("restore point: \"{rel}\" not deleted: {e}"));
         }
     }
-    crate::log::info(&format!("point de restauration {id} remis"));
+    crate::log::info(&format!("restore point {id} restored"));
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn tmp() -> PathBuf {
         let d = std::env::temp_dir().join(format!("nelcode-ckpt-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
@@ -234,7 +237,7 @@ mod tests {
         // L'utilisateur : HEAD, index (v2 indexé), branches et stash inchangés.
         assert_eq!((g(&["rev-parse", "HEAD"]), g(&["diff", "--cached"]), g(&["for-each-ref", "refs/heads", "refs/stash"])), (head, staged, refs));
         assert!(g(&["show", ":suivi.txt"]) == "v2\n");
-        assert!(restore(dir, "r2").unwrap_err().contains("n'existe plus"));
+        assert!(restore(dir, "r2").unwrap_err().fr().contains("n'existe plus"));
         assert!(restore(dir, "../x").is_err());
         // Un sous-dossier comme dossier de travail : rien n'est touché à côté.
         fs::create_dir_all(d.join("sous")).unwrap();
@@ -273,8 +276,8 @@ mod tests {
         // Seulement les 20 derniers points du dossier ; un sous-dossier a les siens.
         let ids: Vec<String> = (0..21).map(|_| create(dir).unwrap().unwrap()).collect();
         assert_eq!(g(&["for-each-ref", "--format=%(refname)", &refs]).lines().count(), KEEP);
-        assert!(restore(dir, &id).unwrap_err().contains("n'existe plus"), "le plus ancien est supprimé");
-        assert!(restore(dir, &ids[0]).unwrap_err().contains("n'existe plus"));
+        assert!(restore(dir, &id).unwrap_err().fr().contains("n'existe plus"), "le plus ancien est supprimé");
+        assert!(restore(dir, &ids[0]).unwrap_err().fr().contains("n'existe plus"));
         restore(dir, &ids[20]).unwrap();
         fs::create_dir_all(d.join("sous")).unwrap();
         create(d.join("sous").to_str().unwrap()).unwrap().unwrap();

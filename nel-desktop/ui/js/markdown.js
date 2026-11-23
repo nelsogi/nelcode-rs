@@ -4,6 +4,7 @@
 // Les liens n'ont pas de href (rien ne s'ouvre dans la fenêtre) : un clic demande, puis la partie Rust ouvre le
 // navigateur. Les images ne sont jamais chargées : un lien à la place.
 
+import { t } from './i18n.js';
 import MarkdownIt from '../vendor/markdown-it.js';
 import { codeBlock, dialog, errText, h, highlight, invoke, langOf, toast } from './util.js';
 import { S } from './state.js';
@@ -28,18 +29,18 @@ export function webUrl(href) {
 
 /** Un clic sur un lien : l'adresse complète, puis le navigateur (par la partie Rust) si l'utilisateur accepte. */
 export async function openLink(url) {
-  const ok = await dialog('Ouvrir ce lien ?', [
-    h('p', {}, 'Ce lien vient de la réponse du modèle. Il s\'ouvrira dans ton navigateur, à cette adresse :'),
+  const ok = await dialog(t('markdown.ouvrir_ce_lien'), [
+    h('p', {}, t('markdown.ce_lien_vient_reponse_modele')),
     h('div', { class: 'url link-url' }, url),
-    h('div', { class: 'hint' }, `Site : ${new URL(url).host}`),
-  ], [{ label: 'Annuler', value: false }, { label: 'Ouvrir dans le navigateur', value: true, primary: true }]);
+    h('div', { class: 'hint' }, t('markdown.site', { host: new URL(url).host })),
+  ], [{ label: t('markdown.annuler'), value: false }, { label: t('markdown.ouvrir_dans_navigateur'), value: true, primary: true }]);
   if (!ok) return;
-  try { await invoke('open_link', { url }); } catch (e) { toast('Lien : ' + errText(e), 'error'); }
+  try { await invoke('open_link', { url }); } catch (e) { toast(t('markdown.lien', { error: errText(e) }), 'error'); }
 }
 
-const clip = (t) => (t.length > 200 ? t.slice(0, 200) + '…' : t);
+const clip = (tx) => (tx.length > 200 ? tx.slice(0, 200) + '…' : tx);
 
-const textOf = (tokens) => (tokens ?? []).map((t) => (t.type === 'softbreak' || t.type === 'hardbreak' ? ' ' : t.children?.length ? textOf(t.children) : t.content)).join('');
+const textOf = (tokens) => (tokens ?? []).map((tx) => (tx.type === 'softbreak' || tx.type === 'hardbreak' ? ' ' : tx.children?.length ? textOf(tx.children) : tx.content)).join('');
 
 // Un lien : cliquable en http(s) ; sinon son texte, avec l'adresse entre parenthèses (rien n'est caché).
 function linkEl(href, kids, text) {
@@ -53,32 +54,32 @@ function linkEl(href, kids, text) {
 }
 
 // Une image : jamais chargée, un lien à la place.
-function imageEl(t, inLink) {
-  const alt = textOf(t.children), src = t.attrGet('src') ?? '', kids = [icon('image'), alt || clip(webUrl(src) ?? 'image')];
+function imageEl(tx, inLink) {
+  const alt = textOf(tx.children), src = tx.attrGet('src') ?? '', kids = [icon('image'), alt || clip(webUrl(src) ?? 'image')];
   if (inLink) return h('span', { class: 'md-image' }, kids);
-  if (/^data:/i.test(src)) return h('span', { class: 'md-image' }, kids, ' (image intégrée, non affichée)');
+  if (/^data:/i.test(src)) return h('span', { class: 'md-image' }, kids, t('markdown.image_integree_non_affichee'));
   return h('span', { class: 'md-image' }, linkEl(src, kids, alt || 'image'));
 }
 
 // Les jetons → une liste de nœuds. Un jeton inconnu ne donne que son texte. `plain` : pas de lien cliquable (titres).
 function build(tokens, plain = false) {
   const root = { kids: [] }, stack = [root];
-  tokens.forEach((t, k) => {
+  tokens.forEach((tx, k) => {
     const top = stack.at(-1);
-    if (t.nesting === 1) return stack.push({ token: t, kids: [], from: k });
-    if (t.nesting === -1) return stack.length > 1 && close(stack.pop(), stack.at(-1), tokens.slice(0, k), plain);
-    switch (t.type) {
+    if (tx.nesting === 1) return stack.push({ token: tx, kids: [], from: k });
+    if (tx.nesting === -1) return stack.length > 1 && close(stack.pop(), stack.at(-1), tokens.slice(0, k), plain);
+    switch (tx.type) {
       case 'inline': {
-        const kids = build(t.children ?? [], plain);
+        const kids = build(tx.children ?? [], plain);
         task(kids, stack);
         return top.kids.push(...kids);
       }
-      case 'code_inline': return top.kids.push(h('code', { class: 'md-code' }, t.content));
+      case 'code_inline': return top.kids.push(h('code', { class: 'md-code' }, tx.content));
       case 'softbreak': case 'hardbreak': return top.kids.push(plain ? ' ' : h('br'));   // les retours à la ligne du modèle sont gardés
-      case 'fence': case 'code_block': return top.kids.push(codeBlock(t.content.replace(/\n$/, ''), t.info));
+      case 'fence': case 'code_block': return top.kids.push(codeBlock(tx.content.replace(/\n$/, ''), tx.info));
       case 'hr': return top.kids.push(h('hr'));
-      case 'image': return top.kids.push(imageEl(t, plain || stack.some((f) => f.token?.type === 'link_open')));
-      default: if (t.content) top.kids.push(t.content);
+      case 'image': return top.kids.push(imageEl(tx, plain || stack.some((f) => f.token?.type === 'link_open')));
+      default: if (tx.content) top.kids.push(tx.content);
     }
   });
   while (stack.length > 1) close(stack.pop(), stack.at(-1), tokens, plain);
@@ -87,14 +88,14 @@ function build(tokens, plain = false) {
 
 // La fin d'un élément : il entre dans celui qui le contient (ou seulement son contenu : liste serrée, jeton inconnu).
 function close(frame, parent, tokens, plain) {
-  const t = frame.token, kind = t.type.replace(/_open$/, '');
+  const tx = frame.token, kind = tx.type.replace(/_open$/, '');
   let el = null;
-  if (kind === 'link') el = plain ? h('span', {}, frame.kids) : linkEl(t.attrGet('href') ?? '', frame.kids, textOf(tokens.slice(frame.from + 1)));
-  else if (kind === 'heading') el = h(/^h[1-6]$/.test(t.tag) ? t.tag : 'p', {}, frame.kids);
-  else if (!t.hidden && Object.hasOwn(TAGS, kind)) {
-    const props = {}, start = Number(t.attrGet('start') ?? 1);
+  if (kind === 'link') el = plain ? h('span', {}, frame.kids) : linkEl(tx.attrGet('href') ?? '', frame.kids, textOf(tokens.slice(frame.from + 1)));
+  else if (kind === 'heading') el = h(/^h[1-6]$/.test(tx.tag) ? tx.tag : 'p', {}, frame.kids);
+  else if (!tx.hidden && Object.hasOwn(TAGS, kind)) {
+    const props = {}, start = Number(tx.attrGet('start') ?? 1);
     if (frame.task) props.class = 'task';
-    if (ALIGN[t.attrGet('style')]) props.class = ALIGN[t.attrGet('style')];
+    if (ALIGN[tx.attrGet('style')]) props.class = ALIGN[tx.attrGet('style')];
     if (kind === 'ordered_list' && start !== 1 && Number.isInteger(start)) props.start = String(start);
     el = h(TAGS[kind], props, frame.kids);
     if (kind === 'table') el = h('div', { class: 'table-wrap' }, el);
@@ -110,7 +111,7 @@ function task(kids, stack) {
   if (!m) return;
   const done = m[1] !== ' ';
   li.task = true;
-  kids.splice(0, 1, h('input', { type: 'checkbox', disabled: true, checked: done, 'aria-label': done ? 'fait' : 'à faire' }), kids[0].slice(m[0].length));
+  kids.splice(0, 1, h('input', { type: 'checkbox', disabled: true, checked: done, 'aria-label': done ? t('markdown.done') : t('markdown.faire') }), kids[0].slice(m[0].length));
 }
 
 /** Une ligne (titre d'une étape) : seulement la mise en forme dans la ligne, sans lien cliquable. */
@@ -240,10 +241,10 @@ export function scheduleLive(out, target, after) {
     out.timer = 0;
     const el = out.text && target();
     if (!el) return;
-    const t = performance.now();
+    const tx = performance.now();
     drawMarkdown(el, out.text.trimStart(), true);
     after();
     const now = performance.now();
-    out.nextDraw = now + Math.max(LIVE_MS, 4 * (now - t));
+    out.nextDraw = now + Math.max(LIVE_MS, 4 * (now - tx));
   }, Math.max(0, (out.nextDraw ?? 0) - performance.now()));
 }

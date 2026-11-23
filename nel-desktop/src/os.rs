@@ -4,6 +4,7 @@
 //! Les règles de chaque système sont des fonctions qui prennent le système en paramètre (`Os`) : leurs tests tournent
 //! partout, même sous Windows pour les règles de Linux et de macOS.
 
+use crate::t;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,18 +38,18 @@ impl Os {
     /// Où sont rangées les clés (textes de l'interface et erreurs).
     pub fn keystore(self) -> &'static str {
         match self {
-            Os::Windows => "Gestionnaire d'identification de Windows",
-            Os::MacOs => "trousseau de macOS",
-            Os::Linux => "trousseau du système (Secret Service)",
+            Os::Windows => "rs.os.keystore_windows",
+            Os::MacOs => "rs.os.keystore_macos",
+            Os::Linux => "rs.os.keystore_linux",
         }
     }
 
     /// Le gestionnaire de fichiers (« Ouvrir dans l'Explorateur »).
     pub fn file_manager(self) -> &'static str {
         match self {
-            Os::Windows => "l'Explorateur",
-            Os::MacOs => "le Finder",
-            Os::Linux => "le gestionnaire de fichiers",
+            Os::Windows => "rs.os.files_windows",
+            Os::MacOs => "rs.os.files_macos",
+            Os::Linux => "rs.os.files_linux",
         }
     }
 }
@@ -192,16 +193,16 @@ pub fn open(target: &str) -> Result<(), String> {
 /// L'adresse d'un lien d'une réponse, normalisée : http ou https seulement, avec un hôte, sans identifiants ni
 /// caractère de contrôle (4096 caractères au plus).
 pub fn web_link(link: &str) -> Result<String, String> {
-    let refused = |why: &str| Err(format!("adresse refusée : {why}"));
+    let refused = |why: &str| Err(t!("rs.link.refused", why = t!(why)));
     if link.len() > 4096 || link.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return refused("trop longue, ou avec des caractères interdits");
+        return refused("rs.link.too_long");
     }
-    let Ok(url) = reqwest::Url::parse(link) else { return refused("elle n'est pas valide") };
+    let Ok(url) = reqwest::Url::parse(link) else { return refused("rs.link.invalid") };
     if !matches!(url.scheme(), "http" | "https") {
-        return refused("seuls http et https s'ouvrent");
+        return refused("rs.link.scheme");
     }
     if url.host_str().is_none_or(str::is_empty) || !url.username().is_empty() || url.password().is_some() {
-        return refused("pas d'hôte, ou des identifiants dans l'adresse");
+        return refused("rs.link.host");
     }
     Ok(url.into())
 }
@@ -224,7 +225,7 @@ pub fn open_link(link: &str) -> Result<(), String> {
         let code = unsafe {
             windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL)
         } as usize;
-        if code > 32 { Ok(()) } else { Err(format!("le navigateur ne s'ouvre pas (code {code})")) }
+        if code > 32 { Ok(()) } else { Err(t!("rs.link.browser", code = code)) }
     }
     #[cfg(not(windows))]
     open(&url)
@@ -288,9 +289,9 @@ pub fn version() -> String {
         Os::Windows => {
             let mut cmd = Command::new("cmd");
             crate::process::hide_window(&mut cmd);
-            cmd.args(["/c", "ver"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("Windows, version inconnue ({e})"))
+            cmd.args(["/c", "ver"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("Windows, unknown version ({e})"))
         }
-        Os::MacOs => Command::new("sw_vers").arg("-productVersion").output().map(|o| format!("macOS {}", String::from_utf8_lossy(&o.stdout).trim())).unwrap_or_else(|e| format!("macOS, version inconnue ({e})")),
+        Os::MacOs => Command::new("sw_vers").arg("-productVersion").output().map(|o| format!("macOS {}", String::from_utf8_lossy(&o.stdout).trim())).unwrap_or_else(|e| format!("macOS, unknown version ({e})")),
         Os::Linux => std::fs::read_to_string("/etc/os-release").ok().and_then(|t| os_release_name(&t)).unwrap_or_else(|| "Linux".into()),
     }
 }
@@ -315,6 +316,8 @@ pub fn initial_window_size(work: (u32, u32), scale: f64) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
     use std::collections::HashMap;
 
     #[test]

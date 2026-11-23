@@ -18,6 +18,7 @@
 //! - mcp-state.json : les accords des serveurs de projet, les outils « toujours autorisés », et les dernières listes
 //!   d'outils (barre de contexte, page MCP).
 
+use crate::t;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -82,23 +83,23 @@ fn valid_env_name(n: &str) -> bool {
 fn strings(v: &Value, what: &str) -> Result<Vec<String>> {
     match v {
         Value::Null => Ok(vec![]),
-        Value::Array(a) => a.iter().map(|x| x.as_str().map(str::to_string).ok_or_else(|| format!("{what} : une liste de textes"))).collect(),
-        _ => Err(format!("{what} : une liste de textes")),
+        Value::Array(a) => a.iter().map(|x| x.as_str().map(str::to_string).ok_or_else(|| t!("rs.mcp.list_of_texts", what = what))).collect(),
+        _ => Err(t!("rs.mcp.list_of_texts", what = what)),
     }
 }
 
 fn string_map(v: &Value, what: &str) -> Result<BTreeMap<String, String>> {
     match v {
         Value::Null => Ok(BTreeMap::new()),
-        Value::Object(o) => o.iter().map(|(k, x)| x.as_str().map(|s| (k.clone(), s.to_string())).ok_or_else(|| format!("{what} : « {k} » doit être un texte"))).collect(),
-        _ => Err(format!("{what} : un objet {{ nom: valeur }}")),
+        Value::Object(o) => o.iter().map(|(k, x)| x.as_str().map(|s| (k.clone(), s.to_string())).ok_or_else(|| t!("rs.mcp.must_be_text", what = what, name = k))).collect(),
+        _ => Err(t!("rs.mcp.object", what = what)),
     }
 }
 
 fn check_header(name: &str, value: Option<&str>) -> Result<()> {
-    reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| format!("en-tête invalide : « {name} »"))?;
+    reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| t!("rs.mcp.bad_header", name = name))?;
     if let Some(v) = value {
-        reqwest::header::HeaderValue::from_str(v).map_err(|_| format!("valeur invalide pour l'en-tête « {name} »"))?;
+        reqwest::header::HeaderValue::from_str(v).map_err(|_| t!("rs.mcp.bad_header_value", name = name))?;
     }
     Ok(())
 }
@@ -106,35 +107,35 @@ fn check_header(name: &str, value: Option<&str>) -> Result<()> {
 /// Vérifie la définition d'un serveur (format de Claude Desktop, avec `type`, `secretEnv`, `secretHeaders`, `disabled`).
 pub fn parse_server(name: &str, v: &Value) -> Result<Server> {
     if !valid_name(name) {
-        return Err("nom invalide : lettres, chiffres, - et _ (32 au plus, sans « __ »)".into());
+        return Err(t!("rs.mcp.bad_name"));
     }
     if !v.is_object() {
-        return Err("la définition doit être un objet".into());
+        return Err(t!("rs.mcp.def_not_object"));
     }
     let kind = v["type"].as_str().or(v["transport"].as_str()).unwrap_or(if v["url"].is_string() { "http" } else { "stdio" }).to_lowercase();
     let transport = match kind.as_str() {
         "stdio" => {
-            let command = v["command"].as_str().map(str::trim).filter(|c| !c.is_empty()).ok_or("command manquant (le programme à lancer)")?.to_string();
+            let command = v["command"].as_str().map(str::trim).filter(|c| !c.is_empty()).ok_or_else(|| t!("rs.mcp.no_command"))?.to_string();
             if command.chars().any(char::is_control) {
-                return Err("command contient un caractère invalide".into());
+                return Err(t!("rs.mcp.bad_command"));
             }
             let args = strings(&v["args"], "args")?;
             if args.iter().any(|a| a.contains('\0')) {
-                return Err("args : caractère nul refusé".into());
+                return Err(t!("rs.mcp.nul_arg"));
             }
             let cwd = v["cwd"].as_str().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
             Transport::Stdio { command, args, cwd }
         }
         "http" | "streamable-http" | "streamablehttp" | "streamable_http" => {
-            let url = v["url"].as_str().map(str::trim).ok_or("url manquante")?.to_string();
-            let u = reqwest::Url::parse(&url).map_err(|_| format!("url invalide : « {url} »"))?;
+            let url = v["url"].as_str().map(str::trim).ok_or_else(|| t!("rs.mcp.no_url"))?.to_string();
+            let u = reqwest::Url::parse(&url).map_err(|_| t!("rs.mcp.bad_url", url = url))?;
             if !matches!(u.scheme(), "http" | "https") || u.host_str().is_none() {
-                return Err(format!("url invalide : « {url} » (http:// ou https://)"));
+                return Err(t!("rs.mcp.bad_url_scheme", url = url));
             }
             Transport::Http { url }
         }
-        "sse" => return Err("transport SSE (ancien) non géré : seulement stdio et Streamable HTTP".into()),
-        other => return Err(format!("transport inconnu « {other} » (stdio ou http)")),
+        "sse" => return Err(t!("rs.mcp.sse")),
+        other => return Err(t!("rs.mcp.bad_transport", kind = other)),
     };
     let env = string_map(&v["env"], "env")?;
     let headers = string_map(&v["headers"], "headers")?;
@@ -142,7 +143,7 @@ pub fn parse_server(name: &str, v: &Value) -> Result<Server> {
     let secret_headers = strings(&v["secretHeaders"], "secretHeaders")?;
     for n in env.keys().chain(&secret_env) {
         if !valid_env_name(n) {
-            return Err(format!("nom de variable invalide : « {n} »"));
+            return Err(t!("rs.mcp.bad_var", name = n));
         }
     }
     for (n, value) in &headers {
@@ -202,10 +203,10 @@ pub fn global_path() -> PathBuf {
 pub fn parse_file(bytes: &[u8]) -> (Vec<Server>, Vec<(String, String)>) {
     let v: Value = match serde_json::from_slice(bytes) {
         Ok(v) => v,
-        Err(e) => return (vec![], vec![(String::new(), format!("JSON invalide : {e}"))]),
+        Err(e) => return (vec![], vec![(String::new(), t!("rs.mcp.bad_json", error = e.to_string()))]),
     };
     let Some(list) = v["mcpServers"].as_object().or(v["servers"].as_object()) else {
-        return (vec![], if v.is_object() && v.as_object().is_some_and(|o| o.is_empty()) { vec![] } else { vec![(String::new(), "pas de liste mcpServers".into())] });
+        return (vec![], if v.is_object() && v.as_object().is_some_and(|o| o.is_empty()) { vec![] } else { vec![(String::new(), t!("rs.mcp.no_list"))] });
     };
     let (mut ok, mut bad) = (vec![], vec![]);
     for (name, def) in list {
@@ -220,7 +221,7 @@ pub fn parse_file(bytes: &[u8]) -> (Vec<Server>, Vec<(String, String)>) {
 fn read_config(path: &Path) -> (Vec<Server>, Vec<(String, String)>) {
     match fs::metadata(path) {
         Err(_) => (vec![], vec![]),
-        Ok(m) if !m.is_file() || m.len() > MAX_CONFIG => (vec![], vec![(String::new(), "fichier trop gros ou pas un fichier".into())]),
+        Ok(m) if !m.is_file() || m.len() > MAX_CONFIG => (vec![], vec![(String::new(), t!("rs.mcp.bad_file"))]),
         Ok(_) => match fs::read(path) {
             Ok(b) => parse_file(&b),
             Err(e) => (vec![], vec![(String::new(), e.to_string())]),
@@ -318,11 +319,11 @@ fn update_global<T>(change: impl FnOnce(&mut serde_json::Map<String, Value>) -> 
     let _g = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
     let path = global_path();
     let mut v: Value = match fs::read(&path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("mcp.json illisible ({e}) : corrige-le à la main"))?,
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| t!("rs.mcp.unreadable", error = e.to_string()))?,
         Err(_) => json!({}),
     };
     if !v.is_object() {
-        return Err("mcp.json n'est pas un objet JSON".into());
+        return Err(t!("rs.mcp.not_object"));
     }
     let mut servers = v["mcpServers"].as_object().cloned().unwrap_or_default();
     let out = change(&mut servers)?;
@@ -372,7 +373,7 @@ fn env_for(key: &str, s: &Server) -> Result<Vec<(String, String)>> {
     let mut env: Vec<(String, String)> = std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))).filter(|(k, _)| passed_var(k)).collect();
     env.extend(s.env.iter().map(|(k, v)| (k.clone(), v.clone())));
     for n in &s.secret_env {
-        let v = creds::read(&secret_id(key, "env", n)).ok_or_else(|| format!("la valeur secrète de « {n} » manque (page MCP)"))?;
+        let v = creds::read(&secret_id(key, "env", n)).ok_or_else(|| t!("rs.mcp.secret_missing", name = n))?;
         env.push((n.clone(), v));
     }
     Ok(env)
@@ -382,14 +383,14 @@ fn headers_for(key: &str, s: &Server) -> Result<reqwest::header::HeaderMap> {
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
     let mut h = HeaderMap::new();
     let mut add = |n: &str, v: &str| -> Result<()> {
-        h.insert(HeaderName::from_bytes(n.as_bytes()).map_err(|_| format!("en-tête invalide : « {n} »"))?, HeaderValue::from_str(v).map_err(|_| format!("valeur invalide pour « {n} »"))?);
+        h.insert(HeaderName::from_bytes(n.as_bytes()).map_err(|_| t!("rs.mcp.bad_header", name = n))?, HeaderValue::from_str(v).map_err(|_| t!("rs.mcp.bad_header_value", name = n))?);
         Ok(())
     };
     for (n, v) in &s.headers {
         add(n, v)?;
     }
     for n in &s.secret_headers {
-        let v = creds::read(&secret_id(key, "header", n)).ok_or_else(|| format!("la valeur secrète de l'en-tête « {n} » manque (page MCP)"))?;
+        let v = creds::read(&secret_id(key, "header", n)).ok_or_else(|| t!("rs.mcp.header_secret_missing", name = n))?;
         add(n, &v)?;
     }
     Ok(h)
@@ -401,12 +402,12 @@ fn headers_for(key: &str, s: &Server) -> Result<reqwest::header::HeaderMap> {
 /// Ce qui sera lancé : (programme trouvé, dossier). Pour un serveur de projet, un chemin relatif (programme, cwd) reste
 /// dans le dossier de travail.
 pub fn resolve(scope: &Scope, s: &Server) -> Result<(PathBuf, PathBuf)> {
-    let Transport::Stdio { command, cwd, .. } = &s.transport else { return Err("pas un serveur stdio".into()) };
+    let Transport::Stdio { command, cwd, .. } = &s.transport else { return Err(t!("rs.mcp.not_stdio")) };
     let dir = match (scope, cwd) {
         (Scope::Global, Some(c)) => {
             let p = PathBuf::from(c);
             if !p.is_absolute() || !p.is_dir() {
-                return Err(format!("dossier introuvable : « {c} » (un chemin complet)"));
+                return Err(t!("rs.mcp.cwd_missing", path = c));
             }
             p
         }
@@ -414,7 +415,7 @@ pub fn resolve(scope: &Scope, s: &Server) -> Result<(PathBuf, PathBuf)> {
         (Scope::Project(d), Some(c)) => {
             let p = crate::agent::Sandbox::new(&d.to_string_lossy())?.resolve(c)?;
             if !p.is_dir() {
-                return Err(format!("dossier introuvable dans le projet : « {c} »"));
+                return Err(t!("rs.mcp.cwd_missing_project", path = c));
             }
             p
         }
@@ -428,7 +429,7 @@ pub fn resolve(scope: &Scope, s: &Server) -> Result<(PathBuf, PathBuf)> {
             Scope::Global => dir.join(p),
         }
     } else {
-        crate::os::find_program(command).ok_or_else(|| format!("« {command} » introuvable dans le PATH"))?
+        crate::os::find_program(command).ok_or_else(|| t!("rs.mcp.not_in_path", program = command))?
     };
     if !program.is_file() {
         return Err(format!("« {} » introuvable", program.display()));
@@ -523,7 +524,7 @@ pub fn set_approval(p: &Prepared, allow: bool) -> Result<()> {
         }
         s["approvals"][&dir][&name] = json!({ "hash": hash, "allow": allow });
     })?;
-    crate::log::info(&format!("mcp : serveur de projet « {} » {}", p.server.name, if allow { "autorisé" } else { "refusé" }));
+    crate::log::info(&format!("mcp: project server \"{}\" {}", p.server.name, if allow { "approved" } else { "denied" }));
     Ok(())
 }
 
@@ -736,7 +737,7 @@ impl Shared {
                 let Some(id) = id.as_u64() else { return };
                 if let Some(tx) = self.pending.lock().unwrap().remove(&id) {
                     let r = match msg.get("error") {
-                        Some(e) => Err(format!("erreur du serveur MCP « {} » : {}", self.name, e["message"].as_str().map(str::to_string).unwrap_or_else(|| e.to_string()))),
+                        Some(e) => Err(t!("rs.mcp.server_error", name = self.name, error = e["message"].as_str().map(str::to_string).unwrap_or_else(|| e.to_string()))),
                         None => Ok(msg["result"].clone()),
                     };
                     let _ = tx.send(r);
@@ -746,13 +747,13 @@ impl Shared {
                 let reply = if m == "ping" {
                     json!({ "jsonrpc": "2.0", "id": id, "result": {} })
                 } else {
-                    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("méthode non gérée par Nel Code : {m}") } })
+                    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not supported by Nel Code: {m}") } })
                 };
                 self.send(reply);
             }
             (Some("notifications/tools/list_changed"), None) => {
                 self.changed.store(true, Ordering::SeqCst);
-                log_line(&self.key, "--- liste d'outils changée (notification du serveur) ---");
+                log_line(&self.key, "--- tool list changed (server notification) ---");
                 self.emit();
             }
             _ => {}
@@ -799,7 +800,7 @@ impl Shared {
     /// ou trop longue, le serveur reçoit notifications/cancelled.
     async fn request(self: &Arc<Self>, method: &str, params: Value, timeout: Duration, cancel: Option<&Notify>) -> Result<Option<Value>> {
         if !self.alive.load(Ordering::SeqCst) {
-            return Err(format!("le serveur MCP « {} » est arrêté", self.name));
+            return Err(t!("rs.mcp.stopped", name = self.name));
         }
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
@@ -821,7 +822,7 @@ impl Shared {
         let never = Notify::new();
         let cancel = cancel.unwrap_or(&never);
         let outcome = tokio::select! {
-            r = rx => Some(Some(r.unwrap_or_else(|_| Err(format!("le serveur MCP « {} » s'est arrêté", self.name))))),
+            r = rx => Some(Some(r.unwrap_or_else(|_| Err(t!("rs.mcp.exited", name = self.name))))),
             _ = tokio::time::sleep(timeout) => None,
             _ = cancel.notified() => Some(None),
         };
@@ -829,10 +830,11 @@ impl Shared {
             Some(Some(r)) => r.map(Some),
             other => {
                 self.pending.lock().unwrap().remove(&id);
-                let reason = if other.is_none() { "délai dépassé" } else { "arrêté par l'utilisateur" };
+                // Pour le serveur (protocole) : en anglais, pas un message codé.
+                let reason = if other.is_none() { "timeout" } else { "cancelled by the user" };
                 self.send(json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": id, "reason": reason } }));
                 match other {
-                    None => Err(format!("le serveur MCP « {} » n'a pas répondu à {method} en {} s : délai dépassé", self.name, timeout.as_secs_f64().round())),
+                    None => Err(t!("rs.mcp.timeout", name = self.name, method = method, secs = timeout.as_secs_f64().round() as u64)),
                     _ => Ok(None),
                 }
             }
@@ -874,7 +876,7 @@ impl Http {
             .body(msg.to_string())
             .send()
             .await
-            .map_err(|e| if e.is_connect() || e.is_timeout() { format!("{} ne répond pas : vérifie l'adresse et que le serveur est lancé", self.host()) } else { format!("{} : {e}", self.host()) })?;
+            .map_err(|e| if e.is_connect() || e.is_timeout() { t!("rs.mcp.no_answer", host = self.host()) } else { format!("{} : {e}", self.host()) })?;
         if let Some(sid) = resp.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
             *self.session.lock().unwrap() = Some(sid.to_string());
         }
@@ -886,9 +888,9 @@ impl Http {
             let body = read_limited(resp, 2000).await.map(|b| String::from_utf8_lossy(&b).trim().to_string()).unwrap_or_default();
             let body = if body.is_empty() { String::new() } else { format!(" : {}", body.chars().take(200).collect::<String>()) };
             return Err(match status {
-                401 | 403 => format!("{} : accès refusé (HTTP {status}{body}) ; vérifie les en-têtes (pas d'OAuth dans cette version)", self.host()),
-                404 if self.session.lock().unwrap().is_some() => format!("{} : session expirée (HTTP 404) ; redémarre le serveur", self.host()),
-                _ => format!("{} a refusé la requête (HTTP {status}{body})", self.host()),
+                401 | 403 => t!("rs.mcp.denied", host = self.host(), status = status, body = body),
+                404 if self.session.lock().unwrap().is_some() => t!("rs.mcp.session_expired", host = self.host()),
+                _ => t!("rs.mcp.refused", host = self.host(), status = status, body = body),
             });
         }
         let sse = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|c| c.to_lowercase().starts_with("text/event-stream"));
@@ -899,7 +901,7 @@ impl Http {
         if body.iter().all(u8::is_ascii_whitespace) {
             return Ok(());
         }
-        let v: Value = serde_json::from_slice(&body).map_err(|e| format!("{} : réponse qui n'est pas du JSON ({e})", self.host()))?;
+        let v: Value = serde_json::from_slice(&body).map_err(|e| t!("rs.mcp.not_json", host = self.host(), error = e.to_string()))?;
         sh.dispatch(v);
         Ok(())
     }
@@ -910,7 +912,7 @@ async fn read_limited(mut resp: reqwest::Response, max: usize) -> Result<Vec<u8>
     while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
         out.extend_from_slice(&chunk);
         if out.len() > max {
-            return Err(format!("réponse trop grosse (plus de {} Mo)", max >> 20));
+            return Err(t!("rs.mcp.too_big", max = max >> 20));
         }
     }
     Ok(out)
@@ -968,7 +970,7 @@ impl SseBuffer {
         }
         let events = sse_events(&mut self.text);
         if self.text.len() + self.cut.len() > max {
-            return Err("événement SSE trop gros".into());
+            return Err(t!("rs.mcp.sse_too_big"));
         }
         Ok(events)
     }
@@ -1032,9 +1034,9 @@ impl Instance {
                 let _ = tokio::time::timeout(Duration::from_secs(3), h.request(reqwest::Method::DELETE).send()).await;
             });
         }
-        self.shared.close(&format!("le serveur MCP « {} » est arrêté", self.name));
+        self.shared.close(&t!("rs.mcp.stopped", name = self.name));
         if was {
-            crate::log::info(&format!("mcp : « {} » arrêté", self.name));
+            crate::log::info(&format!("mcp: \"{}\" stopped", self.name));
         }
     }
 
@@ -1060,10 +1062,10 @@ impl Instance {
         if self.shared.changed.swap(false, Ordering::SeqCst) {
             match self.list_tools(timeout).await {
                 Ok(t) => {
-                    crate::log::info(&format!("mcp : « {} » : liste d'outils relue ({} outils)", self.name, t.len()));
+                    crate::log::info(&format!("mcp: \"{}\": tool list reloaded ({} tools)", self.name, t.len()));
                     *self.tools.lock().unwrap() = t;
                 }
-                Err(e) => crate::log::error(&format!("mcp : « {} » : liste d'outils illisible : {e}", self.name)),
+                Err(e) => crate::log::error(&format!("mcp: \"{}\": unreadable tool list: {e}", self.name)),
             }
         }
     }
@@ -1086,14 +1088,14 @@ impl Drop for Instance {
 /// journal).
 fn spawn_stdio(app: Option<AppHandle>, p: &Prepared) -> Result<(Arc<Shared>, Job, u32)> {
     let Transport::Stdio { args, .. } = &p.server.transport else { unreachable!() };
-    let (program, dir) = p.launch.clone().ok_or("programme introuvable")?;
+    let (program, dir) = p.launch.clone().ok_or_else(|| t!("rs.mcp.program_missing"))?;
     let env = env_for(&p.key, &p.server)?;
     let mut cmd = Command::new(&program);
     cmd.args(args).current_dir(&dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.env_clear().envs(env);
-    let (mut child, job) = process::spawn(&mut cmd).map_err(|e| format!("« {} » ne se lance pas : {e}", program.display()))?;
+    let (mut child, job) = process::spawn(&mut cmd).map_err(|e| t!("rs.mcp.spawn_failed", program = program.display().to_string(), error = e.to_string()))?;
     let pid = child.id();
-    log_line(&p.key, &format!("--- démarrage : {} (pid {pid}) ---", program.display()));
+    log_line(&p.key, &format!("--- start: {} (pid {pid}) ---", program.display()));
 
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let shared = Arc::new(Shared {
@@ -1124,7 +1126,7 @@ fn spawn_stdio(app: Option<AppHandle>, p: &Prepared) -> Result<(Arc<Shared>, Job
             match r.by_ref().take(MAX_MESSAGE as u64 + 1).read_until(b'\n', &mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) if line.len() > MAX_MESSAGE => {
-                    log_line(&sh.key, "--- message de plus de 8 Mo : connexion fermée ---");
+                    log_line(&sh.key, "--- message over 8 MB: connection closed ---");
                     break;
                 }
                 Ok(_) => {
@@ -1132,12 +1134,12 @@ fn spawn_stdio(app: Option<AppHandle>, p: &Prepared) -> Result<(Arc<Shared>, Job
                     match serde_json::from_str::<Value>(text.trim()) {
                         Ok(v) => sh.dispatch(v),
                         Err(_) if text.trim().is_empty() => {}
-                        Err(_) => log_line(&sh.key, &format!("(stdout, pas du JSON) {}", text.chars().take(500).collect::<String>())),
+                        Err(_) => log_line(&sh.key, &format!("(stdout, not JSON) {}", text.chars().take(500).collect::<String>())),
                     }
                 }
             }
         }
-        sh.close(&format!("le serveur MCP « {} » s'est arrêté", sh.name));
+        sh.close(&t!("rs.mcp.exited", name = sh.name));
     });
     let mut stderr = child.stderr.take().unwrap();
     let key = p.key.clone();
@@ -1161,7 +1163,7 @@ fn spawn_stdio(app: Option<AppHandle>, p: &Prepared) -> Result<(Arc<Shared>, Job
     let key = p.key.clone();
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|s| s.code());
-        log_line(&key, &format!("--- arrêté (code {}) ---", code.map_or("?".into(), |c| c.to_string())));
+        log_line(&key, &format!("--- stopped (code {}) ---", code.map_or("?".into(), |c| c.to_string())));
     });
     Ok((shared, job, pid))
 }
@@ -1175,7 +1177,7 @@ fn http_client() -> Result<reqwest::Client> {
 /// `timeout` au plus. Un serveur de projet sans accord pour cette configuration ne démarre jamais.
 pub async fn start(app: Option<AppHandle>, p: &Prepared, timeout: Duration) -> Result<Arc<Instance>> {
     if approval(p) != Some(true) {
-        return Err(format!("le serveur de projet « {} » n'est pas autorisé pour cette configuration : il ne démarre pas", p.server.name));
+        return Err(t!("rs.mcp.not_approved", name = p.server.name));
     }
     let clock = Instant::now();
     let (shared, job, pid, http) = match &p.server.transport {
@@ -1217,7 +1219,7 @@ pub async fn start(app: Option<AppHandle>, p: &Prepared, timeout: Duration) -> R
     if let Some(h) = &http {
         *h.protocol.lock().unwrap() = Some(version.clone());
     }
-    tokio::time::timeout(left(), shared.send_now(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))).await.map_err(|_| "délai dépassé".to_string())??;
+    tokio::time::timeout(left(), shared.send_now(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))).await.map_err(|_| t!("rs.mcp.timeout_reason"))??;
     inst.info = json!({ "protocolVersion": version, "serverInfo": r["serverInfo"], "pid": pid });
     let tools = if r["capabilities"]["tools"].is_null() { Vec::new() } else { inst.list_tools(left()).await? };
     *inst.tools.lock().unwrap() = tools;
@@ -1232,7 +1234,7 @@ pub async fn start(app: Option<AppHandle>, p: &Prepared, timeout: Duration) -> R
             }
         }));
     }
-    crate::log::info(&format!("mcp : « {} » démarré ({}, {} outils, {:.1} s)", p.server.name, p.server.kind(), inst.tools.lock().unwrap().len(), clock.elapsed().as_secs_f64()));
+    crate::log::info(&format!("mcp: \"{}\" started ({}, {} tools, {:.1} s)", p.server.name, p.server.kind(), inst.tools.lock().unwrap().len(), clock.elapsed().as_secs_f64()));
     Ok(Arc::new(inst))
 }
 
@@ -1328,8 +1330,8 @@ impl Manager {
                 Ok(i)
             }
             Err(e) => {
-                crate::log::error(&format!("mcp : « {} » ne démarre pas : {e}", p.server.name));
-                log_line(&p.key, &format!("--- erreur : {e} ---"));
+                crate::log::error(&format!("mcp: \"{}\" does not start: {e}", p.server.name));
+                log_line(&p.key, &format!("--- error: {} ---", crate::i18n::english(&e)));
                 self.set_status(Some(app), &p.key, json!({ "state": "error", "error": e }));
                 Err(e)
             }
@@ -1349,7 +1351,7 @@ impl Manager {
                 Ok(out)
             }
             Err(e) => {
-                log_line(&p.key, &format!("--- erreur (test) : {e} ---"));
+                log_line(&p.key, &format!("--- error (test): {} ---", crate::i18n::english(&e)));
                 self.set_status(Some(app), &p.key, json!({ "state": "error", "error": e, "test": { "ok": false } }));
                 Err(e)
             }
@@ -1379,7 +1381,10 @@ fn manager(app: &AppHandle) -> &Manager {
 /// à donner).
 pub async fn open_for_agent(app: &AppHandle, session: &str, dir: &str, off: &[String]) -> (Vec<Arc<Instance>>, Vec<String>) {
     let (list, errors) = servers_for(Some(dir));
-    let mut problems: Vec<String> = errors.iter().map(|e| format!("MCP : configuration invalide{} : {}", e["name"].as_str().filter(|n| !n.is_empty()).map(|n| format!(" pour « {n} »")).unwrap_or_default(), e["error"].as_str().unwrap_or_default())).collect();
+    let mut problems: Vec<String> = errors.iter().map(|e| match e["name"].as_str().filter(|n| !n.is_empty()) {
+        Some(n) => t!("rs.mcp.problem_config_named", name = n, error = e["error"].as_str().unwrap_or_default()),
+        None => t!("rs.mcp.problem_config", error = e["error"].as_str().unwrap_or_default()),
+    }).collect();
     let mut todo = Vec::new();
     for (scope, s) in list {
         let key = scope.key(&s.name);
@@ -1387,11 +1392,11 @@ pub async fn open_for_agent(app: &AppHandle, session: &str, dir: &str, off: &[St
             continue;
         }
         match prepare(&scope, &s) {
-            Err(e) => problems.push(format!("MCP : « {} » ne démarre pas : {e}", s.name)),
+            Err(e) => problems.push(t!("rs.mcp.problem_start", name = s.name, error = e)),
             Ok(p) => match approval(&p) {
                 Some(true) => todo.push(p),
                 Some(false) => {}
-                None => problems.push(format!("MCP : le serveur de projet « {} » attend ton accord (page MCP) : il ne démarre pas", s.name)),
+                None => problems.push(t!("rs.mcp.problem_pending", name = s.name)),
             },
         }
     }
@@ -1403,7 +1408,7 @@ pub async fn open_for_agent(app: &AppHandle, session: &str, dir: &str, off: &[St
     for (p, r) in todo.iter().zip(started) {
         match r {
             Ok(i) => out.push(i),
-            Err(e) => problems.push(format!("MCP : « {} » ne démarre pas : {e}", p.server.name)),
+            Err(e) => problems.push(t!("rs.mcp.problem_start", name = p.server.name, error = e)),
         }
     }
     (out, problems)
@@ -1423,7 +1428,7 @@ pub fn find(instances: &[Arc<Instance>], fname: &str) -> Option<(Arc<Instance>, 
 // Pour l'interface
 
 fn find_server(dir: Option<&str>, key: &str) -> Result<(Scope, Server)> {
-    servers_for(dir).0.into_iter().find(|(sc, s)| sc.key(&s.name) == key).ok_or_else(|| format!("serveur MCP inconnu : {key}"))
+    servers_for(dir).0.into_iter().find(|(sc, s)| sc.key(&s.name) == key).ok_or_else(|| t!("rs.mcp.unknown", name = key))
 }
 
 pub fn server(dir: Option<&str>, key: &str) -> Result<Server> {
@@ -1505,9 +1510,9 @@ pub fn context(dir: Option<&str>, off: &[String], explorers: bool) -> Value {
 /// Gestionnaire d'identification ; leurs noms vont dans secretEnv / secretHeaders).
 pub fn add_global(name: &str, mut def: Value, secrets: &Value) -> Result<()> {
     let env = string_map(&secrets["env"], "variables")?;
-    let headers = string_map(&secrets["headers"], "en-têtes")?;
+    let headers = string_map(&secrets["headers"], &t!("rs.mcp.what_headers"))?;
     if !def.is_object() {
-        return Err("définition invalide".into());
+        return Err(t!("rs.mcp.bad_def"));
     }
     if !env.is_empty() {
         def["secretEnv"] = json!(env.keys().collect::<Vec<_>>());
@@ -1519,7 +1524,7 @@ pub fn add_global(name: &str, mut def: Value, secrets: &Value) -> Result<()> {
     let key = Scope::Global.key(name);
     update_global(|servers| {
         if servers.contains_key(name) {
-            return Err(format!("un serveur « {name} » existe déjà"));
+            return Err(t!("rs.mcp.exists", name = name));
         }
         for (n, v) in &env {
             set_secret(&key, "env", n, v)?;
@@ -1530,24 +1535,24 @@ pub fn add_global(name: &str, mut def: Value, secrets: &Value) -> Result<()> {
         servers.insert(name.to_string(), s.to_json());
         Ok(())
     })?;
-    crate::log::info(&format!("mcp : serveur global « {name} » ajouté"));
+    crate::log::info(&format!("mcp: global server \"{name}\" added"));
     Ok(())
 }
 
 pub fn delete_global(app: &AppHandle, name: &str) -> Result<()> {
     let key = Scope::Global.key(name);
     manager(app).stop_key(&key);
-    let old = update_global(|servers| servers.remove(name).ok_or_else(|| format!("serveur MCP inconnu : {name}")))?;
+    let old = update_global(|servers| servers.remove(name).ok_or_else(|| t!("rs.mcp.unknown", name = name)))?;
     if let Ok(s) = parse_server(name, &old) {
         delete_secrets(&key, &s);
     }
-    crate::log::info(&format!("mcp : serveur global « {name} » supprimé"));
+    crate::log::info(&format!("mcp: global server \"{name}\" deleted"));
     Ok(())
 }
 
 pub fn set_disabled(app: &AppHandle, name: &str, disabled: bool) -> Result<()> {
     update_global(|servers| {
-        let s = servers.get_mut(name).ok_or_else(|| format!("serveur MCP inconnu : {name}"))?;
+        let s = servers.get_mut(name).ok_or_else(|| t!("rs.mcp.unknown", name = name))?;
         if disabled {
             s["disabled"] = true.into();
         } else if let Some(o) = s.as_object_mut() {
@@ -1565,12 +1570,12 @@ pub fn set_disabled(app: &AppHandle, name: &str, disabled: bool) -> Result<()> {
 /// `env` et `headers` deviennent secrètes (Gestionnaire d'identification). Rend { imported: [{ name, warning? }],
 /// rejected: [{ name, error }] }.
 pub fn import(path: &Path) -> Result<Value> {
-    let meta = fs::metadata(path).map_err(|_| format!("fichier introuvable : {}", path.display()))?;
+    let meta = fs::metadata(path).map_err(|_| t!("rs.file.missing", path = path.display().to_string()))?;
     if meta.len() > MAX_CONFIG {
-        return Err("fichier trop gros".into());
+        return Err(t!("rs.mcp.file_too_big"));
     }
-    let v: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?).map_err(|e| format!("JSON invalide : {e}"))?;
-    let list = v["mcpServers"].as_object().or(v["servers"].as_object()).ok_or("aucun serveur (mcpServers) dans ce fichier")?.clone();
+    let v: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?).map_err(|e| t!("rs.mcp.bad_json", error = e.to_string()))?;
+    let list = v["mcpServers"].as_object().or(v["servers"].as_object()).ok_or_else(|| t!("rs.mcp.no_servers"))?.clone();
     let (mut imported, mut rejected) = (Vec::new(), Vec::new());
     for (name, def) in list {
         let mut d = def.clone();
@@ -1595,7 +1600,7 @@ pub fn import(path: &Path) -> Result<Value> {
             Err(e) => rejected.push(json!({ "name": name, "error": e })),
         }
     }
-    crate::log::info(&format!("mcp : import de {} serveur(s), {} refusé(s)", imported.len(), rejected.len()));
+    crate::log::info(&format!("mcp: imported {} server(s), {} refused", imported.len(), rejected.len()));
     Ok(json!({ "imported": imported, "rejected": rejected }))
 }
 
@@ -1607,6 +1612,8 @@ pub fn claude_desktop_config() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     #[test]
     fn configuration() {
@@ -1627,7 +1634,7 @@ mod tests {
         assert_eq!(ok.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["aussi-distant", "distant", "fichiers"]);
         assert_eq!(ok[2].transport, Transport::Stdio { command: "npx".into(), args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into(), "C:\\x".into()], cwd: None });
         assert_eq!(ok[1].secret_headers, ["Authorization"]);
-        let why: HashMap<String, String> = bad.into_iter().collect();
+        let why: HashMap<String, String> = bad.into_iter().map(|(k, e)| (k, e.fr())).collect();
         assert!(why["mauvais nom"].contains("nom invalide") && why["a__b"].contains("nom invalide"));
         assert!(why["vide"].contains("command manquant"));
         assert!(why["ancien"].contains("SSE"));
@@ -1638,7 +1645,7 @@ mod tests {
         for s in &ok {
             assert_eq!(&parse_server(&s.name, &s.to_json()).unwrap(), s);
         }
-        assert!(parse_file(b"pas du json").1[0].1.contains("JSON invalide"));
+        assert!(parse_file(b"pas du json").1[0].1.fr().contains("JSON invalide"));
         assert!(parse_file(b"{}").1.is_empty());
     }
 
@@ -1728,7 +1735,7 @@ mod tests {
         for chunk in [&b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"[..], b"data: xxxx"] {
             let mut b = SseBuffer::default();
             let err = (0..100).find_map(|_| b.push(chunk, 100).err());
-            assert_eq!(err.as_deref(), Some("événement SSE trop gros"));
+            assert_eq!(err.map(|e| e.fr()).as_deref(), Some("événement SSE trop gros"));
             assert!(b.text.len() + b.cut.len() <= 100 + 3 * chunk.len());
         }
     }

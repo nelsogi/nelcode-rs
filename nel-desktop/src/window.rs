@@ -77,7 +77,7 @@ pub fn saved(app: &tauri::AppHandle) -> Option<State> {
     let s = State::from_json(&store::load_settings()[KEY])?;
     let ok = on_screen(&s, &screens(app));
     if !ok {
-        crate::log::info("fenêtre : position enregistrée hors des écrans actuels, 80 % centrée");
+        crate::log::info("window: saved position outside the current screens, 80 % centered");
     }
     ok.then_some(s)
 }
@@ -150,7 +150,7 @@ fn save(s: State) {
         v[KEY] = s.to_json();
         Ok(())
     }) {
-        crate::log::error(&format!("fenêtre : état non enregistré ({e})"));
+        crate::log::error(&format!("window: state not saved ({e})"));
     }
 }
 

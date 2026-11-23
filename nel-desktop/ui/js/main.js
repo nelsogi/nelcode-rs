@@ -1,6 +1,7 @@
 // Nel Code Desktop — main.js : Le point d'entrée : écouteurs (Rust, clavier, boutons), démarrage, et ce que les tests de l'interface utilisent.
 // Les textes (messages, noms) passent toujours par textContent, jamais par innerHTML.
 
+import { applyStatic, loadLang, num, t, tr } from './i18n.js';
 import { $, errText, h, invoke, listen, toast } from './util.js';
 import { S, UI } from './state.js';
 import { F, autoGrow, chooseFolder, closeEdit, followEnd, importFlow, loadModel, newSession, onDone, onDrop, onToken, openCompare, openFolder, openLeaderboard, openSession, refreshContext, refreshModels, renameSession, renderAll, renderHeader, renderMessages, renderModels, renderSessions, renderStatus, selectRemote, showReasoning, startNew, stop, submitInput, toggleTransparency, visible, waiting } from './conversation.js';
@@ -16,6 +17,7 @@ import { maybeOnboard } from './onboarding.js';
 import * as USAGE from './usage.js';
 import * as IMG from './images.js';
 import * as MCP from './mcp.js';
+import * as I18N from './i18n.js';
 
 listen('catalog-progress', (e) => { if (e.payload.tag === C.name) { Object.assign(C, e.payload); catalogProgress(); } });
 
@@ -49,7 +51,7 @@ listen('agent-clear', () => {
   if (!g) return;
   g.text = '';
   const body = g.el?.querySelector('.body');
-  if (body) body.replaceChildren(waiting('travaille…'));
+  if (body) body.replaceChildren(waiting(t('main.travaille')));
 });
 
 listen('gen-reasoning', (e) => {
@@ -64,13 +66,13 @@ document.addEventListener('mouseover', (e) => {
   const span = e.target.closest?.('.tok'), tip = $('tip');
   if (!span) { tip.hidden = true; return; }
   const tok = span.parentElement.tokens[span.dataset.k];
-  tip.replaceChildren(...tok[1].map(([t, p]) => h('div', { class: 'row' + (t === tok[0] ? ' chosen' : '') },
-    h('span', { class: 'name' }, visible(t)), h('div', { class: 'bar' }, h('div', { style: `width:${(p * 100).toFixed(1)}%` })), h('span', { class: 'pct' }, (p * 100).toFixed(1) + ' %'))));
-  if (!tok[1].some(([t]) => t === tok[0])) tip.append(h('div', { class: 'row chosen' }, h('span', { class: 'name' }, visible(tok[0])), h('span', {}, 'tiré hors des 5'), h('span')));
+  tip.replaceChildren(...tok[1].map(([tx, p]) => h('div', { class: 'row' + (tx === tok[0] ? ' chosen' : '') },
+    h('span', { class: 'name' }, visible(tx)), h('div', { class: 'bar' }, h('div', { style: `width:${(p * 100).toFixed(1)}%` })), h('span', { class: 'pct' }, (p * 100).toFixed(1) + ' %'))));
+  if (!tok[1].some(([tx]) => tx === tok[0])) tip.append(h('div', { class: 'row chosen' }, h('span', { class: 'name' }, visible(tok[0])), h('span', {}, t('main.tire_hors')), h('span')));
   tip.hidden = false;
-  const r = span.getBoundingClientRect(), t = tip.getBoundingClientRect();
-  tip.style.left = Math.max(8, Math.min(r.left, innerWidth - t.width - 8)) + 'px';
-  tip.style.top = (r.bottom + 6 + t.height > innerHeight ? r.top - t.height - 6 : r.bottom + 6) + 'px';
+  const r = span.getBoundingClientRect(), tx = tip.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(r.left, innerWidth - tx.width - 8)) + 'px';
+  tip.style.top = (r.bottom + 6 + tx.height > innerHeight ? r.top - tx.height - 6 : r.bottom + 6) + 'px';
 });
 
 listen('server-changed', (e) => { S.server.port = e.payload.port; renderStatus(); });
@@ -84,10 +86,10 @@ listen('bench-progress', (e) => { S.bench = e.payload; renderStatus(); });
 listen('bench-done', (e) => {
   S.bench = null;
   renderStatus();
-  if (e.payload.error) toast('Test de vitesse : ' + e.payload.error, 'error', 8000);
+  if (e.payload.error) toast(t('main.test_vitesse', { error: tr(e.payload.error) }), 'error', 8000);
   // Une fenêtre déjà ouverte (les réglages) : un résumé, les détails restent dans « Résultats des tests de vitesse ».
   const mine = e.payload.results[e.payload.name] ?? {};
-  if (UI.closeOverlay || UI.page) toast(['cpu', 'gpu'].filter((d) => mine[d]).map((d) => `${mine[d].device} : ${mine[d].tokensPerSecond.toFixed(1)} tokens/s`).join(' · ') || 'Test de vitesse terminé.', 'success', 8000);
+  if (UI.closeOverlay || UI.page) toast(['cpu', 'gpu'].filter((d) => mine[d]).map((d) => t('main.bench_line', { device: mine[d].device, tps: num(mine[d].tokensPerSecond, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) })).join(' · ') || t('main.test_vitesse_termine'), 'success', 8000);
   else showBenchmarks(e.payload.results);
 });
 
@@ -216,30 +218,30 @@ listen('model-loaded', (e) => {
   Object.assign(S.model, { name: e.payload.name, blockSize: e.payload.blockSize, device: e.payload.device, loading: null, remote: null, vision: false, visionManual: null });
   S.lastSpeed = '';
   renderModels(); renderStatus(); refreshContext(); IMG.renderAttach();
-  toast(`Modèle ${e.payload.name} chargé sur ${e.payload.device} (${e.payload.seconds.toFixed(1)} s).`, 'success', 2500);
+  toast(t('main.modele_charge_sur', { name: e.payload.name, device: e.payload.device, seconds: num(e.payload.seconds, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) }), 'success', 2500);
 });
 
 listen('model-error', (e) => {
   S.model.loading = null;
   renderModels(); renderStatus();
-  toast(`Le modèle ${e.payload.name} ne se charge pas : ${e.payload.error}`, 'error', 10000);
+  toast(t('main.modele_ne_se_charge_pas', { name: e.payload.name, error: tr(e.payload.error) }), 'error', 10000);
 });
 
-listen('import-started', (e) => { UI.importToast = toast(h('span', {}, h('span', { class: 'spinner' }), `Import de ${e.payload}… (extraction et vérification)`), 'busy', 0); });
+listen('import-started', (e) => { UI.importToast = toast(h('span', {}, h('span', { class: 'spinner' }), t('main.import_extraction_verification', { payload: e.payload })), 'busy', 0); });
 
 listen('import-done', async (e) => {
   UI.importToast?.remove();
   const r = e.payload;
-  toast(`Modèle « ${r.name} » installé (${r.parameters.toLocaleString('fr-CH')} paramètres).`, 'success');
-  if (r.warning) toast('Attention : ' + r.warning, 'warning', 10000);
+  toast(t('main.modele_installe_parametres', { name: r.name, parameters: num(r.parameters) }), 'success');
+  if (r.warning) toast(t('main.attention', { value: tr(r.warning) }), 'warning', 10000);
   await refreshModels();
   if (!S.model.name || S.model.name === r.name) loadModel(r.name);
 });
 
 listen('import-error', (e) => {
   UI.importToast?.remove();
-  const err = e.payload.error === 'exists' ? `Un modèle « ${e.payload.name} » existe déjà.` : e.payload.error;
-  toast('Import impossible : ' + err, 'error', 10000);
+  const err = e.payload.error === 'exists' ? t('main.model_exists', { name: e.payload.name }) : tr(e.payload.error);
+  toast(t('main.import_impossible', { error: err }), 'error', 10000);
 });
 
 // Glisser-déposer d'un .nelmodel, d'un .gguf ou d'images sur la fenêtre.
@@ -253,7 +255,10 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 
 (async () => {
   [S.info, S.settings, S.sessions] = await Promise.all([invoke('app_info'), invoke('get_settings'), invoke('list_sessions')]);
-  $('folder-open').title = `Ouvrir le dossier dans ${S.info.fileManager}`;
+  // La langue d'abord : tout ce qui suit s'affiche dans la bonne.
+  await loadLang(S.settings.language);
+  applyStatic();
+  $('folder-open').title = t('main.ouvrir_dossier_dans', { fileManager: S.info.fileManager });
   applyTheme();
   applyDensity();
   applyTextSize();
@@ -280,7 +285,7 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
     S.settings = await invoke('save_settings', { changes: { lastUpdateCheck: Date.now() } });
     setTimeout(() => checkUpdate(false), 3000);   // discrète : après le démarrage
   }
-})().catch((e) => toast('Démarrage : ' + errText(e), 'error', 0));
+})().catch((e) => toast(t('main.demarrage', { error: errText(e) }), 'error', 0));
 
 // Les tests de l'interface (e2e/) lisent l'état et appellent ces fonctions depuis la page.
-Object.assign(window, { S, F, C, USAGE, IMG, MCP, SETTINGS, openSettings, renderStatus, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });
+Object.assign(window, { S, F, C, USAGE, IMG, MCP, I18N, SETTINGS, openSettings, renderStatus, newSession, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });

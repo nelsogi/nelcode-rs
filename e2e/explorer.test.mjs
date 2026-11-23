@@ -10,7 +10,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { launch, sleep } from './harness.mjs';
+import { fr, launch, sleep } from './harness.mjs';
 
 let server, A, DIR, PROVIDER;
 const chats = [];   // les requêtes de l'agent principal
@@ -128,12 +128,12 @@ test('explorateurs en parallèle (2 à la fois par défaut) : étapes regroupée
   const m = await lastMsg();
   assert.equal(m.content, 'Fini.', 'le texte des explorateurs ne va pas dans la réponse');
   const ex = m.agent.steps.filter((s) => s.kind === 'explorer');
-  assert.deepEqual(ex.map((s) => [s.title, s.status]), [['Explorateur : A', 'done'], ['Explorateur : B', 'done'], ['Explorateur : C', 'done']]);
+  assert.deepEqual(ex.map((s) => [fr(s.title), s.status]), [['Explorateur : A', 'done'], ['Explorateur : B', 'done'], ['Explorateur : C', 'done']]);
   for (const s of ex) {
     assert.ok(s.seconds > 0.5 && s.tokens.input > 0 && s.tokens.output > 0, JSON.stringify(s));
-    assert.match(s.detail, /^Résumé [ABC] : Program\.cs crée un Player/);
+    assert.match(fr(s.detail), /^Résumé [ABC] : Program\.cs crée un Player/);
     const children = m.agent.steps.filter((c) => c.parent === s.id);
-    assert.deepEqual(children.map((c) => [c.title, c.status]), [['Lecture de src/Program.cs', 'done']]);
+    assert.deepEqual(children.map((c) => [fr(c.title), c.status]), [['Lecture de src/Program.cs', 'done']]);
     assert.match(children[0].id, new RegExp(`^${s.id}e1$`));
   }
   // L'agent reçoit chaque résumé, dans l'ordre de ses appels.
@@ -164,7 +164,7 @@ test('limites : explorateurs par demande et tours par explorateur (réglables) ;
   const m = await lastMsg();
   const ex = m.agent.steps.filter((s) => s.kind === 'explorer');
   assert.deepEqual(ex.map((s) => s.status), ['done', 'done', 'error']);
-  assert.match(ex[2].detail, /limite atteinte : 2 explorateurs au plus par demande/);
+  assert.match(fr(ex[2].detail), /limite atteinte : 2 explorateurs au plus par demande/);
   // 2 tours chacun ; au dernier, la consigne de conclure ; sans résumé, l'agent sait ce qu'ils ont fait.
   const mine = explorers.slice(before);
   assert.equal(mine.length, 4);
@@ -206,7 +206,7 @@ test('un explorateur ne fait que lire : écriture, commande, plan, explorateur e
   assert.match(toAgent, /Fichiers protégés que l'explorateur n'a pas pu lire ni parcourir : \.env, secrets\.json\. Si tu en as besoin, lis-les toi-même avec read_file/);
   const read = m.agent.steps.find((s) => s.kind === 'read');
   assert.equal(read.status, 'rejected');
-  assert.match(read.title, /fichier protégé, refusée à l'explorateur/);
+  assert.match(fr(read.title), /fichier protégé, refusée à l'explorateur/);
 });
 
 test('Stop arrête tout : explorateurs en cours et en attente', async () => {

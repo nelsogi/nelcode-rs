@@ -3,37 +3,44 @@
 // palette), export et import en JSON (sans aucun secret : voir store::PORTABLE_SETTINGS).
 // Les textes (noms, valeurs, messages) passent toujours par textContent, jamais par innerHTML.
 
+import { has, locale, t } from './i18n.js';
 import { $, confirmDialog, dialog, errText, fold, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { loadModel, refreshContext, renderMessages, renderModels, renderStatus } from './conversation.js';
 import { claudeKeyBlock } from './agent.js';
 import { providersSection } from './providers.js';
 import { openUsage, pricesBlock } from './usage.js';
-import { conversationServers, mcpPanel, refreshMcp } from './mcp.js';
-import { applyDensity, applyTextSize, applyTheme, calcBlock, checkUpdate, copyBugReport, serverBlock } from './settings.js';
+import { mcpPanel, refreshMcp } from './mcp.js';
+import { applyDensity, applyLanguage, applyTextSize, applyTheme, calcBlock, checkUpdate, copyBugReport, serverBlock } from './settings.js';
 
+// Les catégories et les réglages : leurs textes sont dans i18n/*.json, sous des clés tirées de leur id :
+// set.cat.<id> (catégorie), set.<id>.label, set.<id>.hint, set.<id>.placeholder, set.<id>.keywords (mots en plus pour la
+// recherche), set.<clé>.opt.<valeur> (choix d'une liste), set.group.<groupe> (intertitre). Traduits à l'affichage.
 export const CATEGORIES = [
-  { id: 'general', label: 'Général', icon: 'settings', alias: ['general', 'langue', 'theme', 'zoom'] },
-  { id: 'models', label: 'Modèles', icon: 'asterisk', alias: ['modeles', 'modele', 'generation', 'contexte'] },
-  { id: 'providers', label: 'Fournisseurs', icon: 'arrow-left-right', alias: ['fournisseurs', 'fournisseur', 'distants'] },
-  { id: 'agent', label: 'Agent', icon: 'bot', alias: ['agent', 'explorateurs', 'commandes'] },
-  { id: 'claude', label: 'Claude Agent', icon: 'terminal', alias: ['claude', 'claude-agent'] },
-  { id: 'mcp', label: 'MCP', icon: 'plug', alias: ['mcp'] },
-  { id: 'images', label: 'Images', icon: 'image', alias: ['images', 'image'] },
-  { id: 'calc', label: 'Calcul', icon: 'gauge', alias: ['calcul', 'gpu', 'cpu'] },
-  { id: 'usage', label: 'Suivi et budget', icon: 'chart-column', alias: ['suivi', 'budget', 'prix'] },
-  { id: 'server', label: 'Serveur local', icon: 'external-link', alias: ['serveur', 'api'] },
-  { id: 'advanced', label: 'Avancé', icon: 'file-text', alias: ['avance', 'journal', 'bug', 'a-propos', 'export'] },
+  { id: 'general', icon: 'settings', alias: ['general', 'langue', 'language', 'theme', 'zoom'] },
+  { id: 'models', icon: 'asterisk', alias: ['modeles', 'modele', 'models', 'model', 'generation', 'contexte', 'context'] },
+  { id: 'providers', icon: 'arrow-left-right', alias: ['fournisseurs', 'fournisseur', 'providers', 'provider', 'distants', 'remote'] },
+  { id: 'agent', icon: 'bot', alias: ['agent', 'explorateurs', 'explorers', 'commandes', 'commands'] },
+  { id: 'claude', icon: 'terminal', alias: ['claude', 'claude-agent'] },
+  { id: 'mcp', icon: 'plug', alias: ['mcp'] },
+  { id: 'images', icon: 'image', alias: ['images', 'image'] },
+  { id: 'calc', icon: 'gauge', alias: ['calcul', 'compute', 'gpu', 'cpu'] },
+  { id: 'usage', icon: 'chart-column', alias: ['suivi', 'usage', 'budget', 'prix', 'prices'] },
+  { id: 'server', icon: 'external-link', alias: ['serveur', 'server', 'api'] },
+  { id: 'advanced', icon: 'file-text', alias: ['avance', 'advanced', 'journal', 'log', 'bug', 'a-propos', 'about', 'export'] },
 ];
 
 const catOf = (id) => CATEGORIES.find((c) => c.id === id);
+export const catLabel = (c) => t('set.cat.' + (c.id ?? c));
 
-/** Une catégorie par son id, son nom ou un alias (/settings gpu, /settings fournisseurs…), sans accents ni casse. */
+/** Une catégorie par son id, son nom (dans la langue affichée) ou un alias (/settings gpu, /settings fournisseurs…),
+ *  sans accents ni casse. */
 export function findCategory(text) {
   const q = fold(String(text ?? '').trim()).replace(/\s+/g, '-');
   if (!q) return null;
-  return CATEGORIES.find((c) => c.id === q || fold(c.label).replace(/\s+/g, '-') === q || c.alias.includes(q))
-    ?? CATEGORIES.find((c) => fold(c.label).startsWith(q) || c.alias.some((a) => a.startsWith(q))) ?? null;
+  const name = (c) => fold(catLabel(c)).replace(/\s+/g, '-');
+  return CATEGORIES.find((c) => c.id === q || name(c) === q || c.alias.includes(q))
+    ?? CATEGORIES.find((c) => name(c).startsWith(q) || c.alias.some((a) => a.startsWith(q))) ?? null;
 }
 
 // --- Les réglages ----------------------------------------------------------------------------------------
@@ -44,94 +51,100 @@ const reloadModel = () => { if (S.model.name && !S.model.remote) loadModel(S.mod
 const reloadGguf = () => { if (S.model.name && S.models.find((m) => m.name === S.model.name)?.weights === 'gguf') loadModel(S.model.name); };
 const claudeStatus = async () => { S.claudeStatus = await invoke('claude_agent_status').catch(() => S.claudeStatus); renderStatus(); };
 const applyServer = async () => {
-  try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }
+  try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast(t('set.server.error', { error: errText(e) }), 'error', 8000); }
   renderStatus();
   UI.serverRedraw?.();
 };
+// Les choix d'une liste, traduits : set.<clé>.opt.<valeur>.
+const opts = (key, values) => () => values.map((v) => [v, t(`set.${key}.opt.${v}`)]);
 
-const modelOptions = () => [['', 'Le dernier utilisé (par défaut)'], ...S.models.map((m) => [m.name, `${m.name} — ce PC`]),
+const modelOptions = () => [['', t('set.defaultModel.opt.last')], ...S.models.map((m) => [m.name, t('set.defaultModel.opt.local', { name: m.name })]),
   ...S.providers.flatMap((p) => (p.models ?? []).map((m) => [`remote:${p.id}/${m.id}`, `${m.id} — ${p.name}`]))];
 const explorerKey = (v) => (v?.provider && v?.model ? JSON.stringify({ provider: v.provider, model: v.model }) : '');
 
 export const SETTINGS = [
   // Général
-  { key: 'language', cat: 'general', label: 'Langue', type: 'select', def: 'fr', options: () => [['fr', 'Français']], hint: 'La langue de l\'interface. Nel Code n\'existe pour l\'instant qu\'en français.' },
-  { key: 'theme', cat: 'general', label: 'Thème', type: 'select', def: 'dark', options: () => [['dark', 'Sombre (par défaut)'], ['light', 'Clair']], hint: 'Les couleurs de toute l\'interface (partagé avec Nel Code C#).', after: applyTheme, keywords: 'sombre clair couleurs' },
-  { key: 'accent', cat: 'general', label: 'Couleur d\'accent', type: 'select', def: 'red', options: () => [['red', 'Rouge (par défaut)'], ['orange', 'Terre cuite (ancienne couleur)']], hint: 'La couleur des boutons principaux, des liens et des repères.', after: applyTheme },
-  { key: 'textSize', cat: 'general', label: 'Zoom (%)', type: 'range', def: 100, min: 80, max: 150, step: 10, hint: 'Toute l\'interface grandit ou rapetisse : Ctrl + et Ctrl − par pas de 10 %, Ctrl 0 pour 100 %.', after: applyTextSize, keywords: 'taille texte police agrandir' },
-  { key: 'density', cat: 'general', label: 'Densité', type: 'select', def: 'normal', options: () => [['compact', 'Compacte'], ['normal', 'Normale (par défaut)'], ['comfortable', 'Confortable']], hint: 'L\'espace entre les messages, les listes et les boutons.', after: applyDensity, keywords: 'espacement' },
-  { key: 'markdown', cat: 'general', label: 'Mettre en forme les réponses (Markdown)', type: 'switch', def: true, hint: 'Titres, listes, tableaux, code… Désactivé : le texte brut, tel que le modèle l\'a écrit. « Copier » copie toujours le Markdown d\'origine.', after: () => { if (UI.editing === null) renderMessages(); } },
-  { key: 'autoUpdate', cat: 'general', group: 'Mises à jour', label: 'Rechercher les mises à jour au démarrage', type: 'switch', def: true, hint: 'Une fois par jour au plus, sur la page des versions de Nel Code (GitHub). Rien ne s\'installe sans ton accord.' },
-  { id: 'update-now', cat: 'general', group: 'Mises à jour', label: 'Rechercher maintenant', hint: 'Vérifie tout de suite s\'il existe une nouvelle version.', block: () => h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour') },
+  { key: 'language', cat: 'general', type: 'select', def: 'auto', options: opts('language', ['auto', 'fr', 'en']), after: applyLanguage },
+  { key: 'theme', cat: 'general', type: 'select', def: 'dark', options: opts('theme', ['dark', 'light']), after: applyTheme },
+  { key: 'accent', cat: 'general', type: 'select', def: 'red', options: opts('accent', ['red', 'orange']), after: applyTheme },
+  { key: 'textSize', cat: 'general', type: 'range', def: 100, min: 80, max: 150, step: 10, after: applyTextSize },
+  { key: 'density', cat: 'general', type: 'select', def: 'normal', options: opts('density', ['compact', 'normal', 'comfortable']), after: applyDensity },
+  { key: 'markdown', cat: 'general', type: 'switch', def: true, after: () => { if (UI.editing === null) renderMessages(); } },
+  { key: 'autoUpdate', cat: 'general', group: 'updates', type: 'switch', def: true },
+  { id: 'update-now', cat: 'general', group: 'updates', block: () => h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), t('set.update-now.button')) },
 
   // Modèles
-  { key: 'defaultModel', cat: 'models', label: 'Modèle par défaut', type: 'select', def: '', options: modelOptions, cls: 'default-model', hint: 'Le modèle chargé au démarrage de Nel Code. Par défaut, le dernier utilisé ; s\'il n\'existe plus, le dernier utilisé est pris.', keywords: 'démarrage' },
-  { key: 'temperature', cat: 'models', group: 'Génération', label: 'Température', type: 'range', def: 0.8, min: 0.1, max: 2, step: 0.05, hint: 'Bas : réponses sages et répétitives. Haut : plus créatives, plus de fautes.' },
-  { key: 'topK', cat: 'models', group: 'Génération', label: 'Top-k', type: 'range', def: 20, min: 0, max: 100, step: 1, hint: 'Tirage parmi les K tokens les plus probables (0 = pas de limite).' },
-  { key: 'topP', cat: 'models', group: 'Génération', label: 'Top-p', type: 'range', def: 0.9, min: 0.05, max: 1, step: 0.01, hint: 'Tirage parmi les tokens qui font cette part des chances (1 = pas de limite).' },
-  { key: 'maxReplyTokens', cat: 'models', group: 'Génération', label: 'Longueur max', type: 'range', def: 80, min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse d\'un .nelmodel, en tokens (environ 3 caractères chacun). Un modèle GGUF écrit jusqu\'à 1024 tokens et s\'arrête de lui-même.' },
-  { key: 'repetitionPenalty', cat: 'models', group: 'Génération', label: 'Pénalité de répétition', type: 'range', def: 1.15, min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
-  { key: 'contextLimit', cat: 'models', group: 'Contexte et résumé', label: 'Contexte des modèles GGUF', type: 'range', def: 8192, min: 512, max: 32768, step: 512, hint: 'Au plus ce nombre de tokens de conversation (le modèle peut en gérer plus, mais la mémoire et le temps de réponse montent vite). Les .nelmodel gardent leur taille. Le modèle GGUF chargé est rechargé.', after: () => { reloadGguf(); refreshContext(); } },
-  { key: 'summaryThreshold', cat: 'models', group: 'Contexte et résumé', label: 'Résumé automatique à (% du contexte)', type: 'range', def: 80, min: 0, max: 95, step: 5, hint: 'Quand la conversation dépasse cette part du contexte du modèle (distant ou GGUF), les anciens échanges sont résumés par le modèle actif ; les 4 derniers restent tels quels. 0 : jamais (/compact résume à la main).' },
+  { key: 'defaultModel', cat: 'models', type: 'select', def: '', options: modelOptions, cls: 'default-model' },
+  { key: 'temperature', cat: 'models', group: 'generation', type: 'range', def: 0.8, min: 0.1, max: 2, step: 0.05 },
+  { key: 'topK', cat: 'models', group: 'generation', type: 'range', def: 20, min: 0, max: 100, step: 1 },
+  { key: 'topP', cat: 'models', group: 'generation', type: 'range', def: 0.9, min: 0.05, max: 1, step: 0.01 },
+  { key: 'maxReplyTokens', cat: 'models', group: 'generation', type: 'range', def: 80, min: 16, max: 128, step: 1 },
+  { key: 'repetitionPenalty', cat: 'models', group: 'generation', type: 'range', def: 1.15, min: 1, max: 2, step: 0.01 },
+  { key: 'contextLimit', cat: 'models', group: 'context', type: 'range', def: 8192, min: 512, max: 32768, step: 512, after: () => { reloadGguf(); refreshContext(); } },
+  { key: 'summaryThreshold', cat: 'models', group: 'context', type: 'range', def: 80, min: 0, max: 95, step: 5 },
 
   // Fournisseurs
-  { id: 'providers', cat: 'providers', label: 'Fournisseurs (modèles distants)', hint: 'Serveurs compatibles avec l\'API OpenAI et API Claude : adresse, clé, test, modèles et images.', wide: true, keywords: 'ollama llama.cpp lm studio openai anthropic clé qwen vision images', block: providersSection },
+  { id: 'providers', cat: 'providers', wide: true, block: providersSection },
 
   // Agent
-  { key: 'agentMaxTurns', cat: 'agent', label: 'Tours au plus', type: 'range', def: 10, min: 1, max: 50, step: 1, hint: 'Combien de fois le modèle peut demander des outils (lire, chercher, écrire) avant de devoir répondre.' },
-  { key: 'commandTimeout', cat: 'agent', group: 'Commandes', label: 'Durée max d\'une commande (s)', type: 'range', def: 120, min: 5, max: 600, step: 5, hint: 'Au-delà, la commande et tous ses processus sont arrêtés (120 s par défaut).' },
-  { key: 'allowedCommands', cat: 'agent', group: 'Commandes', label: 'Commandes autorisées sans confirmation', type: 'lines', def: [], cls: 'commands', placeholder: 'dotnet build\ndotnet test', hint: 'Une par ligne, par exemple « dotnet build » (autorise aussi « dotnet build src/App.csproj »). Vide par défaut : chaque commande de l\'agent demande Lancer / Refuser. Jamais de shell (cmd, PowerShell…).', sensitive: true },
-  { key: 'protectedFiles', cat: 'agent', group: 'Fichiers protégés', label: 'Fichiers protégés', type: 'lines', def: [], cls: 'protected', placeholder: '*.secret\nprivé/\nconfig/prod.yml', hint: 'Un motif par ligne (* et ?, « dossier/ » pour un dossier). Le mode Agent et les fichiers @ ne les lisent ou ne les parcourent qu\'après ta confirmation. Toujours protégés : .env, .env.*, .git/, *.pem, *.key, *.pfx, id_rsa, *.kdbx, appsettings.*.json, secrets.json.', sensitive: true },
-  { key: 'explorerConcurrency', cat: 'agent', group: 'Explorateurs', label: 'Explorateurs en même temps', type: 'range', def: 2, min: 1, max: 8, step: 1, hint: 'L\'agent peut lancer des explorateurs qui lisent le projet pour lui (2 par défaut : beaucoup de serveurs, comme Ollama, traitent les requêtes l\'une après l\'autre).' },
-  { key: 'explorerMax', cat: 'agent', group: 'Explorateurs', label: 'Explorateurs par demande', type: 'range', def: 5, min: 0, max: 20, step: 1, hint: 'Au plus ce nombre d\'explorateurs par demande (5 par défaut ; 0 : pas d\'explorateurs).' },
-  { key: 'explorerTurns', cat: 'agent', group: 'Explorateurs', label: 'Tours par explorateur', type: 'range', def: 6, min: 1, max: 20, step: 1, hint: 'Combien de fois un explorateur peut lire ou chercher avant de rendre son résumé (6 par défaut).' },
-  { key: 'explorerModel', cat: 'agent', group: 'Explorateurs', label: 'Modèle des explorateurs', type: 'select', def: null, cls: 'explorer-model', encode: explorerKey, decode: (v) => (v ? JSON.parse(v) : null),
-    options: () => [['', 'Le même que l\'agent (par défaut)'], ...S.providers.flatMap((p) => (p.models ?? []).map((m) => [JSON.stringify({ provider: p.id, model: m.id }), `${m.id} — ${p.name}`]))],
-    hint: 'Un modèle plus léger lit plus vite et coûte moins ; il doit gérer les outils. S\'il n\'existe plus, celui de l\'agent est pris.' },
+  { key: 'agentMaxTurns', cat: 'agent', type: 'range', def: 10, min: 1, max: 50, step: 1 },
+  { key: 'commandTimeout', cat: 'agent', group: 'commands', type: 'range', def: 120, min: 5, max: 600, step: 5 },
+  { key: 'allowedCommands', cat: 'agent', group: 'commands', type: 'lines', def: [], cls: 'commands', sensitive: true },
+  { key: 'protectedFiles', cat: 'agent', group: 'protected', type: 'lines', def: [], cls: 'protected', sensitive: true },
+  { key: 'explorerConcurrency', cat: 'agent', group: 'explorers', type: 'range', def: 2, min: 1, max: 8, step: 1 },
+  { key: 'explorerMax', cat: 'agent', group: 'explorers', type: 'range', def: 5, min: 0, max: 20, step: 1 },
+  { key: 'explorerTurns', cat: 'agent', group: 'explorers', type: 'range', def: 6, min: 1, max: 20, step: 1 },
+  { key: 'explorerModel', cat: 'agent', group: 'explorers', type: 'select', def: null, cls: 'explorer-model', encode: explorerKey, decode: (v) => (v ? JSON.parse(v) : null),
+    options: () => [['', t('set.explorerModel.opt.same')], ...S.providers.flatMap((p) => (p.models ?? []).map((m) => [JSON.stringify({ provider: p.id, model: m.id }), `${m.id} — ${p.name}`]))] },
 
   // Claude Agent
-  { id: 'claude-key', cat: 'claude', label: 'Outil claude et clé API', hint: 'L\'outil « claude » d\'Anthropic installé sur ce PC, et ta clé API (jamais de connexion à un compte).', keywords: 'anthropic clé api', block: claudeKeyBlock },
-  { key: 'claudeModel', cat: 'claude', label: 'Modèle (--model)', type: 'text', def: '', cls: 'model', list: ['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], placeholder: 'celui de l\'outil (par défaut)',
-    validate: (v) => (!v || /^[A-Za-z0-9._\[\]-]{1,100}$/.test(v) ? null : 'Lettres, chiffres, « - . _ [ ] » seulement, 100 au plus.'), hint: 'Un alias (opus, sonnet, haiku) ou un id complet (claude-opus-5-5). Vide : le modèle par défaut de l\'outil.', after: claudeStatus },
-  { key: 'claudePermissionMode', cat: 'claude', label: 'Mode de permission', type: 'select', def: 'default', cls: 'mode', options: () => [['default', 'Rien d\'automatique (par défaut) : tout ce qui demande un accord est refusé'], ['acceptEdits', 'Accepter les modifications de fichiers (acceptEdits)']], hint: 'Ce que claude peut faire sans te demander.', after: claudeStatus, sensitive: true },
-  { key: 'claudeAllowedTools', cat: 'claude', label: 'Outils autorisés sans accord (--allowedTools)', type: 'lines', def: [], cls: 'claude-tools', placeholder: 'Read\nBash(dotnet build *)', hint: 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.', after: claudeStatus, sensitive: true },
-  { key: 'claudeProjectSettings', cat: 'claude', label: 'Lire les réglages du projet (.claude/settings.json)', type: 'switch', def: false, cls: 'project-settings', hint: 'Désactivé par défaut : seuls tes réglages (~/.claude/settings.json) comptent. Les réglages d\'un projet peuvent lancer des commandes (hooks), autoriser Bash sans accord ou envoyer ta clé à une autre adresse : ne l\'active que pour des projets de confiance.', after: claudeStatus, sensitive: true },
+  { id: 'claude-key', cat: 'claude', block: claudeKeyBlock },
+  { key: 'claudeModel', cat: 'claude', type: 'text', def: '', cls: 'model', list: ['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+    validate: (v) => (!v || /^[A-Za-z0-9._\[\]-]{1,100}$/.test(v) ? null : t('set.claudeModel.invalid')), after: claudeStatus },
+  { key: 'claudePermissionMode', cat: 'claude', type: 'select', def: 'default', cls: 'mode', options: opts('claudePermissionMode', ['default', 'acceptEdits']), after: claudeStatus, sensitive: true },
+  { key: 'claudeAllowedTools', cat: 'claude', type: 'lines', def: [], cls: 'claude-tools', after: claudeStatus, sensitive: true },
+  { key: 'claudeProjectSettings', cat: 'claude', type: 'switch', def: false, cls: 'project-settings', after: claudeStatus, sensitive: true },
 
   // MCP
-  { id: 'mcp-conversation', cat: 'mcp', label: 'Serveurs de cette conversation', hint: 'Les outils des serveurs cochés sont envoyés au modèle à chaque tour (ils prennent de la place dans le contexte). Enregistré avec la conversation.', show: () => !!conversationServers(), block: conversationServers },
-  { key: 'mcpStartTimeout', cat: 'mcp', label: 'Démarrage d\'un serveur au plus (s)', type: 'range', def: 30, min: 5, max: 300, step: 5, hint: 'Lancement, poignée de main et liste des outils (30 s par défaut).' },
-  { key: 'mcpCallTimeout', cat: 'mcp', label: 'Durée max d\'un appel d\'outil (s)', type: 'range', def: 60, min: 5, max: 600, step: 5, hint: 'Au-delà, l\'appel est annulé et l\'agent reçoit une erreur (60 s par défaut).' },
-  { id: 'mcp-servers', cat: 'mcp', label: 'Serveurs MCP', hint: 'Stdio ou Streamable HTTP, pour le mode Agent : état, outils, journal, Redémarrer, Tester, ajout, import depuis Claude Desktop.', wide: true, keywords: 'stdio http claude desktop outils', block: mcpPanel },
+  { key: 'mcpStartTimeout', cat: 'mcp', type: 'range', def: 30, min: 5, max: 300, step: 5 },
+  { key: 'mcpCallTimeout', cat: 'mcp', type: 'range', def: 60, min: 5, max: 600, step: 5 },
+  { id: 'mcp-servers', cat: 'mcp', wide: true, block: mcpPanel },
 
   // Images
-  { key: 'imageMaxSide', cat: 'images', label: 'Plus grand côté (px)', type: 'range', def: 1568, min: 512, max: 4096, step: 32, hint: 'Avant l\'envoi, chaque image est réduite à cette taille (1568 par défaut, ce que les modèles Claude lisent sans la réduire encore) et réencodée sans ses métadonnées (EXIF, position GPS…).' },
-  { id: 'vision', cat: 'images', label: 'Modèles qui voient les images', hint: 'Détecté automatiquement (Claude, Ollama, llama.cpp) ou réglé à la main, modèle par modèle, dans Fournisseurs → Images.', block: () => h('button', { class: 'btn', onclick: () => go('providers', 'providers') }, icon('image'), 'Ouvrir Fournisseurs') },
+  { key: 'imageMaxSide', cat: 'images', type: 'range', def: 1568, min: 512, max: 4096, step: 32 },
+  { id: 'vision', cat: 'images', block: () => h('button', { class: 'btn', onclick: () => go('providers', 'providers') }, icon('image'), t('set.vision.button')) },
 
   // Calcul
-  { key: 'device', cat: 'calc', label: 'Calcul', type: 'select', def: 'auto', cls: 'device', options: () => [['auto', 'Automatique (GPU si disponible)'], ['cpu', 'CPU'], ['gpu', 'GPU']], hint: 'Où tournent les modèles de ce PC. Le modèle chargé est rechargé.', after: reloadModel, keywords: 'gpu cpu cuda nvidia' },
-  { id: 'gpu', cat: 'calc', label: 'Carte graphique et pack GPU', hint: 'La carte NVIDIA détectée, le pack CUDA téléchargé à la demande, et le test de vitesse.', keywords: 'nvidia cuda pilote pack vitesse benchmark', block: calcBlock },
+  { key: 'device', cat: 'calc', type: 'select', def: 'auto', cls: 'device', options: opts('device', ['auto', 'cpu', 'gpu']), after: reloadModel },
+  { id: 'gpu', cat: 'calc', block: calcBlock },
 
   // Suivi et budget
-  { key: 'budgetMonthly', cat: 'usage', label: 'Budget mensuel ($)', type: 'number', def: 0, min: 0, max: 1e6, step: 0.01, cls: 'budget', hint: 'Fournisseurs payants seulement ; 0 : aucun budget. Un avertissement à 80 %.' },
-  { key: 'budgetConfirm', cat: 'usage', label: 'Confirmer au-delà du budget', type: 'switch', def: true, hint: 'À 100 % du budget, demander confirmation avant chaque nouvelle demande payante.' },
-  { id: 'prices', cat: 'usage', label: 'Prix par million de tokens', hint: 'Modèle, entrée, sortie, en $ : une ligne par modèle. Sert aux coûts estimés.', resets: { prices: null }, keywords: 'coût tarif', wide: true, block: pricesBlock },
-  { id: 'usage-page', cat: 'usage', label: 'Page Suivi', hint: 'Tokens, coûts estimés et temps de réponse, par jour, modèle et projet ; export CSV.', block: () => h('button', { class: 'btn', onclick: () => { closeSettings(); openUsage(); } }, icon('chart-column'), 'Ouvrir la page Suivi') },
+  { key: 'budgetMonthly', cat: 'usage', type: 'number', def: 0, min: 0, max: 1e6, step: 0.01, cls: 'budget' },
+  { key: 'budgetConfirm', cat: 'usage', type: 'switch', def: true },
+  { id: 'prices', cat: 'usage', resets: { prices: null }, wide: true, block: pricesBlock },
+  { id: 'usage-page', cat: 'usage', block: () => h('button', { class: 'btn', onclick: () => { closeSettings(); openUsage(); } }, icon('chart-column'), t('set.usage-page.button')) },
 
   // Serveur local
-  { key: 'serverEnabled', cat: 'server', label: 'Activer le serveur (API OpenAI)', type: 'switch', def: false, hint: 'Pour Continue dans VS Code, ou tout client de l\'API OpenAI. Seulement sur ce PC (127.0.0.1), et seulement avec la clé ci-dessous.', after: applyServer, sensitive: true },
-  { key: 'serverPort', cat: 'server', label: 'Port', type: 'number', def: 8765, min: 1024, max: 65535, step: 1, cls: 'port', hint: 'De 1024 à 65535.', after: applyServer },
-  { id: 'server-key', cat: 'server', wide: true, label: 'Adresse et clé d\'accès', hint: 'Authorization: Bearer <clé>. Une seule réponse à la fois, avec Nel Code. Brancher Continue : voir le README.', keywords: 'url clé bearer continue', block: serverBlock },
+  { key: 'serverEnabled', cat: 'server', type: 'switch', def: false, after: applyServer, sensitive: true },
+  { key: 'serverPort', cat: 'server', type: 'number', def: 8765, min: 1024, max: 65535, step: 1, cls: 'port', after: applyServer },
+  { id: 'server-key', cat: 'server', wide: true, block: serverBlock },
 
   // Avancé
-  { id: 'export', cat: 'advanced', label: 'Exporter ou importer les réglages', hint: 'Un fichier JSON avec tes préférences, jamais de clé ni de secret, ni tes fournisseurs ou tes projets. À l\'import, tu vois ce qui change avant de confirmer.', keywords: 'json sauvegarde transférer', block: () => h('div', { class: 'row-btns' },
-    h('button', { class: 'btn', onclick: exportSettings }, icon('download'), 'Exporter…'), h('button', { class: 'btn', onclick: importSettings }, icon('file'), 'Importer…')) },
-  { id: 'log', cat: 'advanced', label: 'Journal', hint: 'Un fichier par jour, 7 jours gardés : des événements seulement, jamais le texte de tes conversations.', block: () => h('button', { class: 'btn', onclick: () => invoke('open_folder', { path: S.info.logs }).catch((e) => toast(errText(e), 'error')) }, icon('folder'), 'Ouvrir le dossier du journal') },
-  { id: 'bug', cat: 'advanced', label: 'Rapport de bug', hint: 'Version, système, modèle actif et les 50 dernières lignes du journal (jamais tes conversations).', block: () => h('button', { class: 'btn', onclick: copyBugReport }, icon('copy'), 'Copier un rapport de bug') },
-  { id: 'about', cat: 'advanced', label: 'À propos', hint: 'Nel Code, licence MIT.', keywords: 'version licence dossier données', block: () => h('dl', { class: 'info-grid about' },
-    h('dt', {}, 'Version'), h('dd', {}, S.info.version), h('dt', {}, 'Données'), h('dd', {}, S.info.root), h('dt', {}, 'Système'), h('dd', {}, S.info.os ?? '')) },
+  { id: 'export', cat: 'advanced', block: () => h('div', { class: 'row-btns' },
+    h('button', { class: 'btn', onclick: exportSettings }, icon('download'), t('set.export.export')), h('button', { class: 'btn', onclick: importSettings }, icon('file'), t('set.export.import'))) },
+  { id: 'log', cat: 'advanced', block: () => h('button', { class: 'btn', onclick: () => invoke('open_folder', { path: S.info.logs }).catch((e) => toast(errText(e), 'error')) }, icon('folder'), t('set.log.button')) },
+  { id: 'bug', cat: 'advanced', block: () => h('button', { class: 'btn', onclick: copyBugReport }, icon('copy'), t('set.bug.button')) },
+  { id: 'about', cat: 'advanced', block: () => h('dl', { class: 'info-grid about' },
+    h('dt', {}, t('set.about.version')), h('dd', {}, S.info.version), h('dt', {}, t('set.about.data')), h('dd', {}, S.info.root), h('dt', {}, t('set.about.system')), h('dd', {}, S.info.os ?? '')) },
 ];
 
 for (const d of SETTINGS) d.id ??= d.key;
+
+// Les textes d'un réglage, dans la langue affichée.
+const label = (d) => t(`set.${d.id}.label`);
+const hint = (d) => (has(`set.${d.id}.hint`) ? t(`set.${d.id}.hint`) : '');
+const groupLabel = (g) => t(`set.group.${g}`);
+const searchText = (d) => [label(d), hint(d), has(`set.${d.id}.keywords`) ? t(`set.${d.id}.keywords`) : '', d.group ? groupLabel(d.group) : '', catLabel(d.cat)].join(' ');
 
 /** Les valeurs par défaut, par clé (aussi celles des blocs, comme la table de prix). */
 export const DEFAULTS = Object.fromEntries(SETTINGS.flatMap((d) => (d.key ? [[d.key, d.def]] : Object.entries(d.resets ?? {}))));
@@ -141,7 +154,7 @@ const valueOf = (d) => S.settings[d.key] ?? d.def;
 const isDefault = (d) => (d.key ? same(valueOf(d), d.def) : Object.entries(d.resets ?? {}).every(([k, v]) => same(S.settings[k], v)));
 const shown = (d) => !d.show || d.show();
 // Les nombres des champs : virgule décimale, sans séparateur de milliers (relus tels quels par parseNumber).
-const nf = (x) => Number(x).toLocaleString('fr-CH', { maximumFractionDigits: 4, useGrouping: false });
+const nf = (x) => Number(x).toLocaleString(locale(), { maximumFractionDigits: 4, useGrouping: false });
 const FIRST_CONTROL = '.setting-control input:not([tabindex="-1"]), .setting-control select, .setting-control textarea, .setting-control button';
 
 // --- Enregistrement --------------------------------------------------------------------------------------
@@ -155,7 +168,7 @@ function savedIndicator(state) {
   if (!el) return;
   clearTimeout(savedTimer);
   el.dataset.state = state;
-  el.replaceChildren(...(state === 'saving' ? ['Enregistrement…'] : state === 'saved' ? [icon('check'), 'Enregistré'] : []));
+  el.replaceChildren(...(state === 'saving' ? [t('settings-page.enregistrement')] : state === 'saved' ? [icon('check'), t('settings-page.enregistre')] : []));
   if (state === 'saved') savedTimer = setTimeout(() => { el.dataset.state = ''; el.replaceChildren(); }, 1800);
 }
 UI.settingsSaved = () => savedIndicator('saved');
@@ -204,18 +217,18 @@ const parseNumber = (raw) => Number(String(raw).trim().replace(',', '.'));
 
 function numberError(d, raw) {
   const n = parseNumber(raw);
-  if (String(raw).trim() === '' || !Number.isFinite(n)) return 'Un nombre, s\'il te plaît.';
-  if (n < d.min || n > d.max) return `Entre ${nf(d.min)} et ${nf(d.max)}.`;
-  if (Number.isInteger(d.step) && !Number.isInteger(n)) return 'Un nombre entier.';
-  if (Number.isInteger(d.step) && d.step > 1 && (n - d.min) % d.step) return `Par pas de ${nf(d.step)} (${nf(d.min)}, ${nf(d.min + d.step)}, ${nf(d.min + 2 * d.step)}…).`;
+  if (String(raw).trim() === '' || !Number.isFinite(n)) return t('settings-page.nombre_il_te_plait');
+  if (n < d.min || n > d.max) return t('settings-page.entre', { nf: nf(d.min), nf2: nf(d.max) });
+  if (Number.isInteger(d.step) && !Number.isInteger(n)) return t('settings-page.nombre_entier');
+  if (Number.isInteger(d.step) && d.step > 1 && (n - d.min) % d.step) return t('settings-page.par_pas', { nf: nf(d.step), nf2: nf(d.min), nf3: nf(d.min + d.step), nf4: nf(d.min + 2 * d.step) });
   return null;
 }
 
 function settingRow(d, q) {
   const id = 'set-' + d.id;
   const err = h('div', { class: 'setting-error', role: 'alert', id: id + '-err', hidden: true });
-  const dot = h('span', { class: 'modified', title: 'Différent de la valeur par défaut', 'aria-label': 'modifié' });
-  const reset = h('button', { class: 'icon-btn reset', title: 'Valeur par défaut', 'aria-label': `${d.label} : valeur par défaut`, onclick: () => resetOne(d) }, icon('undo-2'));
+  const dot = h('span', { class: 'modified', title: t('settings-page.different_valeur_par_defaut'), 'aria-label': t('settings-page.modifie') });
+  const reset = h('button', { class: 'icon-btn reset', title: t('settings-page.valeur_par_defaut'), 'aria-label': t('settings-page.valeur_par_defaut_2', { label: label(d) }), onclick: () => resetOne(d) }, icon('undo-2'));
   const showError = (text) => { err.hidden = !text; err.textContent = text ?? ''; ctl?.setAttribute('aria-invalid', text ? 'true' : 'false'); };
   // refreshValue(force) : la valeur affichée suit S.settings ; un champ en cours de saisie n'est remis à jour que si
   // le changement vient d'ailleurs (force : Ctrl + / − pendant que le champ du zoom a le focus).
@@ -244,7 +257,7 @@ function settingRow(d, q) {
     ctl.addEventListener('change', () => save(d.decode ? d.decode(ctl.value) : ctl.value));
     control = ctl;
   } else if (d.type === 'range') {
-    const range = h('input', { type: 'range', min: d.min, max: d.max, step: d.step, 'aria-label': d.label, tabindex: -1 });
+    const range = h('input', { type: 'range', min: d.min, max: d.max, step: d.step, 'aria-label': label(d), tabindex: -1 });
     ctl = h('input', { type: 'text', inputmode: 'decimal', class: 'text-input num ' + (d.cls ?? ''), id: id + '-ctl', 'aria-describedby': id + '-err' });
     let timer = 0;
     range.addEventListener('input', () => { ctl.value = nf(range.value); showError(null); });
@@ -285,7 +298,7 @@ function settingRow(d, q) {
   } else {
     // text, lines
     const lines = d.type === 'lines';
-    ctl = h(lines ? 'textarea' : 'input', { class: 'text-input ' + (d.cls ?? ''), id: id + '-ctl', spellcheck: 'false', rows: lines ? 3 : undefined, placeholder: d.placeholder, list: d.list ? id + '-list' : undefined, 'aria-describedby': id + '-err' });
+    ctl = h(lines ? 'textarea' : 'input', { class: 'text-input ' + (d.cls ?? ''), id: id + '-ctl', spellcheck: 'false', rows: lines ? 3 : undefined, placeholder: has(`set.${d.id}.placeholder`) ? t(`set.${d.id}.placeholder`) : undefined, list: d.list ? id + '-list' : undefined, 'aria-describedby': id + '-err' });
     const read = () => (lines ? ctl.value.split('\n').map((l) => l.trim()).filter(Boolean) : ctl.value.trim());
     let timer = 0;
     const flush = () => {
@@ -303,8 +316,8 @@ function settingRow(d, q) {
   }
 
   const head = h('div', { class: 'setting-text' },
-    h(ctl ? 'label' : 'div', { class: 'setting-label', for: ctl ? ctl.id : undefined }, dot, h('span', {}, marked(d.label, q))),
-    h('div', { class: 'setting-hint', id: id + '-hint' }, marked(d.hint ?? '', q)), err);
+    h(ctl ? 'label' : 'div', { class: 'setting-label', for: ctl ? ctl.id : undefined }, dot, h('span', {}, marked(label(d), q))),
+    h('div', { class: 'setting-hint', id: id + '-hint' }, marked(hint(d), q)), err);
   if (ctl && !ctl.getAttribute('aria-describedby')) ctl.setAttribute('aria-describedby', id + '-hint ' + id + '-err');
   const el = h('div', { class: 'setting' + (d.wide || d.type === 'lines' ? ' wide' : '') + (d.key ? '' : ' block'), id, 'data-key': d.key ?? '', 'data-id': d.id },
     head, h('div', { class: 'setting-control' }, control, (d.key || d.resets) ? reset : null));
@@ -331,13 +344,13 @@ async function resetOne(d) {
 
 async function resetCategory(cat) {
   const defs = SETTINGS.filter((d) => d.cat === cat.id && (d.key || d.resets) && !isDefault(d));
-  if (!defs.length) return toast(`« ${cat.label} » : tout est déjà à la valeur par défaut.`, '', 3000);
-  const ok = await confirmDialog(`Réinitialiser « ${cat.label} » ?`, `Ces réglages reprennent leur valeur par défaut : ${defs.map((d) => d.label).join(', ')}.`, 'Tout réinitialiser', true);
+  if (!defs.length) return toast(t('settings-page.tout_est_deja_valeur_par', { label: catLabel(cat) }), '', 3000);
+  const ok = await confirmDialog(t('settings-page.reinitialiser', { label: catLabel(cat) }), t('settings-page.ces_reglages_reprennent_leur_valeur', { v0: defs.map(label).join(', ') }), t('settings-page.tout_reinitialiser'), true);
   if (!ok) return;
   const changes = Object.assign({}, ...defs.map((d) => (d.key ? { [d.key]: d.def } : d.resets)));
   const e = await commit(changes);
   if (e) return toast(e, 'error');
-  toast(`« ${cat.label} » : valeurs par défaut.`, 'success', 2500);
+  toast(t('settings-page.valeurs_par_defaut', { label: catLabel(cat) }), 'success', 2500);
   draw();
 }
 
@@ -345,20 +358,32 @@ async function resetCategory(cat) {
 
 const P = { cat: 'general', query: '', rows: new Map() };
 
+/** Après un changement de langue : la page (ouverte) est reconstruite dans la nouvelle, sur la même catégorie. */
+export function relabelSettings() {
+  const el = $('settings');
+  if (!el.firstChild) return;
+  const open = !el.hidden, focusId = document.activeElement?.id;
+  el.replaceChildren();
+  if (!open) return;
+  page();
+  go(P.cat);
+  (focusId && $(focusId) ? $(focusId) : $('cat-' + P.cat))?.focus();
+}
+
 /** Une ligne affichée à remettre à jour (Ctrl + / − pendant que la page est ouverte). */
 export const refreshRow = (key) => P.rows.get(key)?.refresh(true);
 
 function page() {
   let el = $('settings');
   if (el.firstChild) return el;
-  const search = h('input', { id: 'settings-search', class: 'search', type: 'search', placeholder: 'Rechercher dans les réglages…  (Ctrl+F)', spellcheck: 'false', 'aria-label': 'Rechercher dans les réglages', 'aria-controls': 'settings-content' });
+  const search = h('input', { id: 'settings-search', class: 'search', type: 'search', placeholder: t('settings-page.rechercher_dans_reglages_ctrl'), spellcheck: 'false', 'aria-label': t('settings-page.rechercher_dans_reglages'), 'aria-controls': 'settings-content' });
   search.addEventListener('input', () => { P.query = search.value; draw(); });
   search.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); $('settings-content').querySelector(FIRST_CONTROL)?.focus(); }
     if (e.key === 'Escape' && search.value) { e.preventDefault(); e.stopPropagation(); search.value = ''; P.query = ''; draw(); }
   });
-  const nav = h('nav', { class: 'settings-nav', id: 'settings-nav', role: 'tablist', 'aria-orientation': 'vertical', 'aria-label': 'Catégories' },
-    CATEGORIES.map((c) => h('button', { class: 'cat', role: 'tab', id: 'cat-' + c.id, 'data-cat': c.id, 'aria-controls': 'settings-content', onclick: () => go(c.id) }, icon(c.icon), h('span', {}, c.label))));
+  const nav = h('nav', { class: 'settings-nav', id: 'settings-nav', role: 'tablist', 'aria-orientation': 'vertical', 'aria-label': t('settings-page.categories') },
+    CATEGORIES.map((c) => h('button', { class: 'cat', role: 'tab', id: 'cat-' + c.id, 'data-cat': c.id, 'aria-controls': 'settings-content', onclick: () => go(c.id) }, icon(c.icon), h('span', {}, catLabel(c)))));
   nav.addEventListener('keydown', (e) => {
     const i = CATEGORIES.findIndex((c) => c.id === P.cat);
     const j = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: CATEGORIES.length - 1 }[e.key];
@@ -366,9 +391,9 @@ function page() {
     if (e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); $('settings-content').querySelector(FIRST_CONTROL)?.focus(); }
   });
   el.append(
-    h('header', { class: 'settings-head' }, h('h1', {}, icon('settings'), 'Réglages'), search,
+    h('header', { class: 'settings-head' }, h('h1', {}, icon('settings'), t('settings-page.reglages')), search,
       h('span', { id: 'settings-saved', class: 'saved', role: 'status', 'aria-live': 'polite' }),
-      h('button', { class: 'icon-btn close', title: 'Fermer (Échap)', 'aria-label': 'Fermer les réglages', onclick: closeSettings }, icon('x'))),
+      h('button', { class: 'icon-btn close', title: t('settings-page.fermer_echap'), 'aria-label': t('settings-page.fermer_reglages'), onclick: closeSettings }, icon('x'))),
     h('div', { class: 'settings-body' }, nav, h('main', { id: 'settings-content', class: 'settings-content', role: 'tabpanel', tabindex: -1 })));
   el.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); search.focus(); search.select(); }
@@ -391,11 +416,11 @@ function draw() {
     b.tabIndex = b.dataset.cat === P.cat ? 0 : -1;
   }
   if (q) {
-    const hits = SETTINGS.filter((d) => shown(d) && fold([d.label, d.hint, d.keywords, d.group, catOf(d.cat).label].filter(Boolean).join(' ')).includes(q));
+    const hits = SETTINGS.filter((d) => shown(d) && fold(searchText(d)).includes(q));
     const groups = CATEGORIES.map((c) => [c, hits.filter((d) => d.cat === c.id)]).filter(([, l]) => l.length);
-    content.replaceChildren(h('div', { class: 'settings-results', 'aria-live': 'polite' }, hits.length ? `${hits.length} réglage${hits.length > 1 ? 's' : ''} trouvé${hits.length > 1 ? 's' : ''}` : `Aucun réglage ne correspond à « ${P.query.trim()} ».`),
+    content.replaceChildren(h('div', { class: 'settings-results', 'aria-live': 'polite' }, hits.length ? t('settings-page.found', { n: hits.length }) : t('settings-page.aucun_reglage_ne_correspond', { query: P.query.trim() })),
       ...groups.map(([c, list]) => h('section', { class: 'settings-section cat-' + c.id },
-        h('h2', {}, h('button', { class: 'link', onclick: () => go(c.id) }, c.label)),
+        h('h2', {}, h('button', { class: 'link', onclick: () => go(c.id) }, catLabel(c))),
         // Les blocs (fournisseurs, GPU…) : un lien vers leur catégorie, pas leur contenu en double.
         list.map((d) => (d.key ? settingRow(d, q) : linkRow(d, q))))));
     return;
@@ -405,22 +430,22 @@ function draw() {
   const out = [];
   let group = null;
   for (const d of defs) {
-    if (d.group && d.group !== group) out.push(h('h3', {}, d.group));
+    if (d.group && d.group !== group) out.push(h('h3', {}, groupLabel(d.group)));
     group = d.group ?? group;
     out.push(settingRow(d, ''));
   }
   const resettable = defs.some((d) => d.key || d.resets);
   content.replaceChildren(h('section', { class: 'settings-section cat-' + cat.id },
-    h('div', { class: 'section-head' }, h('h2', {}, cat.label),
-      resettable ? h('button', { class: 'btn reset-all', onclick: () => resetCategory(cat) }, icon('undo-2'), 'Tout réinitialiser') : null),
+    h('div', { class: 'section-head' }, h('h2', {}, catLabel(cat)),
+      resettable ? h('button', { class: 'btn reset-all', onclick: () => resetCategory(cat) }, icon('undo-2'), t('settings-page.tout_reinitialiser')) : null),
     out));
   content.scrollTop = 0;
 }
 
 function linkRow(d, q) {
   return h('div', { class: 'setting block link-row', 'data-id': d.id },
-    h('div', { class: 'setting-text' }, h('div', { class: 'setting-label' }, h('span', {}, marked(d.label, q))), h('div', { class: 'setting-hint' }, marked(d.hint ?? '', q))),
-    h('div', { class: 'setting-control' }, h('button', { class: 'btn', onclick: () => go(d.cat, d.id) }, `Ouvrir ${catOf(d.cat).label}`, icon('chevron-right'))));
+    h('div', { class: 'setting-text' }, h('div', { class: 'setting-label' }, h('span', {}, marked(label(d), q))), h('div', { class: 'setting-hint' }, marked(hint(d), q))),
+    h('div', { class: 'setting-control' }, h('button', { class: 'btn', onclick: () => go(d.cat, d.id) }, t('settings-page.ouvrir', { label: catLabel(d.cat) }), icon('chevron-right'))));
 }
 
 /** Montre une catégorie ; `id` : un réglage à faire voir (défilé jusqu'à lui, surligné, avec le focus). */
@@ -447,7 +472,7 @@ function highlight(id) {
 export async function openSettings(cat, id) {
   if (typeof cat !== 'string') cat = undefined;   // clic sur un bouton : l'événement
   const c = cat ? findCategory(cat) : null;
-  if (cat && !c) toast(`Catégorie inconnue : ${cat}. Catégories : ${CATEGORIES.map((x) => x.alias[0]).join(', ')}.`, 'warning', 6000);
+  if (cat && !c) toast(t('settings-page.categorie_inconnue_categories', { cat: cat, v1: CATEGORIES.map((x) => x.alias[0]).join(', ') }), 'warning', 6000);
   UI.closeOverlay?.();
   if (S.providers.length === 0) S.providers = await invoke('list_providers').catch(() => []);
   const el = page();
@@ -482,45 +507,45 @@ export function closeSettings() {
 async function exportSettings() {
   try {
     const path = await invoke('export_settings');
-    if (path) toast(`Réglages exportés : ${path}`, 'success', 6000);
-  } catch (e) { toast('Export impossible : ' + errText(e), 'error'); }
+    if (path) toast(t('settings-page.reglages_exportes', { path: path }), 'success', 6000);
+  } catch (e) { toast(t('settings-page.export_impossible', { error: errText(e) }), 'error'); }
 }
 
 async function importSettings() {
   let r;
-  try { r = await invoke('import_settings'); } catch (e) { return toast('Import impossible : ' + errText(e), 'error', 8000); }
+  try { r = await invoke('import_settings'); } catch (e) { return toast(t('settings-page.import_impossible', { error: errText(e) }), 'error', 8000); }
   if (r) await applyImport(r);
 }
 
 /** Montre ce que l'import change (les réglages qui touchent à la sécurité en premier), puis l'enregistre. */
 export async function applyImport({ changes, ignored = [] }) {
-  const label = (k) => SETTINGS.find((d) => d.key === k)?.label ?? k;
+  const nameOf = (k) => { const d = SETTINGS.find((x) => x.key === k); return d ? label(d) : k; };
   const show = (k, v) => {
     const d = SETTINGS.find((x) => x.key === k);
-    if (Array.isArray(v)) return v.length ? v.join(', ') : '(vide)';
-    if (d?.type === 'switch') return v ? 'activé' : 'désactivé';
+    if (Array.isArray(v)) return v.length ? v.join(', ') : t('settings-page.empty_list');
+    if (d?.type === 'switch') return v ? t('settings-page.active') : t('settings-page.desactive');
     if (d?.type === 'select') return d.options().find(([o]) => o === (d.encode ?? String)(v ?? ''))?.[1] ?? String(v ?? '—');
-    if (v === null || v === undefined) return 'par défaut';
+    if (v === null || v === undefined) return t('settings-page.par_defaut');
     return String(v);
   };
   const diff = Object.entries(changes).filter(([k, v]) => !same(S.settings[k] ?? DEFAULTS[k], v ?? DEFAULTS[k]));
-  if (!diff.length) return toast('Ces réglages sont déjà les tiens : rien ne change.', '', 4000);
+  if (!diff.length) return toast(t('settings-page.ces_reglages_sont_deja_tiens'), '', 4000);
   const sensitive = (k) => SETTINGS.find((d) => d.key === k)?.sensitive;
   diff.sort(([a], [b]) => Number(!!sensitive(b)) - Number(!!sensitive(a)));
   const rows = diff.map(([k, v]) => h('li', { class: sensitive(k) ? 'sensitive' : '' }, sensitive(k) ? icon('circle-alert') : null,
-    h('b', {}, label(k)), ` : ${show(k, S.settings[k] ?? DEFAULTS[k])} → ${show(k, v)}`));
-  const body = [h('p', {}, `${diff.length} réglage${diff.length > 1 ? 's' : ''} change${diff.length > 1 ? 'nt' : ''} :`), h('ul', { class: 'import-diff' }, rows),
-    diff.some(([k]) => sensitive(k)) ? h('p', { class: 'warn-text' }, icon('circle-alert'), 'Les réglages marqués touchent à la sécurité (commandes, fichiers protégés, claude, serveur local) : n\'importe que des fichiers de confiance.') : null,
-    ignored.length ? h('p', { class: 'hint' }, `Ignorés (pas des préférences portables) : ${ignored.join(', ')}.`) : null];
-  if (await dialog('Importer des réglages', body, [{ label: 'Annuler', value: false }, { label: 'Importer', value: true, primary: true }]) !== true) return;
+    h('b', {}, nameOf(k)), t('settings-page.change_line', { from: show(k, S.settings[k] ?? DEFAULTS[k]), to: show(k, v) })));
+  const body = [h('p', {}, t('settings-page.changes', { n: diff.length })), h('ul', { class: 'import-diff' }, rows),
+    diff.some(([k]) => sensitive(k)) ? h('p', { class: 'warn-text' }, icon('circle-alert'), t('settings-page.reglages_marques_touchent_securite_commandes')) : null,
+    ignored.length ? h('p', { class: 'hint' }, t('settings-page.ignores_pas_preferences_portables', { ignored: ignored.join(', ') })) : null];
+  if (await dialog(t('settings-page.importer_reglages'), body, [{ label: t('settings-page.annuler'), value: false }, { label: t('settings-page.importer_2'), value: true, primary: true }]) !== true) return;
   const e = await commit(Object.fromEntries(diff));
-  if (e) return toast('Import : ' + e, 'error');
-  toast(`${diff.length} réglage${diff.length > 1 ? 's' : ''} importé${diff.length > 1 ? 's' : ''}.`, 'success');
+  if (e) return toast(t('settings-page.import', { value: e }), 'error');
+  toast(t('settings-page.imported', { n: diff.length }), 'success');
   draw();
 }
 
 /** La palette Ctrl+K : chaque catégorie et chaque réglage. */
 export function paletteItems() {
-  return [...CATEGORIES.map((c) => ({ kind: 'Réglages', text: `Réglages : ${c.label}`, key: '', run: () => openSettings(c.id) })),
-    ...SETTINGS.filter((d) => d.key || d.block).map((d) => ({ kind: 'Réglage', text: `${d.label} (${catOf(d.cat).label})`, key: '', search: d.keywords, run: () => openSettings(d.cat, d.id) }))];
+  return [...CATEGORIES.map((c) => ({ kind: t('palette.kind.settings'), text: t('settings-page.reglages_2', { label: catLabel(c) }), key: '', run: () => openSettings(c.id) })),
+    ...SETTINGS.filter((d) => d.key || d.block).map((d) => ({ kind: t('palette.kind.setting'), text: t('settings-page.palette_setting', { label: label(d), cat: catLabel(d.cat) }), key: '', search: searchText(d), run: () => openSettings(d.cat, d.id) }))];
 }

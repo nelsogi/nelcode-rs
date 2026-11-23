@@ -3,13 +3,15 @@
 // demandé pour un serveur de projet, et l'arrêt des serveurs d'une conversation fermée.
 // Les textes (noms, commandes, journaux, descriptions d'outils) passent toujours par textContent, jamais par innerHTML.
 
+import { locale, num, t, tr } from './i18n.js';
 import { $, confirmDialog, dialog, errText, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { refreshContext, saveSession } from './conversation.js';
-import { openSettings } from './settings-page.js';
+import { commit, openSettings } from './settings-page.js';
 
-const STATE = { stopped: 'arrêté', starting: 'démarrage…', running: 'en marche', error: 'erreur' };
-const SCOPE = { global: 'global', project: 'projet' };
+// L'état et la portée d'un serveur, traduits à l'affichage (mcp.state.*, mcp.scope.*).
+const STATE = (s) => t('mcp.state.' + s);
+const SCOPE = (s) => t('mcp.scope.' + s);
 
 /** Les serveurs désactivés pour la conversation (clés « g:nom », « p…:nom »). */
 export const mcpOff = (s) => s?.mcpOff ?? [];
@@ -47,7 +49,7 @@ export async function refreshMcp() {
   const on = avail.filter((x) => x.on).length;
   chip.classList.toggle('on', on > 0);
   chip.replaceChildren(icon('plug'), h('span', {}, `MCP ${on}/${avail.length}`));
-  chip.title = `Serveurs MCP de cette conversation : ${on} sur ${avail.length} activé(s), ${ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tools, 0)} outil(s).\nClic : choisir les serveurs.`;
+  chip.title = t('mcp.serveurs_mcp_cette_conversation_sur', { on: on, v1: avail.length, v2: ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tools, 0) });
   if (!$('menu').hidden && $('menu').classList.contains('mcp-pop')) drawPopover();
   refreshContext();
   checkApprovals();
@@ -64,9 +66,9 @@ export function conversationServers(states) {
     c.addEventListener('change', save);
     const state = x.available && states?.[x.key];
     return h('label', { class: 'check mcp-choice' }, c, h('span', { class: 'name' }, x.name),
-      state ? h('span', { class: 'mcp-state ' + state }, STATE[state] ?? state) : null,
+      state ? h('span', { class: 'mcp-state ' + state }, STATE(state)) : null,
       h('span', { class: 'meta' },
-        x.available ? `${SCOPE[x.scope]} · ${x.tools} outil${x.tools > 1 ? 's' : ''} · ≈ ${x.tokens.toLocaleString('fr-CH')} tokens` : `${SCOPE[x.scope]} · ${x.scope === 'project' ? 'non autorisé' : 'désactivé'}`));
+        x.available ? t('mcp.scope_tools_tokens', { scope: SCOPE(x.scope), n: x.tools, tokens: num(x.tokens) }) : `${SCOPE(x.scope)} · ${x.scope === 'project' ? t('mcp.non_autorise') : t('mcp.desactive')}`));
   });
   async function save() {
     const off = boxes.map((b) => b.querySelector('input')).filter((c) => !c.checked && !c.disabled).map((c) => c.dataset.key);
@@ -92,7 +94,7 @@ export async function serversPopover() {
   if (!S.mcpCtx) return;
   menu.className = 'menu mcp-pop';
   menu.setAttribute('role', 'dialog');
-  menu.setAttribute('aria-label', 'Serveurs MCP de la conversation');
+  menu.setAttribute('aria-label', t('mcp.serveurs_mcp_conversation'));
   menu.replaceChildren();
   menu.hidden = false;
   await drawPopover();
@@ -106,11 +108,11 @@ async function drawPopover() {
   try { for (const v of (await invoke('mcp_list', { dir: dirOf() })).servers) states[v.key] = v.status?.state ?? 'stopped'; } catch { /* sans les états */ }
   if (menu.hidden || !menu.classList.contains('mcp-pop')) return;
   const focused = document.activeElement?.dataset?.key;
-  menu.replaceChildren(h('div', { class: 'pop-title' }, 'Serveurs MCP de la conversation'),
-    conversationServers(states) ?? h('p', { class: 'hint' }, 'Aucun serveur MCP pour cette conversation.'),
-    h('p', { class: 'hint' }, 'Les outils des serveurs cochés sont envoyés au modèle à chaque tour.'),
+  menu.replaceChildren(h('div', { class: 'pop-title' }, t('mcp.serveurs_mcp_conversation')),
+    conversationServers(states) ?? h('p', { class: 'hint' }, t('mcp.aucun_serveur_mcp_pour_cette')),
+    h('p', { class: 'hint' }, t('mcp.outils_serveurs_coches_sont_envoyes')),
     h('hr'),
-    h('button', { class: 'pop-link', onclick: () => { menu.hidden = true; openSettings('mcp', 'mcp-servers'); } }, icon('settings'), 'Réglages MCP…'));
+    h('button', { class: 'pop-link', onclick: () => { menu.hidden = true; openSettings('mcp', 'mcp-servers'); } }, icon('settings'), t('mcp.reglages_mcp')));
   if (focused) menu.querySelector(`input[data-key="${CSS.escape(focused)}"]`)?.focus();
   // Sous la puce, aligné sur son bord droit, sans sortir de la fenêtre.
   const r = chip.getBoundingClientRect(), m = menu.getBoundingClientRect();
@@ -125,9 +127,9 @@ const asked = new Set();   // « clé:empreinte » déjà demandés (Échap : re
 /** Ce que l'utilisateur doit voir avant d'autoriser : commande exacte, arguments, dossier (ou adresse). */
 export function launchInfo(v) {
   const rows = v.type === 'http'
-    ? [['Adresse', v.config.url], ['En-têtes', Object.keys(v.config.headers ?? {}).concat(v.config.secretHeaders ?? []).join(', ') || '(aucun)']]
-    : [['Commande', v.program ?? v.config.command], ['Arguments', (v.config.args ?? []).length ? null : '(aucun)'], ['Dossier', v.cwd ?? '?'],
-      ['Variables', Object.keys(v.config.env ?? {}).concat(v.config.secretEnv ?? []).join(', ') || '(aucune)']];
+    ? [[t('mcp.adresse'), v.config.url], [t('mcp.tetes'), Object.keys(v.config.headers ?? {}).concat(v.config.secretHeaders ?? []).join(', ') || '(aucun)']]
+    : [[t('mcp.commande'), v.program ?? v.config.command], [t('mcp.arguments'), (v.config.args ?? []).length ? null : '(aucun)'], [t('mcp.dossier'), v.cwd ?? '?'],
+      [t('mcp.variables'), Object.keys(v.config.env ?? {}).concat(v.config.secretEnv ?? []).join(', ') || '(aucune)']];
   return h('dl', { class: 'mcp-launch' }, rows.flatMap(([k, val]) => [h('dt', {}, k),
     k === 'Arguments' && val === null ? h('dd', {}, h('ol', { class: 'args' }, v.config.args.map((a) => h('li', {}, a)))) : h('dd', {}, val)]));
 }
@@ -135,7 +137,7 @@ export function launchInfo(v) {
 async function decide(v, allow) {
   try {
     await invoke('mcp_approve', { dir: dirOf(), key: v.key, hash: v.hash, allow });
-    toast(allow ? `Serveur MCP « ${v.name} » autorisé pour ce projet.` : `Serveur MCP « ${v.name} » refusé : il ne démarrera pas.`, allow ? 'success' : '', 4000);
+    toast(allow ? t('mcp.serveur_mcp_autorise_pour_ce', { name: v.name }) : t('mcp.serveur_mcp_refuse_il_ne', { name: v.name }), allow ? 'success' : '', 4000);
   } catch (e) { toast(errText(e), 'error'); }
 }
 
@@ -149,11 +151,11 @@ export async function checkApprovals() {
     const id = `${v.key}:${v.hash}`;
     if (v.scope !== 'project' || v.approval !== 'pending' || v.problem || asked.has(id) || !$('overlay').hidden) continue;
     asked.add(id);
-    const choice = await dialog('Serveur MCP du projet', [
-      h('p', {}, `Le dossier « ${dirOf()} » demande de lancer ce serveur MCP (« ${v.name} », .nelcode/mcp.json). Il ne démarre jamais sans ton accord, donné pour cette configuration précise.`),
+    const choice = await dialog(t('mcp.serveur_mcp_projet'), [
+      h('p', {}, t('mcp.dossier_demande_lancer_ce_serveur', { dirOf: dirOf(), name: v.name })),
       launchInfo(v),
-      h('p', { class: 'hint' }, 'N\'autorise que si tu connais ce projet : le programme tourne sur ton PC avec tes droits.')],
-    [{ label: 'Refuser', value: 'deny' }, { label: 'Autoriser', value: 'allow', primary: true }]);
+      h('p', { class: 'hint' }, t('mcp.autorise_que_si_tu_connais'))],
+    [{ label: t('mcp.refuser'), value: 'deny' }, { label: t('mcp.autoriser'), value: 'allow', primary: true }]);
     if (choice) { await decide(v, choice === 'allow'); refreshMcp(); }
   }
 }
@@ -168,19 +170,19 @@ export async function mcpPanel() {
   const draw = async () => {
     let list;
     try { list = await invoke('mcp_list', { dir: dirOf() }); } catch (e) { box.replaceChildren(h('p', { class: 'warn-text' }, errText(e))); return; }
-    const files = h('div', { class: 'hint' }, `Serveurs globaux : ${list.globalFile}`, list.projectFile ? h('br') : '', list.projectFile ? `Serveurs du projet : ${list.projectFile}` : '');
+    const files = h('div', { class: 'hint' }, t('mcp.serveurs_globaux', { globalFile: list.globalFile }), list.projectFile ? h('br') : '', list.projectFile ? t('mcp.serveurs_projet', { projectFile: list.projectFile }) : '');
     const actions = h('div', { class: 'row-btns' },
-      h('button', { class: 'btn', onclick: () => { form = form ? null : addForm(); draw(); } }, icon('plus'), 'Ajouter un serveur'),
-      h('button', { class: 'btn', onclick: importClaude }, icon('download'), 'Importer de Claude Desktop'),
-      h('button', { class: 'btn', onclick: importFile }, icon('file'), 'Importer un fichier…'));
-    const errors = list.errors.map((e) => h('div', { class: 'warn-text' }, `${e.scope === 'project' ? 'Projet' : 'mcp.json'}${e.name ? ` — « ${e.name} »` : ''} : ${e.error}`));
-    const cards = list.servers.length ? list.servers.map(card) : [h('p', { class: 'hint' }, 'Aucun serveur MCP. Ajoute-en un, ou importe ceux de Claude Desktop.')];
+      h('button', { class: 'btn', onclick: () => { form = form ? null : addForm(); draw(); } }, icon('plus'), t('mcp.ajouter_serveur')),
+      h('button', { class: 'btn', onclick: importClaude }, icon('download'), t('mcp.importer_claude_desktop')),
+      h('button', { class: 'btn', onclick: importFile }, icon('file'), t('mcp.importer_fichier')));
+    const errors = list.errors.map((e) => h('div', { class: 'warn-text' }, e.name ? t('mcp.config_error_named', { where: e.scope === 'project' ? t('mcp.projet') : 'mcp.json', name: e.name, error: tr(e.error) }) : t('mcp.config_error', { where: e.scope === 'project' ? t('mcp.projet') : 'mcp.json', error: tr(e.error) })));
+    const cards = list.servers.length ? list.servers.map(card) : [h('p', { class: 'hint' }, t('mcp.aucun_serveur_mcp_ajoute_importe'))];
     box.replaceChildren(files, actions, form ?? '', ...errors, ...cards,
-      h('p', { class: 'hint' }, 'Les outils des serveurs sont proposés au modèle en mode Agent (mcp__serveur__outil) ; chaque appel te demande ton accord. Pas d\'OAuth (en-têtes fixes seulement), ni ressources ni prompts MCP dans cette version.'));
+      h('p', { class: 'hint' }, t('mcp.outils_serveurs_sont_proposes_au')));
   };
 
   const run = async (what, fn) => {
-    try { await fn(); } catch (e) { toast(`${what} : ${errText(e)}`, 'error', 8000); }
+    try { await fn(); } catch (e) { toast(t('mcp.action_error', { what, error: errText(e) }), 'error', 8000); }
     draw();
   };
 
@@ -188,78 +190,87 @@ export async function mcpPanel() {
     const st = v.status ?? {};
     const state = st.state ?? 'stopped';
     const toolList = v.tools ?? [];
-    const meta = [SCOPE[v.scope], v.type, toolList.length ? `${toolList.length} outil${toolList.length > 1 ? 's' : ''} · ≈ ${v.tokens.toLocaleString('fr-CH')} tokens` : null, v.disabled ? 'désactivé' : null].filter(Boolean).join(' · ');
+    const meta = [SCOPE(v.scope), v.type, toolList.length ? t('mcp.tools_tokens', { n: toolList.length, tokens: num(v.tokens) }) : null, v.disabled ? t('mcp.desactive') : null].filter(Boolean).join(' · ');
     const what = v.type === 'http' ? v.config.url : [v.program ?? v.config.command, ...(v.config.args ?? [])].join(' ');
     const btns = h('div', { class: 'row-btns' },
-      h('button', { class: 'btn', onclick: () => run('Test', async () => {
+      h('button', { class: 'btn', onclick: () => run(t('mcp.test'), async () => {
         const r = await invoke('mcp_test', { dir: dirOf(), key: v.key });
-        toast(`« ${v.name} » répond : ${r.tools.length} outil${r.tools.length > 1 ? 's' : ''} (${r.seconds.toLocaleString('fr-CH', { maximumFractionDigits: 1 })} s).`, 'success');
-      }) }, icon('check'), 'Tester'),
-      h('button', { class: 'btn', onclick: () => run('Redémarrage', async () => { await invoke('mcp_restart', { dir: dirOf(), key: v.key, session: S.current?.id ?? null }); toast(`« ${v.name} » redémarré.`, 'success', 2500); }) }, icon('refresh-cw'), 'Redémarrer'),
-      h('button', { class: 'btn', onclick: () => { logs.has(v.key) ? logs.delete(v.key) : logs.add(v.key); draw(); } }, icon('file-text'), 'Journal'),
-      v.scope === 'global' ? h('button', { class: 'btn', onclick: () => run('Réglage', () => invoke('mcp_set_disabled', { name: v.name, disabled: !v.disabled })) }, v.disabled ? 'Activer' : 'Désactiver') : null,
+        toast(t('mcp.test_ok', { name: v.name, n: r.tools.length, seconds: num(r.seconds, { maximumFractionDigits: 1 }) }), 'success');
+      }) }, icon('check'), t('mcp.tester')),
+      h('button', { class: 'btn', onclick: () => run(t('mcp.redemarrage'), async () => { await invoke('mcp_restart', { dir: dirOf(), key: v.key, session: S.current?.id ?? null }); toast(t('mcp.redemarre', { name: v.name }), 'success', 2500); }) }, icon('refresh-cw'), t('mcp.redemarrer')),
+      h('button', { class: 'btn', onclick: () => { logs.has(v.key) ? logs.delete(v.key) : logs.add(v.key); draw(); } }, icon('file-text'), t('mcp.journal')),
+      v.scope === 'global' ? h('button', { class: 'btn', onclick: () => run(t('mcp.reglage'), () => invoke('mcp_set_disabled', { name: v.name, disabled: !v.disabled })) }, v.disabled ? t('mcp.activer') : t('mcp.desactiver')) : null,
       v.scope === 'global' ? h('button', { class: 'btn danger', onclick: async () => {
-        if (await confirmDialog('Supprimer le serveur MCP ?', `« ${v.name} » sera retiré de mcp.json, avec ses valeurs secrètes.`, 'Supprimer', true)) {
+        if (await confirmDialog(t('mcp.supprimer_serveur_mcp'), t('mcp.sera_retire_mcp_json_avec', { name: v.name }), t('mcp.supprimer'), true)) {
           try { await invoke('mcp_delete_server', { name: v.name }); } catch (e) { toast(errText(e), 'error'); }
         }
         draw();
-      } }, 'Supprimer') : null);
+      } }, t('mcp.supprimer')) : null);
     const approval = v.scope === 'project' ? h('div', { class: 'mcp-approval', 'data-approval': v.approval },
-      h('span', {}, { allow: 'Autorisé pour ce projet et cette configuration.', deny: 'Refusé : il ne démarre pas.', pending: 'En attente de ton accord : il ne démarre pas.' }[v.approval]),
-      v.approval !== 'allow' && !v.problem ? h('button', { class: 'btn primary', onclick: () => run('Accord', () => decide(v, true)) }, 'Autoriser') : null,
-      v.approval !== 'deny' && !v.problem ? h('button', { class: 'btn', onclick: () => run('Accord', () => decide(v, false)) }, 'Refuser') : null) : null;
+      h('span', {}, { allow: t('mcp.autorise_pour_ce_projet_cette'), deny: t('mcp.refuse_il_ne_demarre_pas'), pending: t('mcp.attente_ton_accord_il_ne') }[v.approval]),
+      v.approval !== 'allow' && !v.problem ? h('button', { class: 'btn primary', onclick: () => run(t('mcp.accord'), () => decide(v, true)) }, t('mcp.autoriser')) : null,
+      v.approval !== 'deny' && !v.problem ? h('button', { class: 'btn', onclick: () => run(t('mcp.accord'), () => decide(v, false)) }, t('mcp.refuser')) : null) : null;
     const secrets = (v.secrets ?? []).map((x) => {
-      const input = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: x.set ? 'valeur enregistrée (vide : inchangée)' : 'valeur manquante' });
-      return h('div', { class: 'row-btns mcp-secret' }, h('span', { class: 'name' }, `${x.kind === 'env' ? 'Variable' : 'En-tête'} ${x.name}`), input,
-        h('button', { class: 'btn', onclick: () => input.value && run('Valeur secrète', async () => { await invoke('mcp_set_secret', { dir: dirOf(), key: v.key, kind: x.kind, name: x.name, value: input.value }); toast('Valeur rangée dans le Gestionnaire d\'identification.', 'success', 3000); }) }, 'Ranger'));
+      const input = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: x.set ? t('mcp.valeur_enregistree_vide_inchangee') : 'valeur manquante' });
+      return h('div', { class: 'row-btns mcp-secret' }, h('span', { class: 'name' }, `${x.kind === 'env' ? t('mcp.variable') : t('mcp.tete')} ${x.name}`), input,
+        h('button', { class: 'btn', onclick: () => input.value && run(t('mcp.valeur_secrete'), async () => { await invoke('mcp_set_secret', { dir: dirOf(), key: v.key, kind: x.kind, name: x.name, value: input.value }); toast(t('mcp.valeur_rangee_dans_gestionnaire_identification'), 'success', 3000); }) }, t('mcp.ranger')));
     });
     const tools = toolList.length ? h('details', { class: 'mcp-tools', open: shown.has(v.key), ontoggle: (e) => (e.target.open ? shown.add(v.key) : shown.delete(v.key)) },
-      h('summary', {}, `Outils (${toolList.length})`), h('ul', {}, toolList.map((t) => h('li', {}, h('code', {}, t.name), t.description ? ` — ${t.description}` : '')))) : null;
+      h('summary', {}, t('mcp.outils', { v0: toolList.length })), h('ul', {}, toolList.map((tx) => h('li', {}, h('code', {}, tx.name), tx.description ? ` — ${tx.description}` : '')))) : null;
     const log = logs.has(v.key) ? h('pre', { class: 'mcp-log' }, '…') : null;
-    if (log) invoke('mcp_log', { key: v.key }).then((t) => (log.textContent = t || '(journal vide)')).catch((e) => (log.textContent = errText(e)));
-    const error = st.error || v.problem;
+    if (log) invoke('mcp_log', { key: v.key }).then((tx) => (log.textContent = tx || '(journal vide)')).catch((e) => (log.textContent = errText(e)));
+    // Activé par défaut dans les nouvelles conversations (sinon : ajouté à leur mcpOff à la création).
+    const byDefault = h('input', { type: 'checkbox', class: 'mcp-default', checked: !(S.settings.mcpDefaultOff ?? []).includes(v.key), 'data-key': v.key });
+    byDefault.addEventListener('change', async () => {
+      const off = new Set(S.settings.mcpDefaultOff ?? []);
+      byDefault.checked ? off.delete(v.key) : off.add(v.key);
+      const e = await commit({ mcpDefaultOff: [...off] });
+      if (e) toast(e, 'error');
+    });
+    const defaultRow = h('label', { class: 'check mcp-default-row' }, byDefault, t('mcp.active_par_defaut_dans_nouvelles'));
+    const error = tr(st.error || v.problem);
     return h('div', { class: 'mcp-server', 'data-key': v.key, 'data-state': state },
-      h('div', { class: 'row' }, icon('plug'), h('strong', {}, v.name), h('span', { class: 'meta' }, meta), h('span', { class: 'mcp-state ' + state }, STATE[state] ?? state)),
-      h('div', { class: 'mcp-what' }, what), v.type === 'stdio' && v.cwd ? h('div', { class: 'hint' }, `Dossier : ${v.cwd}`) : null,
-      error ? h('div', { class: 'warn-text' }, error) : null, approval, ...secrets, btns, tools, log);
+      h('div', { class: 'row' }, icon('plug'), h('strong', {}, v.name), h('span', { class: 'meta' }, meta), h('span', { class: 'mcp-state ' + state }, STATE(state))),
+      h('div', { class: 'mcp-what' }, what), v.type === 'stdio' && v.cwd ? h('div', { class: 'hint' }, t('mcp.dossier_2', { cwd: v.cwd })) : null,
+      error ? h('div', { class: 'warn-text' }, error) : null, approval, ...secrets, defaultRow, btns, tools, log);
   }
 
   function addForm() {
-    const name = h('input', { class: 'text-input', placeholder: 'nom (lettres, chiffres, - et _)', spellcheck: 'false' });
-    const type = h('select', { class: 'text-input' }, h('option', { value: 'stdio' }, 'stdio (un programme lancé par Nel Code)'), h('option', { value: 'http' }, 'Streamable HTTP (une adresse)'));
-    const command = h('input', { class: 'text-input', placeholder: 'commande, par exemple npx ou C:\\outils\\serveur.exe', spellcheck: 'false' });
-    const args = h('textarea', { class: 'text-input', rows: 3, spellcheck: 'false', placeholder: 'un argument par ligne\n-y\n@modelcontextprotocol/server-filesystem' });
-    const cwd = h('input', { class: 'text-input', placeholder: 'dossier (chemin complet ; vide : ton dossier personnel)', spellcheck: 'false' });
-    const url = h('input', { class: 'text-input', placeholder: 'https://exemple.org/mcp', spellcheck: 'false' });
-    const env = h('textarea', { class: 'text-input', rows: 2, spellcheck: 'false', placeholder: 'NOM=valeur (une par ligne)' });
-    const headers = h('textarea', { class: 'text-input', rows: 2, spellcheck: 'false', placeholder: 'Authorization: Bearer … (un par ligne)' });
-    const stdio = h('div', { class: 'mcp-stdio' }, command, args, cwd, h('div', { class: 'hint' }, 'Variables d\'environnement (secrètes) :'), env);
-    const http = h('div', { class: 'mcp-http', hidden: true }, url, h('div', { class: 'hint' }, 'En-têtes (secrets, pas d\'OAuth) :'), headers);
+    const name = h('input', { class: 'text-input', placeholder: t('mcp.nom_lettres_chiffres'), spellcheck: 'false' });
+    const type = h('select', { class: 'text-input' }, h('option', { value: 'stdio' }, t('mcp.stdio_programme_lance_par_nel')), h('option', { value: 'http' }, t('mcp.streamable_http_adresse')));
+    const command = h('input', { class: 'text-input', placeholder: t('mcp.commande_par_exemple_npx_outils'), spellcheck: 'false' });
+    const args = h('textarea', { class: 'text-input', rows: 3, spellcheck: 'false', placeholder: t('mcp.argument_par_ligne_modelcontextprotocol_server') });
+    const cwd = h('input', { class: 'text-input', placeholder: t('mcp.dossier_chemin_complet_vide_ton'), spellcheck: 'false' });
+    const url = h('input', { class: 'text-input', placeholder: t('mcp.https_exemple_org_mcp'), spellcheck: 'false' });
+    const env = h('textarea', { class: 'text-input', rows: 2, spellcheck: 'false', placeholder: t('mcp.nom_valeur_par_ligne') });
+    const headers = h('textarea', { class: 'text-input', rows: 2, spellcheck: 'false', placeholder: t('mcp.authorization_bearer_par_ligne') });
+    const stdio = h('div', { class: 'mcp-stdio' }, command, args, cwd, h('div', { class: 'hint' }, t('mcp.variables_environnement_secretes')), env);
+    const http = h('div', { class: 'mcp-http', hidden: true }, url, h('div', { class: 'hint' }, t('mcp.tetes_secrets_pas_oauth')), headers);
     type.addEventListener('change', () => { stdio.hidden = type.value !== 'stdio'; http.hidden = type.value !== 'http'; });
     const pairs = (text, sep) => Object.fromEntries(text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const i = l.indexOf(sep); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : [l, '']; }));
-    const add = () => run('Ajout', async () => {
+    const add = () => run(t('mcp.ajout'), async () => {
       const def = type.value === 'http' ? { type: 'http', url: url.value.trim() }
         : { command: command.value.trim(), args: args.value.split('\n').map((l) => l.trim()).filter(Boolean), ...(cwd.value.trim() ? { cwd: cwd.value.trim() } : {}) };
       const secrets = type.value === 'http' ? { headers: pairs(headers.value, ':') } : { env: pairs(env.value, '=') };
       await invoke('mcp_add_server', { name: name.value.trim(), def, secrets });
       form = null;
-      toast(`Serveur « ${name.value.trim()} » ajouté (valeurs secrètes dans le ${S.info.keystore}).`, 'success');
+      toast(t('mcp.serveur_ajoute_valeurs_secretes_dans', { v0: name.value.trim(), keystore: S.info.keystore }), 'success');
     });
-    return h('div', { class: 'mcp-form' }, name, type, stdio, http, h('div', { class: 'hint' }, `Les valeurs des variables et des en-têtes vont dans le ${S.info.keystore}, jamais dans mcp.json.`),
-      h('div', { class: 'row-btns' }, h('button', { class: 'btn primary', onclick: add }, 'Ajouter'), h('button', { class: 'btn', onclick: () => { form = null; draw(); } }, 'Annuler')));
+    return h('div', { class: 'mcp-form' }, name, type, stdio, http, h('div', { class: 'hint' }, t('mcp.valeurs_variables_tetes_vont_dans', { keystore: S.info.keystore })),
+      h('div', { class: 'row-btns' }, h('button', { class: 'btn primary', onclick: add }, t('mcp.ajouter')), h('button', { class: 'btn', onclick: () => { form = null; draw(); } }, t('mcp.annuler'))));
   }
 
   const report = (r) => {
-    const ok = r.imported.map((x) => x.warning ? `${x.name} (attention : ${x.warning})` : x.name);
-    const bad = r.rejected.map((x) => `${x.name} : ${x.error}`);
-    toast([ok.length ? `Importé${ok.length > 1 ? 's' : ''} : ${ok.join(', ')}.` : 'Aucun serveur importé.', ...bad.map((b) => h('div', { class: 'line' }, `Refusé — ${b}`))], bad.length ? 'warning' : 'success', 10000);
+    const ok = r.imported.map((x) => x.warning ? t('mcp.import_warning', { name: x.name, warning: tr(x.warning) }) : x.name);
+    const bad = r.rejected.map((x) => t('mcp.import_rejected', { name: x.name, error: tr(x.error) }));
+    toast([ok.length ? t('mcp.imported', { n: ok.length, list: ok.join(', ') }) : t('mcp.aucun_serveur_importe'), ...bad.map((b) => h('div', { class: 'line' }, t('mcp.refuse', { b: b })))], bad.length ? 'warning' : 'success', 10000);
   };
-  const importClaude = () => run('Import', async () => {
+  const importClaude = () => run(t('mcp.import'), async () => {
     const path = await invoke('mcp_claude_desktop');
-    if (!path) return toast('Configuration de Claude Desktop introuvable (%APPDATA%\\Claude\\claude_desktop_config.json).', 'warning');
+    if (!path) return toast(t('mcp.configuration_claude_desktop_introuvable_appdata'), 'warning');
     report(await invoke('mcp_import', { path }));
   });
-  const importFile = () => run('Import', async () => {
+  const importFile = () => run(t('mcp.import'), async () => {
     const path = await invoke('pick_mcp_config');
     if (path) report(await invoke('mcp_import', { path }));
   });

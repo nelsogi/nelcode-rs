@@ -6,6 +6,7 @@
 // conversation ; un message garde seulement { file, name, width, height, tokens } dans `images`. L'affichage passe par
 // des data URL (la CSP n'accepte que self et data: pour les images).
 
+import { locale, t } from './i18n.js';
 import { $, dialog, errText, h, invoke, toast } from './util.js';
 import { S } from './state.js';
 import { refreshContext, summaryOf } from './conversation.js';
@@ -24,13 +25,13 @@ export const isImagePath = (p) => IMAGE_EXT.test(p);
 
 // Le modèle actif voit-il les images ? { ok, why } : why explique le bouton désactivé.
 export function vision(s = S.current) {
-  if (s?.claudeAgent) return { ok: false, why: 'Claude Agent ne reçoit pas les images de Nel Code : seulement du texte.' };
-  if (s?.compare) return { ok: false, why: 'Pas d\'images dans une conversation comparée.' };
-  if (!S.model.name) return { ok: false, why: 'Aucun modèle chargé.' };
-  if (!S.model.remote) return { ok: false, why: 'Les .nelmodel et les modèles GGUF de ce PC ne voient pas les images : choisis un modèle distant qui les voit (Claude, Ollama avec un modèle de vision…).' };
+  if (s?.claudeAgent) return { ok: false, why: t('images.claude_agent_ne_recoit_pas') };
+  if (s?.compare) return { ok: false, why: t('images.pas_images_dans_conversation_comparee') };
+  if (!S.model.name) return { ok: false, why: t('images.aucun_modele_charge') };
+  if (!S.model.remote) return { ok: false, why: t('images.nelmodel_modeles_gguf_ce_pc') };
   if (S.model.vision === true) return { ok: true, why: '' };
-  if (S.model.vision === false) return { ok: false, why: `« ${S.model.name} » ne voit pas les images (${S.model.visionManual === false ? 'réglage manuel' : 'détecté auprès du serveur'}). Pour changer : Réglages → Fournisseurs → Images.` };
-  return { ok: false, why: `Nel Code ne sait pas si « ${S.model.name} » voit les images (le serveur ne le dit pas). S'il les voit : Réglages → Fournisseurs → Images → « Voit les images ».` };
+  if (S.model.vision === false) return { ok: false, why: t('images.ne_voit_pas_images_pour', { name: S.model.name, v1: S.model.visionManual === false ? t('images.reglage_manuel') : t('images.detecte_aupres_serveur') }) };
+  return { ok: false, why: t('images.nel_code_ne_sait_pas', { name: S.model.name }) };
 }
 
 // Ce que le serveur dit du modèle distant actif (détection gardée dans les réglages ; `again` : la refaire).
@@ -47,7 +48,7 @@ export async function refreshVision(again = false) {
   renderAttach();
 }
 
-const tokensText = (n) => `≈ ${Number(n ?? 0).toLocaleString('fr-CH')} tokens (estimation)`;
+const tokensText = (n) => `≈ ${Number(n ?? 0).toLocaleString(locale())} tokens (estimation)`;
 const about = (img) => `${img.name} · ${img.width} × ${img.height} · ${tokensText(img.tokens)}`;
 
 async function dataUrl(session, file) {
@@ -60,13 +61,13 @@ async function dataUrl(session, file) {
 export function thumb(session, img, extra = null) {
   const pic = h('img', { alt: img.name, draggable: 'false' });
   dataUrl(session, img.file).then((u) => { if (u) pic.src = u; else pic.replaceWith(h('span', { class: 'missing' }, 'image introuvable')); });
-  return h('div', { class: 'thumb', title: about(img) }, h('button', { class: 'thumb-open', title: 'Agrandir', 'aria-label': 'Agrandir ' + img.name, onclick: () => enlarge(session, img) }, pic), extra);
+  return h('div', { class: 'thumb', title: about(img) }, h('button', { class: 'thumb-open', title: t('images.agrandir'), 'aria-label': t('images.agrandir_2', { value: img.name }), onclick: () => enlarge(session, img) }, pic), extra);
 }
 
 export async function enlarge(session, img) {
   const u = await dataUrl(session, img.file);
-  if (!u) return toast('Image introuvable : ' + img.name, 'warning');
-  const done = dialog(img.name, [h('img', { class: 'image-large', src: u, alt: img.name }), h('div', { class: 'hint' }, `${img.width} × ${img.height} px · ${tokensText(img.tokens)}`)], [{ label: 'Fermer', value: null, primary: true }]);
+  if (!u) return toast(t('images.image_introuvable', { value: img.name }), 'warning');
+  const done = dialog(img.name, [h('img', { class: 'image-large', src: u, alt: img.name }), h('div', { class: 'hint' }, t('images.px', { width: img.width, height: img.height, tokensText: tokensText(img.tokens) }))], [{ label: t('images.fermer'), value: null, primary: true }]);
   $('overlay').querySelector('.dialog')?.classList.add('image-dialog');
   return done;
 }
@@ -83,11 +84,11 @@ export function renderAttach() {
   if (!s || !box) return;
   const list = pendingOf(s);
   box.hidden = !list.length;
-  box.replaceChildren(...list.map((img) => thumb(s.id, img, h('button', { class: 'thumb-remove', title: 'Retirer l\'image', 'aria-label': 'Retirer ' + img.name, onclick: () => remove(s, img) }, icon('x')))));
+  box.replaceChildren(...list.map((img) => thumb(s.id, img, h('button', { class: 'thumb-remove', title: t('images.retirer_image'), 'aria-label': t('images.retirer', { value: img.name }), onclick: () => remove(s, img) }, icon('x')))));
   const v = vision(s);
   btn.classList.toggle('off', !v.ok);
   btn.setAttribute('aria-disabled', String(!v.ok));
-  btn.title = v.ok ? `Ajouter une image (${MAX_IMAGES} au plus par message ; aussi Ctrl+V ou glisser-déposer)` : v.why;
+  btn.title = v.ok ? t('images.ajouter_image_au_plus_par', { MAX_IMAGES: MAX_IMAGES }) : v.why;
 }
 
 async function remove(s, img) {
@@ -102,13 +103,13 @@ async function add(makers) {
   const s = S.current, v = vision(s);
   if (!v.ok) return toast(v.why, 'warning', 8000);
   const room = MAX_IMAGES - pendingOf(s).length;
-  if (makers.length > room) toast(`${MAX_IMAGES} images au plus par message${room > 0 ? ` : seulement ${room} ajoutée${room > 1 ? 's' : ''}` : ''}.`, 'warning');
+  if (makers.length > room) toast(room > 0 ? t('images.max_some_added', { max: MAX_IMAGES, n: room }) : t('images.max_none_added', { max: MAX_IMAGES }), 'warning');
   for (const make of makers.slice(0, Math.max(0, room))) {
     try {
       const img = await make();
       pending.set(s.id, [...pendingOf(s), img]);
       renderAttach();
-    } catch (e) { toast('Image : ' + errText(e), 'error', 8000); }
+    } catch (e) { toast(t('images.image', { error: errText(e) }), 'error', 8000); }
   }
   refreshContext();
 }
@@ -119,7 +120,7 @@ export function addFiles(files) {
   if (!imgs.length) return false;
   add(imgs.map((f) => () => new Promise((resolve, reject) => {
     const r = new FileReader();
-    r.onload = () => invoke('image_prepare_data', { session: S.current.id, data: r.result, name: f.name || 'image collée' }).then(resolve, reject);
+    r.onload = () => invoke('image_prepare_data', { session: S.current.id, data: r.result, name: f.name || t('images.image_collee') }).then(resolve, reject);
     r.onerror = () => reject(new Error('image illisible'));
     r.readAsDataURL(f);
   })));
@@ -167,7 +168,7 @@ export function imagesOf(s, end = s.messages.length) {
 export function attached(s, end, message) {
   const history = imagesOf(s, end);
   const files = (message ?? []).map((x) => x.file);
-  if (!files.length && !history.some((t) => t.length)) return null;
+  if (!files.length && !history.some((tx) => tx.length)) return null;
   return { session: s.id, history, message: files };
 }
 

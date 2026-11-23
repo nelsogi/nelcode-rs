@@ -11,7 +11,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { launch, sleep } from './harness.mjs';
+import { fr, launch, sleep } from './harness.mjs';
 
 let server, A, DIR, OUT, PROVIDER;
 const chats = [];   // les requêtes de chat reçues
@@ -193,7 +193,7 @@ test('lecture : list_files, read_file, search, suivi en direct, détail dépliab
   const m = await lastMsg();
   assert.equal(m.content, 'Program.cs crée un Player.');
   assert.equal(m.reasoning, 'Je réfléchis à la demande.');
-  const titles = m.agent.steps.map((s) => s.title);
+  const titles = m.agent.steps.map((s) => fr(s.title));
   assert.deepEqual(titles, ['Je regarde le dossier.', 'Liste du dossier de travail — 4 fichiers', 'Lecture de src/Program.cs', 'Recherche de "Player" — 4 résultats']);
   assert.ok(m.agent.steps.every((s) => s.status === 'done'));
   // Ce que le modèle a reçu : les fichiers (sans la jonction), le contenu numéroté, les lignes trouvées.
@@ -219,7 +219,7 @@ test('bac à sable : .., chemin absolu, lien qui sort, fichier trop gros — ref
   await start('bac-a-sable', 'Lis tout');
   await finish();
   const m = await lastMsg();
-  const errors = m.agent.steps.map((s) => [s.kind, s.status, s.detail]);
+  const errors = m.agent.steps.map((s) => [s.kind, s.status, fr(s.detail)]);
   assert.ok(errors.every(([, st]) => st === 'error'), JSON.stringify(errors));
   const results = toolResults();
   assert.match(results[0], /« \.\. » est refusé/);
@@ -399,7 +399,7 @@ test('read_file d\'un fichier protégé : confirmation explicite, Refuser ou Aut
   await finish();
   const m = await lastMsg();
   assert.deepEqual(m.agent.steps.map((s) => [s.path, s.status]), [['.env', 'rejected'], ['certs/server.pem', 'done'], ['.git/config', 'rejected'], ['notes.secret', 'rejected']]);
-  assert.match(m.agent.steps[1].title, /autorisée$/);
+  assert.match(fr(m.agent.steps[1].title), /autorisée$/);
   const results = toolResults();
   assert.match(results[0], /refusé par l'utilisateur : « \.env » est un fichier protégé, il n'a pas été lu/);
   assert.match(results[1], /BEGIN PRIVATE KEY/);
@@ -462,7 +462,7 @@ test('search ne parcourt jamais les fichiers protégés sans confirmation', asyn
   await finish();
   let r = toolResults()[0];
   assert.equal(r, 'src/app.cs:1: // motdepasse : variable ordinaire\n(4 fichiers protégés non parcourus : refusé par l\'utilisateur)');
-  assert.match((await lastMsg()).agent.steps[0].title, /— 1 résultat \(4 fichiers protégés non parcourus : refusé par l'utilisateur\)$/);
+  assert.match(fr((await lastMsg()).agent.steps[0].title), /— 1 résultat \(4 fichiers protégés non parcourus : refusé par l'utilisateur\)$/);
   // Accepté : les fichiers protégés sont parcourus ; .env et .git/ restent hors de la recherche (cachés).
   await start('recherche-protegee', 'Cherche encore');
   await decide(0, 'Parcourir aussi ces fichiers');
@@ -534,7 +534,7 @@ test('NELCODE.md : le bouton crée un modèle, jamais par-dessus un fichier exis
   const created = fs.readFileSync(path.join(DIR, 'NELCODE.md'), 'utf8');
   assert.match(created, /^# Instructions pour l'agent de Nel Code/);
   fs.writeFileSync(path.join(DIR, 'NELCODE.md'), 'à moi');
-  assert.match(await A.ev(`window.__TAURI__.core.invoke('create_nelcode_md', { dir: S.current.workingDirectory, text: 'autre' }).catch((e) => String(e))`), /existe déjà/);
+  assert.match(await A.ev(`window.__TAURI__.core.invoke('create_nelcode_md', { dir: S.current.workingDirectory, text: 'autre' }).catch((e) => I18N.tr(String(e)))`), /existe déjà/);
   assert.equal(fs.readFileSync(path.join(DIR, 'NELCODE.md'), 'utf8'), 'à moi');
   fs.rmSync(path.join(DIR, 'NELCODE.md'));
   await A.ev(`renderHeader(); true`);
@@ -604,7 +604,7 @@ test('run_command : Lancer, sortie en direct, dossier de travail ; Refuser ne la
   await finish();
   const m = await lastMsg();
   assert.deepEqual(m.agent.steps.map((s) => s.status), ['done', 'done']);
-  assert.match(m.agent.steps[0].title, /— code de sortie 0$/);
+  assert.match(fr(m.agent.steps[0].title), /— code de sortie 0$/);
   assert.match(toolResults()[0], /code de sortie 0\n--- sortie ---\nligne0\nligne1\nligne2\nligne3\nligne4/);
   assert.equal(fs.realpathSync.native(fs.readFileSync(path.join(DIR, 'marqueur.txt'), 'utf8')), fs.realpathSync.native(DIR), 'lancée dans le dossier de travail');
   fs.rmSync(path.join(DIR, 'marqueur.txt'));
@@ -689,7 +689,7 @@ test('fournisseur Claude : modèle prérempli, en-têtes Anthropic, sans tempera
   assert.equal(await A.ev(`${form}.querySelector('.http').hidden`), true, 'https : pas d\'avertissement');
   // Pour le test, le faux serveur à la place de l'API d'Anthropic (le type « anthropic » reste).
   await A.ev(`T.setValue(${form}.querySelector('.url'), 'http://127.0.0.1:${server.address().port}/v1'); T.setValue(${form}.querySelector('.key'), 'sk-ant-faux'); T.button('Tester', ${form})`);
-  await A.waitFor(`${form}.querySelector('.status').textContent.includes('modèle(s)')`, 10_000, 'modèles de Claude');
+  await A.waitFor(`${form}.querySelector('.status').textContent.includes('modèles')`, 10_000, 'modèles de Claude');
   const models = modelRequests.at(-1);
   assert.equal(models.url, '/v1/models?limit=1000');
   assert.deepEqual([models.headers['x-api-key'], models.headers['anthropic-version'], models.headers.authorization], ['sk-ant-faux', '2023-06-01', 'Bearer sk-ant-faux']);

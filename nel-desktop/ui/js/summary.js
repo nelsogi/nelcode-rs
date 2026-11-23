@@ -5,6 +5,7 @@
 // remplace, pour le modèle seulement, les messages avant l'indice upTo : ils restent dans la conversation (grisés).
 // Pas pour les .nelmodel (contexte trop petit), ni pour Claude Agent (qui gère son propre contexte).
 
+import { t, trFr } from './i18n.js';
 import { h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { historyOf, startGen, summaryOf } from './conversation.js';
@@ -12,6 +13,8 @@ import { drawMarkdown } from './markdown.js';
 import { imageLines, imageTokens, vision } from './images.js';
 
 export const KEEP_TURNS = 4;
+// Ce qui part au modèle (consigne, transcription) n'est pas l'interface : pas traduit (« dans la langue des échanges »).
+// i18n-ignore-start
 const PROMPT = 'Résume les échanges ci-dessous pour qu\'une conversation puisse continuer sans eux. Garde : les décisions prises, les fichiers modifiés, le plan en cours et les erreurs non résolues. Écris seulement le résumé (une liste courte, sans introduction), dans la langue des échanges.';
 
 // Le modèle actif peut-il résumer ? Un modèle distant (Claude compris) ou un GGUF.
@@ -26,18 +29,20 @@ const range = (s) => {
   return to - from >= 2 ? { from, to } : null;
 };
 
-const clip = (t, n) => (t.length > n ? t.slice(0, n) + '…' : t);
-const lines = (t) => (t ? t.split('\n').length : 0);
+// i18n-ignore-end
+const clip = (tx, n) => (tx.length > n ? tx.slice(0, n) + '…' : tx);
+const lines = (tx) => (tx ? tx.split('\n').length : 0);
 
+// i18n-ignore-start
 // L'étape d'un agent en une ligne (« fichier lu : src/Player.cs, 120 lignes ») : le contenu des fichiers et les sorties
 // de commandes n'entrent pas dans le résumé.
 export function stepLine(st) {
   switch (st.kind) {
     case 'read': return st.status === 'done' ? `fichier lu : ${st.path}, ${lines(st.detail)} lignes` : `lecture refusée : ${st.path}`;
     case 'write': case 'edit': return `${st.kind === 'write' ? 'fichier créé' : 'fichier modifié'} : ${st.path} (${{ accepted: 'accepté', undone: 'annulé' }[st.status] ?? 'refusé'})`;
-    case 'command': return `commande : ${clip(st.command ?? st.title, 120)} (${st.status})`;
-    case 'error': return `erreur : ${clip(st.title, 80)} — ${clip((st.detail ?? '').replace(/\s+/g, ' '), 120)}`;
-    case 'list': case 'search': return st.title;
+    case 'command': return `commande : ${clip(st.command ?? trFr(st.title), 120)} (${st.status})`;
+    case 'error': return `erreur : ${clip(trFr(st.title), 80)} — ${clip(trFr(st.detail ?? '').replace(/\s+/g, ' '), 120)}`;
+    case 'list': case 'search': return trFr(st.title);
     default: return null;   // notes et plan : le plan est repris à part
   }
 }
@@ -54,9 +59,10 @@ function transcript(s, { from, to }) {
     const steps = (m.agent?.steps ?? []).map(stepLine).filter(Boolean).slice(0, 30);
     parts.push('Assistant : ' + steps.map((l) => `[${l}]\n`).join('') + clip(m.content, 3000));
   }
-  if (s.plan?.tasks?.length) parts.push('Plan en cours :\n' + s.plan.tasks.map((t) => `- ${t.title} (${t.status})`).join('\n'));
+  if (s.plan?.tasks?.length) parts.push('Plan en cours :\n' + s.plan.tasks.map((tx) => `- ${tx.title} (${tx.status})`).join('\n'));
   return parts.join('\n\n');
 }
+// i18n-ignore-end
 
 // Les tokens du prochain envoi (réserve de la réponse comprise) et la taille du contexte (null si inconnue).
 async function usage(s, text) {
@@ -72,8 +78,8 @@ export async function summarize(s, { instruction = '', size } = {}) {
   if (!r) return 'nothing';
   let text = transcript(s, r);
   const max = Math.floor((size || 8192) * 4 * 0.6);   // le texte à résumer doit tenir dans le contexte, avec la place du résumé
-  if (text.length > max) text = '(début omis)\n' + text.slice(-max);
-  const question = `${PROMPT}${instruction.trim() ? `\nConsigne de l'utilisateur : ${instruction.trim()}` : ''}\n\n---\n${text}`;
+  if (text.length > max) text = '(début omis)\n' + text.slice(-max);   // i18n-ignore
+  const question = `${PROMPT}${instruction.trim() ? `\nConsigne de l'utilisateur : ${instruction.trim()}` : ''}\n\n---\n${text}`;   // i18n-ignore
   return new Promise((resolve) => { startGen(s, { kind: 'summary', question, history: [], upTo: r.to, resolve }).then((ok) => ok || resolve('error')); });
 }
 
@@ -87,7 +93,7 @@ export async function autoSummarize(s, text) {
     try { u = await usage(s, text); } catch { return true; }   // modèle en cours de changement
     if (!u.size || u.used * 100 < u.size * percent) return true;
     const result = await summarize(s, { size: u.size });
-    if (result === 'ok') toast('Anciens échanges résumés pour garder le contexte.', '', 3500);
+    if (result === 'ok') toast(t('summary.anciens_echanges_resumes_pour_garder'), '', 3500);
     return result !== 'stopped';
   } finally { UI.preparing = false; }
 }
@@ -95,19 +101,19 @@ export async function autoSummarize(s, text) {
 // /compact [consigne] : résumer à la main.
 export async function compactNow(instruction = '') {
   const s = S.current;
-  if (s.claudeAgent) return toast('Claude Agent gère lui-même son contexte.', 'warning');
-  if (s.compare) return toast('Pas de résumé dans une conversation comparée.', 'warning');
-  if (!S.model.name) return toast('Aucun modèle chargé : le résumé est écrit par le modèle actif.', 'warning');
-  if (!summarizable(s)) return toast('Pas de résumé avec un .nelmodel : son contexte est trop petit.', 'warning');
-  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  if (s.claudeAgent) return toast(t('summary.claude_agent_gere_lui_meme'), 'warning');
+  if (s.compare) return toast(t('summary.pas_resume_dans_conversation_comparee'), 'warning');
+  if (!S.model.name) return toast(t('summary.aucun_modele_charge_resume_est'), 'warning');
+  if (!summarizable(s)) return toast(t('summary.pas_resume_avec_nelmodel_son'), 'warning');
+  if (S.gen) return toast(t('summary.attends_fin_reponse_stop'), 'warning');
   const result = await summarize(s, { instruction, size: S.context?.blockSize ?? S.model.blockSize });
-  if (result === 'nothing') toast(`Rien à résumer : les ${KEEP_TURNS} derniers échanges restent toujours tels quels.`, 'warning');
-  else if (result === 'ok') toast('Échanges précédents résumés.', 'success');
+  if (result === 'nothing') toast(t('summary.rien_resumer_derniers_echanges_restent', { KEEP_TURNS: KEEP_TURNS }), 'warning');
+  else if (result === 'ok') toast(t('summary.echanges_precedents_resumes'), 'success');
 }
 
 // Le bloc repliable, à la place des messages résumés.
 export function summaryEl(sm) {
   const text = h('div', { class: 'think' });
   drawMarkdown(text, sm.text);
-  return h('details', { class: 'reasoning summary-block' }, h('summary', {}, icon('chevron-right'), 'Résumé des échanges précédents'), text);
+  return h('details', { class: 'reasoning summary-block' }, h('summary', {}, icon('chevron-right'), t('summary.resume_echanges_precedents')), text);
 }

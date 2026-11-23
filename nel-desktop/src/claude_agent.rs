@@ -16,6 +16,7 @@
 //! - Stop : Ctrl+C sur la console du processus sous Windows, SIGINT à son groupe ailleurs, puis attente de sa fin
 //!   propre ; au-delà de 15 s, le processus et ses enfants sont tués (Job Object, groupe de processus).
 
+use crate::t;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -146,7 +147,7 @@ fn clip(s: &str) -> String {
     while !s.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}\n… ({} octets de plus)", &s[..end], s.len() - end)
+    format!("{}\n{}", &s[..end], t!("rs.step.more_bytes", n = s.len() - end))
 }
 
 fn short(s: &str, n: usize) -> String {
@@ -256,10 +257,10 @@ impl<'a> Translator<'a> {
         let path = input["file_path"].as_str().or(input["notebook_path"].as_str()).or(input["path"].as_str()).map(|p| self.rel(p));
         let p = path.clone().unwrap_or_default();
         let step = match name {
-            "Read" => json!({ "kind": "read", "title": format!("Lecture de {p}"), "path": p }),
+            "Read" => json!({ "kind": "read", "title": t!("rs.step.read", path = p), "path": p }),
             "Write" => {
                 let (d, a, _) = diff_json(diff("", input["content"].as_str().unwrap_or_default()));
-                json!({ "kind": "write", "title": format!("Écriture de {p} (+{a})"), "path": p, "diff": d })
+                json!({ "kind": "write", "title": t!("rs.claude.write", path = p, added = a), "path": p, "diff": d })
             }
             "Edit" | "MultiEdit" => {
                 let edits: Vec<(&str, &str)> = match input["edits"].as_array() {
@@ -269,22 +270,22 @@ impl<'a> Translator<'a> {
                 let mut lines = Vec::new();
                 for (k, (old, new)) in edits.iter().enumerate() {
                     if k > 0 {
-                        lines.push(('…', "modification suivante".to_string()));
+                        lines.push(('…', t!("rs.claude.next_edit")));
                     }
                     lines.extend(diff(old, new));
                 }
                 let (d, a, r) = diff_json(lines);
-                json!({ "kind": "edit", "title": format!("Modification de {p} (+{a} −{r})"), "path": p, "diff": d })
+                json!({ "kind": "edit", "title": t!("rs.step.edit", path = p, added = a, removed = r), "path": p, "diff": d })
             }
-            "NotebookEdit" => json!({ "kind": "edit", "title": format!("Modification du notebook {p}"), "path": p }),
-            "Bash" | "PowerShell" => json!({ "kind": "command", "title": format!("Commande : {}", short(input["command"].as_str().unwrap_or_default(), 140)),
+            "NotebookEdit" => json!({ "kind": "edit", "title": t!("rs.claude.notebook", path = p), "path": p }),
+            "Bash" | "PowerShell" => json!({ "kind": "command", "title": t!("rs.step.command", command = short(input["command"].as_str().unwrap_or_default(), 140)),
                 "command": input["command"], "detail": input["description"].as_str().unwrap_or_default() }),
-            "Glob" => json!({ "kind": "search", "title": format!("Recherche de fichiers {}", input["pattern"].as_str().unwrap_or_default()) }),
-            "Grep" => json!({ "kind": "search", "title": format!("Recherche de \"{}\"", short(input["pattern"].as_str().unwrap_or_default(), 60)) }),
-            "LS" => json!({ "kind": "list", "title": format!("Liste {}", if p.is_empty() { "du dossier de travail".into() } else { format!("de {p}") }) }),
-            "WebFetch" => json!({ "kind": "note", "title": format!("Lecture web : {}", input["url"].as_str().unwrap_or_default()) }),
-            "WebSearch" => json!({ "kind": "note", "title": format!("Recherche web : {}", input["query"].as_str().unwrap_or_default()) }),
-            "Task" | "Agent" => json!({ "kind": "note", "title": format!("Sous-agent : {}", input["description"].as_str().unwrap_or_default()) }),
+            "Glob" => json!({ "kind": "search", "title": t!("rs.claude.glob", pattern = input["pattern"].as_str().unwrap_or_default()) }),
+            "Grep" => json!({ "kind": "search", "title": t!("rs.step.search", query = short(input["pattern"].as_str().unwrap_or_default(), 60)) }),
+            "LS" => json!({ "kind": "list", "title": if p.is_empty() { t!("rs.step.list_root") } else { t!("rs.step.list", path = p) } }),
+            "WebFetch" => json!({ "kind": "note", "title": t!("rs.claude.web_fetch", url = input["url"].as_str().unwrap_or_default()) }),
+            "WebSearch" => json!({ "kind": "note", "title": t!("rs.claude.web_search", query = input["query"].as_str().unwrap_or_default()) }),
+            "Task" | "Agent" => json!({ "kind": "note", "title": t!("rs.claude.subagent", description = input["description"].as_str().unwrap_or_default()) }),
             // Le plan d'un sous-agent ne remplace pas celui de l'agent principal : il reste une étape (note).
             "TodoWrite" if !sub => {
                 // Le plan de Claude : les mêmes états que le plan du mode Agent.
@@ -296,7 +297,7 @@ impl<'a> Translator<'a> {
                 self.emit("agent-plan", json!({ "request": self.request, "tasks": self.plan }));
                 return;
             }
-            other => json!({ "kind": "note", "title": format!("Outil : {other}"), "detail": short(&input.to_string(), 400) }),
+            other => json!({ "kind": "note", "title": t!("rs.claude.tool", name = other), "detail": short(&input.to_string(), 400) }),
         };
         let mut step = step;
         step["status"] = "running".into();
@@ -313,7 +314,7 @@ impl<'a> Translator<'a> {
         if b["is_error"] == true {
             let denied = text.to_lowercase().contains("permission");
             let status = if denied { "rejected" } else { "error" };
-            let detail = if denied { format!("Non autorisé par le mode de permission ou la liste des outils autorisés (Réglages → Claude Agent).\n{}", text.trim()) } else { text };
+            let detail = if denied { t!("rs.claude.denied", text = text.trim()) } else { text };
             self.update(&sid, json!({ "status": status, "detail": clip(&detail) }));
         } else if kind == "write" || kind == "edit" {
             self.update(&sid, json!({ "status": "done" }));
@@ -357,7 +358,7 @@ impl<'a> Translator<'a> {
                         Some("text") if sub => {
                             let t = b["text"].as_str().unwrap_or_default().trim();
                             if !t.is_empty() {
-                                self.step(json!({ "kind": "note", "title": "Message du sous-agent", "detail": clip(t), "status": "done" }));
+                                self.step(json!({ "kind": "note", "title": t!("rs.claude.subagent_message"), "detail": clip(t), "status": "done" }));
                             }
                         }
                         // Sans --include-partial-messages (ou si le flux n'a pas donné le texte) : le texte entier.
@@ -418,18 +419,18 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
     getrandom::fill(&mut b).expect("générateur aléatoire du système");
     let request = format!("r{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
     let fail = |e: String| {
-        crate::log::error(&format!("Claude Agent : {e}"));
+        crate::log::error(&format!("Claude Agent: {e}"));
         json!({ "error": e })
     };
     let Some(cli) = find_cli() else {
-        return fail(format!("l'outil en ligne de commande « claude » d'Anthropic est introuvable dans le PATH. Installe-le ({INSTALL_URL}), puis relance Nel Code."));
+        return fail(t!("rs.claude.cli_missing", url = INSTALL_URL));
     };
     let Some(key) = creds::read(KEY_ID) else {
-        return fail("ajoute ta clé API Anthropic dans Réglages → Claude Agent (Claude Agent ne se connecte qu'avec une clé API).".into());
+        return fail(t!("rs.claude.no_key"));
     };
     let root = match std::fs::canonicalize(&dir) {
         Ok(r) if r.is_dir() => r,
-        _ => return fail(format!("dossier de travail introuvable : {dir}")),
+        _ => return fail(t!("rs.sandbox.workdir_missing", dir = dir)),
     };
     let (mode, allowed, model, project) = settings();
     let resumed = session.is_some();
@@ -446,9 +447,9 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
     process::allow_ctrl_c();
     let (mut child, job) = match process::spawn(&mut cmd) {
         Ok(c) => c,
-        Err(e) => return fail(format!("« {} » ne se lance pas : {e}", cli.display())),
+        Err(e) => return fail(t!("rs.claude.spawn_failed", program = cli.display().to_string(), error = e.to_string())),
     };
-    crate::log::info(&format!("Claude Agent : demande lancée ({}, mode {mode})", if resumed { "reprise de la session" } else { "nouvelle session" }));
+    crate::log::info(&format!("Claude Agent: request started ({}, mode {mode})", if resumed { "resumed session" } else { "new session" }));
 
     // Le message sur l'entrée standard, puis fermée.
     if let Some(mut stdin) = child.stdin.take() {
@@ -490,14 +491,14 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
                 // Stop : Ctrl+C (SIGINT), puis on attend la fin propre (le résultat) ; au-delà, on tue.
                 stopped = true;
                 if !job.interrupt() {
-                    crate::log::error("Claude Agent : Ctrl+C non envoyé, le processus est arrêté");
+                    crate::log::error("Claude Agent: Ctrl+C not sent, the process is killed");
                     job.kill();
                     killed = true;
                 }
                 deadline = Some(Instant::now() + STOP_GRACE);
             },
             _ = tokio::time::sleep(wait), if deadline.is_some() => {
-                crate::log::error("Claude Agent : pas de fin propre après Ctrl+C, le processus est arrêté");
+                crate::log::error("Claude Agent: no clean exit after Ctrl+C, the process is killed");
                 job.kill();
                 killed = true;
                 break;
@@ -513,9 +514,9 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
     let error = if stopped {
         None
     } else if result.is_null() {
-        Some(format!("« claude » s'est arrêté sans réponse (code {}){}", code.map_or("?".into(), |c| c.to_string()), if err_text.is_empty() { String::new() } else { format!(" : {}", short(&err_text, 400)) }))
+        Some(if err_text.is_empty() { t!("rs.claude.exited", code = code.map_or("?".into(), |c| c.to_string())) } else { t!("rs.claude.exited_text", code = code.map_or("?".into(), |c| c.to_string()), text = short(&err_text, 400)) })
     } else if result["is_error"] == true {
-        Some(format!("Claude Agent : {}", result["result"].as_str().filter(|t| !t.is_empty()).or(result["subtype"].as_str()).unwrap_or("erreur")))
+        Some(t!("rs.claude.error", error = result["result"].as_str().filter(|t| !t.is_empty()).or(result["subtype"].as_str()).unwrap_or("error")))
     } else {
         None
     };
@@ -526,7 +527,7 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
         project: &dir, provider: "Claude Agent", model: &model, kind: "claude-agent", input, output,
         seconds: clock.elapsed().as_secs_f64(), cost: Some(cost.unwrap_or(0.0)), local: false,
     });
-    crate::log::info(&format!("Claude Agent : demande finie{}{}", cost.map(|c| format!(", {c:.4} $")).unwrap_or_default(), if killed { " (processus tué)" } else if stopped { " (arrêtée)" } else { "" }));
+    crate::log::info(&format!("Claude Agent: request finished{}{}", cost.map(|c| format!(", {c:.4} $")).unwrap_or_default(), if killed { " (process killed)" } else if stopped { " (stopped)" } else { "" }));
     json!({
         "text": final_text, "reasoning": tr.reasoning, "reasoningSeconds": tr.reasoning_seconds(),
         "model": "Claude Agent", "tokens": output, "promptTokens": input, "usage": usage, "seconds": clock.elapsed().as_secs_f64(), "stopped": stopped, "error": error,
@@ -538,6 +539,8 @@ pub async fn run(app: &AppHandle, session: Option<String>, message: String, dir:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     #[test]
     fn tokens_du_resultat() {
@@ -596,7 +599,7 @@ mod tests {
             t.line(&line);
         }
         assert_eq!(t.session_id.as_deref(), Some("sess-1"));
-        let s: Vec<(String, String)> = t.steps.iter().map(|s| (s["title"].as_str().unwrap().to_string(), s["status"].as_str().unwrap().to_string())).collect();
+        let s: Vec<(String, String)> = t.steps.iter().map(|s| (s["title"].as_str().unwrap().fr(), s["status"].as_str().unwrap().to_string())).collect();
         assert_eq!(s, [("Je lis.".into(), "done".into()), ("Lecture de src/A.cs".into(), "done".into()), ("Modification de src/A.cs (+1 −1)".into(), "rejected".into())]);
         assert_eq!(t.steps[1]["detail"], "class A {}");
         assert_eq!(t.plan, json!([{ "title": "Lire", "status": "done" }, { "title": "Corriger", "status": "in_progress" }]));
@@ -625,7 +628,8 @@ mod tests {
         ] {
             t.line(&line);
         }
-        let s: Vec<(&str, &str, &str, Option<&str>)> = t.steps.iter().map(|s| (s["id"].as_str().unwrap(), s["title"].as_str().unwrap(), s["status"].as_str().unwrap(), s["parent"].as_str())).collect();
+        let titles: Vec<String> = t.steps.iter().map(|s| s["title"].as_str().unwrap().fr()).collect();
+        let s: Vec<(&str, &str, &str, Option<&str>)> = t.steps.iter().zip(&titles).map(|(s, title)| (s["id"].as_str().unwrap(), title.as_str(), s["status"].as_str().unwrap(), s["parent"].as_str())).collect();
         assert_eq!(s, [
             ("s1", "Je délègue.", "done", None),
             ("s2", "Sous-agent : Explorer", "done", None),

@@ -30,7 +30,7 @@ test('démarrage', async () => {
   assert.match(await ev(`document.getElementById('status').textContent`), /aucun modèle chargé/);
   assert.match(await ev(`S.info.version`), /^\d+\.\d+\.\d+$/);
   const log = fs.readdirSync(path.join(HOME, 'logs')).find((f) => /^nelcode-\d{4}-\d\d-\d\d\.log$/.test(f));
-  assert.match(fs.readFileSync(path.join(HOME, 'logs', log), 'utf8'), /démarrage de Nel Code/);
+  assert.match(fs.readFileSync(path.join(HOME, 'logs', log), 'utf8'), /starting Nel Code/, 'le journal est en anglais');
 });
 
 test('import d\'un .nelmodel (deux fois, sous deux noms)', async () => {
@@ -198,14 +198,14 @@ test('test de vitesse', async () => {
 test('rapport de bug et journal (jamais le texte des conversations)', async () => {
   const report = await ev(`window.__TAURI__.core.invoke('bug_report')`);
   assert.match(report, /^Nel Code \d+\.\d+\.\d+/);
-  assert.match(report, /Système : .*Windows/);
+  assert.match(report, /System: .*Windows/);
   // Sous Windows, les textes propres au système restent ceux d'avant.
-  assert.deepEqual(await ev(`(({ os, keystore, fileManager }) => ({ os, keystore, fileManager }))(S.info)`),
+  assert.deepEqual(await ev(`(({ os, keystore, fileManager }) => ({ os, keystore: I18N.tr(keystore), fileManager: I18N.tr(fileManager) }))(S.info)`),
     { os: 'windows', keystore: 'Gestionnaire d\'identification de Windows', fileManager: 'l\'Explorateur' });
   assert.equal(await ev(`document.getElementById('folder-open').title`), 'Ouvrir le dossier dans l\'Explorateur');
-  assert.match(report, /Modèle actif : mini-b \(CPU\)/);
-  assert.match(report, /modèle « mini-a » chargé en [\d.]+ s/);
-  const lines = report.split('Journal')[1].trim().split('\n').slice(1);
+  assert.match(report, /Active model: mini-b \(CPU\)/);
+  assert.match(report, /model "mini-a" loaded in [\d.]+ s/);
+  const lines = report.split('Log (')[1].trim().split('\n').slice(1);
   assert.ok(lines.length > 5 && lines.length <= 50);
   for (const secret of [QUESTION, 'Salut !', 'capitale', 'longue histoire']) assert.ok(!report.includes(secret), `« ${secret} » dans le rapport`);
   const logs = fs.readdirSync(path.join(HOME, 'logs')).map((f) => fs.readFileSync(path.join(HOME, 'logs', f), 'utf8')).join('');

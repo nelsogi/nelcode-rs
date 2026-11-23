@@ -6,6 +6,7 @@
 //! ne jamais envoyer temperature ni top_p (les modèles Claude récents les refusent).
 //! La clé d'un fournisseur n'y est jamais : elle est dans le trousseau du système (voir `creds`).
 
+use crate::t;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,6 +36,7 @@ fn idle_timeout() -> Duration {
 // « NelCode », compte « provider:<id> ») ; Linux : Secret Service (GNOME Keyring, KWallet…), mêmes noms.
 
 pub(crate) mod creds {
+    use crate::t;
     use std::collections::HashMap;
 
     use keyring_core::{Entry, Error};
@@ -62,7 +64,7 @@ pub(crate) mod creds {
     fn entry(id: &str) -> Result<Entry, String> {
         let store = os::CURRENT.keystore();
         if let Err(e) = keyring::Entry::store_status() {
-            return Err(format!("{store} indisponible : {e}"));
+            return Err(t!("rs.remote.keystore_unavailable", store = t!(store), error = e.to_string()));
         }
         let r = if cfg!(windows) {
             let target = windows_target(id);
@@ -75,7 +77,7 @@ pub(crate) mod creds {
 
     pub fn write(id: &str, key: &str) -> Result<(), String> {
         // En octets (UTF-8) : sous Windows, les clés rangées avant le sont ainsi.
-        entry(id)?.set_secret(key.as_bytes()).map_err(|e| format!("{} : clé non enregistrée ({e})", os::CURRENT.keystore()))
+        entry(id)?.set_secret(key.as_bytes()).map_err(|e| t!("rs.remote.key_not_saved", store = t!(os::CURRENT.keystore()), error = e.to_string()))
     }
 
     pub fn read(id: &str) -> Option<String> {
@@ -83,7 +85,7 @@ pub(crate) mod creds {
             Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
             Err(Error::NoEntry) => None,
             Err(e) => {
-                crate::log::error(&format!("{} : clé illisible ({e})", os::CURRENT.keystore()));
+                crate::log::error(&format!("{}: unreadable key ({e})", crate::i18n::english(&t!(os::CURRENT.keystore()))));
                 None
             }
         }
@@ -116,7 +118,7 @@ fn update_providers<T>(change: impl FnOnce(&mut Vec<Value>) -> Result<T>) -> Res
 }
 
 fn find(id: &str) -> Result<Value> {
-    providers().into_iter().find(|p| p["id"] == id).ok_or_else(|| format!("fournisseur inconnu : {id}"))
+    providers().into_iter().find(|p| p["id"] == id).ok_or_else(|| t!("rs.remote.unknown_provider", id = id))
 }
 
 fn new_id() -> String {
@@ -134,9 +136,9 @@ pub fn normalize_url(url: &str) -> Result<String> {
             u = s.to_string();
         }
     }
-    let parsed = reqwest::Url::parse(&u).map_err(|e| format!("adresse invalide : {e}"))?;
+    let parsed = reqwest::Url::parse(&u).map_err(|e| t!("rs.remote.bad_url", error = e.to_string()))?;
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-        return Err("l'adresse doit commencer par http:// ou https://".into());
+        return Err(t!("rs.remote.url_scheme"));
     }
     if parsed.path().is_empty() || parsed.path() == "/" {
         u += "/v1";
@@ -192,7 +194,7 @@ pub fn save_with(id: Option<String>, name: &str, url: &str, key: Option<&str>, k
 pub fn save(id: Option<String>, name: &str, url: &str, key: Option<&str>) -> Result<Value> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("donne un nom au fournisseur".into());
+        return Err(t!("rs.remote.no_name"));
     }
     let url = normalize_url(url)?;
     let id = update_providers(|list| {
@@ -211,7 +213,7 @@ pub fn save(id: Option<String>, name: &str, url: &str, key: Option<&str>) -> Res
         }
         Ok(id)
     })?;
-    crate::log::info(&format!("fournisseur « {name} » enregistré"));
+    crate::log::info(&format!("provider \"{name}\" saved"));
     let mut p = find(&id)?;
     p["hasKey"] = creds::read(&id).is_some().into();
     Ok(p)
@@ -238,10 +240,10 @@ pub fn same_origin_redirects() -> reqwest::redirect::Policy {
         let origin = |u: &reqwest::Url| (u.scheme().to_string(), u.host_str().map(str::to_lowercase), u.port_or_known_default());
         let first = attempt.previous().first().map(origin);
         if attempt.previous().len() > 10 {
-            attempt.error("trop de redirections")
+            attempt.error(t!("rs.remote.too_many_redirects"))
         } else if first.is_some_and(|f| f != origin(attempt.url())) {
             let to = attempt.url().host_str().unwrap_or_default().to_string();
-            attempt.error(format!("redirection vers un autre hôte ({to}) refusée : la clé n'y est pas envoyée"))
+            attempt.error(t!("rs.remote.redirect_refused", to = to))
         } else {
             attempt.follow()
         }
@@ -265,16 +267,16 @@ fn http_error(host: &str, model: Option<&str>, status: u16, body: &str) -> Strin
     let msg = server_message(body);
     let msg = if msg.is_empty() { String::new() } else { format!(" : {msg}") };
     match (status, model) {
-        (401 | 403, _) => format!("clé refusée par {host} (HTTP {status}{msg})"),
-        (404, Some(m)) => format!("le modèle « {m} » n'existe pas ou est arrêté sur {host} (HTTP 404{msg})"),
-        (503, Some(m)) => format!("le modèle « {m} » est arrêté ou en cours de chargement sur {host} (HTTP 503{msg})"),
-        _ => format!("{host} a refusé la requête (HTTP {status}{msg})"),
+        (401 | 403, _) => t!("rs.remote.key_refused", host = host, status = status, msg = msg),
+        (404, Some(m)) => t!("rs.remote.model_404", model = m, host = host, msg = msg),
+        (503, Some(m)) => t!("rs.remote.model_503", model = m, host = host, msg = msg),
+        _ => t!("rs.remote.refused", host = host, status = status, msg = msg),
     }
 }
 
 fn send_error(host: &str, e: &reqwest::Error) -> String {
     if e.is_connect() || e.is_timeout() {
-        format!("{host} ne répond pas : vérifie l'adresse, le réseau et que le serveur est lancé")
+        t!("rs.remote.no_answer", host = host)
     } else if let Some(why) = e.is_redirect().then(|| std::error::Error::source(e)).flatten() {
         format!("{host} : {why}")
     } else {
@@ -303,12 +305,12 @@ pub async fn test(id: &str) -> Result<Vec<String>> {
     if status != 200 {
         return Err(http_error(&host, None, status, &body));
     }
-    let v: Value = serde_json::from_str(&body).map_err(|_| format!("{host} : la réponse de /models n'est pas du JSON (est-ce bien une API OpenAI ?)"))?;
+    let v: Value = serde_json::from_str(&body).map_err(|_| t!("rs.remote.models_not_json", host = host))?;
     // OpenAI, llama.cpp, LM Studio : { data: [{ id }] } ; Ollama (/api/tags par erreur) : { models: [{ name }] }.
     let ids: Vec<String> = v["data"]
         .as_array()
         .or(v["models"].as_array())
-        .ok_or_else(|| format!("{host} : pas de liste de modèles dans la réponse de /models"))?
+        .ok_or_else(|| t!("rs.remote.no_models_list", host = host))?
         .iter()
         .filter_map(|m| m["id"].as_str().or(m["name"].as_str()).map(str::to_string))
         .collect();
@@ -323,7 +325,7 @@ pub async fn test(id: &str) -> Result<Vec<String>> {
         }
         Ok(())
     })?;
-    crate::log::info(&format!("fournisseur {host} : {} modèle(s)", ids.len()));
+    crate::log::info(&format!("provider {host}: {} model(s)", ids.len()));
     Ok(ids)
 }
 
@@ -386,13 +388,13 @@ fn dotenv(text: &str, name: &str) -> Option<String> {
 /// dans le Gestionnaire d'identification. Un fournisseur à la même adresse est complété, pas dupliqué.
 pub fn import_qwen() -> Result<Value> {
     let path = qwen_dir().join("settings.json");
-    let text = std::fs::read_to_string(&path).map_err(|_| format!("{} introuvable : Qwen Code n'est pas configuré sur ce PC", path.display()))?;
-    let q: Value = serde_json::from_str(&text).map_err(|e| format!("{} illisible : {e}", path.display()))?;
+    let text = std::fs::read_to_string(&path).map_err(|_| t!("rs.remote.qwen_missing", path = path.display().to_string()))?;
+    let q: Value = serde_json::from_str(&text).map_err(|e| t!("rs.remote.qwen_unreadable", path = path.display().to_string(), error = e.to_string()))?;
     let openai = &q["modelProviders"]["openai"];
     // Le format actuel est une liste ; une préversion l'enveloppait dans { models: [...] }.
     let entries = openai.as_array().or(openai["models"].as_array()).cloned().unwrap_or_default();
     if entries.is_empty() {
-        return Err("aucun modèle dans modelProviders.openai de Qwen Code".into());
+        return Err(t!("rs.remote.qwen_no_models"));
     }
     let env_file = std::fs::read_to_string(qwen_dir().join(".env")).unwrap_or_default();
     let (created, models, keys) = update_providers(|list| {
@@ -438,7 +440,7 @@ pub fn import_qwen() -> Result<Value> {
         }
         Ok((created, models, keys))
     })?;
-    crate::log::info(&format!("import depuis Qwen Code : {created} fournisseur(s), {models} modèle(s)"));
+    crate::log::info(&format!("import from Qwen Code: {created} provider(s), {models} model(s)"));
     Ok(json!({ "providers": created, "models": models, "keys": keys, "path": path }))
 }
 
@@ -606,7 +608,7 @@ async fn stream(app: &AppHandle, provider_id: &str, url: &str, body: &Value, can
         req = req.bearer_auth(k);
     }
     let timeout = idle_timeout();
-    let late = || format!("{host} n'a rien envoyé depuis {} s : délai dépassé (le modèle est peut-être arrêté ou surchargé)", timeout.as_secs_f64().round());
+    let late = || t!("rs.remote.timeout", host = host, secs = timeout.as_secs_f64().round() as u64);
     let mut turn = Turn::default();
 
     let mut resp = tokio::select! {
@@ -622,10 +624,7 @@ async fn stream(app: &AppHandle, provider_id: &str, url: &str, body: &Value, can
         let text = resp.text().await.unwrap_or_default();
         // Un modèle sans outils (Ollama : « does not support tools », llama.cpp sans --jinja…).
         if !body["tools"].is_null() && (400..600).contains(&status) && server_message(&text).to_lowercase().contains("tool") {
-            return Err(format!(
-                "le modèle « {model} » ne gère pas les outils (tool calling) : le mode Agent demande par exemple llama.cpp lancé avec --jinja, ou Ollama avec Qwen3 ({host}, HTTP {status} : {})",
-                server_message(&text)
-            ));
+            return Err(t!("rs.remote.no_tools", model = model, host = host, status = status, detail = server_message(&text)));
         }
         return Err(http_error(&host, Some(&model), status, &text));
     }
@@ -683,7 +682,7 @@ async fn stream(app: &AppHandle, provider_id: &str, url: &str, body: &Value, can
         let chunk = tokio::select! {
             r = tokio::time::timeout(timeout, resp.chunk()) => match r {
                 Err(_) => return Err(late()),
-                Ok(Err(_)) => return Err(format!("la connexion avec {host} a été coupée pendant la réponse")),
+                Ok(Err(_)) => return Err(t!("rs.remote.cut", host = host)),
                 Ok(Ok(c)) => c,
             },
             _ = cancel.notified() => { turn.stopped = true; break 'read; }
@@ -723,7 +722,7 @@ async fn stream(app: &AppHandle, provider_id: &str, url: &str, body: &Value, can
     }
     // Un serveur qui ignore `stream` : la réponse entière, en JSON.
     if !sse && !turn.stopped {
-        let v: Value = serde_json::from_str(&whole).map_err(|_| format!("{host} : réponse illisible ({})", whole.chars().take(120).collect::<String>()))?;
+        let v: Value = serde_json::from_str(&whole).map_err(|_| t!("rs.remote.unreadable", host = host, text = whole.chars().take(120).collect::<String>()))?;
         let msg = &v["choices"][0]["message"];
         let reasoning = msg["reasoning_content"].as_str().or(msg["reasoning"].as_str()).unwrap_or_default().to_string();
         emit(&mut turn, &reasoning, msg["content"].as_str().unwrap_or_default());
@@ -769,6 +768,8 @@ pub async fn generate(app: &AppHandle, provider_id: &str, model: &str, history: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn run(chunks: &[&str]) -> (String, String) {
         let mut s = ThinkSplit::default();
@@ -838,7 +839,7 @@ mod tests {
         assert_eq!(seen.try_iter().count(), 2);
         // Autre hôte, autre port : refusée, rien n'y est envoyé.
         for path in ["chat/completions", "port"] {
-            let err = get(path).unwrap_err();
+            let err = get(path).unwrap_err().fr();
             assert!(err.contains("redirection vers un autre hôte"), "{err}");
         }
         std::thread::sleep(Duration::from_millis(200));

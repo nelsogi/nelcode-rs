@@ -2,6 +2,7 @@
 // conversations rangées par projet.
 // Les textes (messages, noms) passent toujours par textContent, jamais par innerHTML.
 
+import { t } from './i18n.js';
 import { $, h, invoke, showMenu, toast } from './util.js';
 import { S } from './state.js';
 import { newSession, renderAll } from './conversation.js';
@@ -17,7 +18,7 @@ export function sameProject(a, b) {
 
 /** Le nom d'un projet : le dernier dossier de son chemin. */
 export function projectName(p) {
-  return p ? p.split(/[\\/]/).filter(Boolean).pop() || p : 'Sans dossier';
+  return p ? p.split(/[\\/]/).filter(Boolean).pop() || p : t('projects.sans_dossier');
 }
 
 /** Le projet affiché ('' : tous les projets). */
@@ -43,7 +44,7 @@ export async function rememberProject(path) {
 
 /** Affiche le projet `path` ('' : tous) : ses conversations seulement, et une conversation de ce projet. */
 export async function selectProject(path) {
-  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  if (S.gen) return toast(t('projects.attends_fin_reponse_stop'), 'warning');
   S.settings = await invoke('save_settings', { changes: { currentProject: path } });
   if (path) await rememberProject(path);
   if (path && !sameProject(S.current.workingDirectory, path)) S.current = newSession();
@@ -55,8 +56,8 @@ export async function selectProject(path) {
 export function renderProject() {
   const p = currentProject();
   const b = $('project-btn');
-  b.replaceChildren(icon('folder'), h('span', { class: 'label' }, p ? projectName(p) : 'Tous les projets'), icon('chevron-down'));
-  b.title = p ? `Projet : ${p}\nClic : changer de projet` : 'Toutes les conversations, rangées par projet\nClic : choisir un projet';
+  b.replaceChildren(icon('folder'), h('span', { class: 'label' }, p ? projectName(p) : t('projects.tous_projets')), icon('chevron-down'));
+  b.title = p ? t('projects.projet_clic_changer_projet', { p: p }) : t('projects.toutes_conversations_rangees_par_projet');
 }
 
 /** Le menu des projets : récents, tous, ouvrir un dossier. */
@@ -69,8 +70,8 @@ export function projectMenu(e) {
   showMenu(e, [
     ...recent,
     ...(recent.length ? ['-'] : []),
-    { label: [cur ? h('span', { class: 'pad' }) : icon('check'), 'Tous les projets'], run: () => selectProject('') },
-    { label: [icon('plus'), 'Ouvrir un dossier…'], run: async () => {
+    { label: [cur ? h('span', { class: 'pad' }) : icon('check'), t('projects.tous_projets')], run: () => selectProject('') },
+    { label: [icon('plus'), t('projects.ouvrir_dossier')], run: async () => {
       const path = await invoke('pick_folder', { start: cur || S.current?.workingDirectory || S.info.home || '' });
       if (path) selectProject(path);
     } },

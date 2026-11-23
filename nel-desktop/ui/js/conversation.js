@@ -3,6 +3,7 @@
 
 // --- Conversations ---------------------------------------------------------------------------------------
 
+import { locale, num, t, tr } from './i18n.js';
 import { $, confirmDialog, dialog, errText, fold, h, invoke, localIso, newId, paramsText, promptDialog, relDate, richText, showMenu, sizeText, toast } from './util.js';
 import { S, UI } from './state.js';
 import { AGENT_LOCAL, claudeCost, money, refreshNelcode, renderPlan, stepsEl } from './agent.js';
@@ -23,7 +24,7 @@ export const TITLE_LENGTH = 40;
 export function titleOf(s) {
   if (s.title && s.title.trim()) return s.title;
   const first = (s.messages.find((m) => m.role === 'user')?.content ?? '').replace(/\s+/g, ' ').trim();
-  if (!first) return 'Nouvelle conversation';
+  if (!first) return t('conversation.nouvelle_conversation');
   if (first.length <= TITLE_LENGTH) return first;
   const cut = first.lastIndexOf(' ', TITLE_LENGTH);
   return first.slice(0, cut > TITLE_LENGTH / 2 ? cut : TITLE_LENGTH) + '…';
@@ -40,14 +41,15 @@ export function turnsOf(messages, end = messages.length) {
 // Le résumé des échanges précédents, s'il couvre bien des messages qui existent encore (avant `end`).
 export const summaryOf = (s, end = s.messages.length) => (s.summary && s.summary.upTo <= end ? s.summary : null);
 
-export const SUMMARY_HEAD = 'Résumé des échanges précédents :\n';
+export const SUMMARY_HEAD = 'Résumé des échanges précédents :\n';   // i18n-ignore (pour le modèle)
 
 // Ce qui part au modèle : le résumé (comme un premier échange), puis les tours qui le suivent. Les messages résumés
 // restent dans la conversation, seul l'envoi change.
 export function historyOf(s, end = s.messages.length) {
   const sm = summaryOf(s, end);
   if (!sm) return turnsOf(s.messages, end);
-  return [[SUMMARY_HEAD + sm.text, 'Compris, je tiens compte de ce résumé.'], ...turnsOf(s.messages.slice(sm.upTo), end - sm.upTo)];
+  return [[SUMMARY_HEAD + sm.text, 'Compris, je tiens compte de ce résumé.'],   // i18n-ignore (pour le modèle)
+    ...turnsOf(s.messages.slice(sm.upTo), end - sm.upTo)];
 }
 
 // Le résumé ne survit pas à une coupure de la conversation en dessous de ce qu'il couvre (modifier, régénérer).
@@ -61,6 +63,8 @@ export function newSession() {
     workingDirectory: S.settings.currentProject || S.current?.workingDirectory || S.info.home || '',
     date: localIso(),
     messages: [],
+    // Les serveurs MCP désactivés par défaut dans les nouvelles conversations (Réglages → MCP).
+    ...(S.settings.mcpDefaultOff?.length ? { mcpOff: [...S.settings.mcpDefaultOff] } : {}),
   };
 }
 
@@ -69,7 +73,7 @@ export async function saveSession(s) {
   try {
     await invoke('save_session', { session: s });
     if (!S.sessions.includes(s)) S.sessions.push(s);
-  } catch (e) { toast('Sauvegarde impossible : ' + errText(e), 'error'); }
+  } catch (e) { toast(t('conversation.sauvegarde_impossible', { error: errText(e) }), 'error'); }
   renderSessions();
 }
 
@@ -89,7 +93,7 @@ export function startNew() {
 }
 
 export async function deleteSession(s) {
-  const ok = await confirmDialog('Supprimer la conversation ?', `« ${titleOf(s)} » sera supprimée définitivement.`, 'Supprimer', true);
+  const ok = await confirmDialog(t('conversation.supprimer_conversation'), t('conversation.sera_supprimee_definitivement', { titleOf: titleOf(s) }), t('conversation.supprimer'), true);
   if (!ok) return;
   if (S.gen?.session === s) await invoke('stop_generation');
   try { await invoke('delete_session', { id: s.id }); } catch (e) { return toast(errText(e), 'error'); }
@@ -98,7 +102,7 @@ export async function deleteSession(s) {
 }
 
 export async function renameSession(s) {
-  const name = await promptDialog('Renommer la conversation', titleOf(s), 'Laisser vide : titre tiré du premier message.');
+  const name = await promptDialog(t('conversation.renommer_conversation'), titleOf(s), t('conversation.laisser_vide_titre_tire_premier'));
   if (name === null) return;
   if (name.trim()) s.title = name.trim(); else delete s.title;
   await saveSession(s);
@@ -107,9 +111,9 @@ export async function renameSession(s) {
 
 // Comme Export de Nel Code C# : "> question" / "● réponse", ou Markdown.
 export async function exportSession(s, markdown) {
-  if (!s.messages.length) return toast('Conversation vide : rien à exporter.', 'warning');
+  if (!s.messages.length) return toast(t('conversation.conversation_vide_rien_exporter'), 'warning');
   const title = titleOf(s);
-  const about = `${new Date(s.date).toLocaleString('fr-CH', { dateStyle: 'short', timeStyle: 'short' })} · ${s.model}`;
+  const about = `${new Date(s.date).toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' })} · ${s.model}`;
   let text = (markdown ? `# ${title}` : title) + '\n\n' + (markdown ? `*${about}*` : about) + '\n\n';
   for (const m of s.messages) {
     const user = m.role === 'user';
@@ -120,7 +124,7 @@ export async function exportSession(s, markdown) {
   const fileName = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + (markdown ? '.md' : '.txt');
   try {
     const path = await invoke('export_session', { fileName, content: text, markdown, directory: s.workingDirectory || '' });
-    if (path) toast('Conversation exportée : ' + path, 'success');
+    if (path) toast(t('conversation.conversation_exportee', { value: path }), 'success');
   } catch (e) { toast(errText(e), 'error'); }
 }
 
@@ -133,7 +137,7 @@ export async function chooseFolder(s = S.current) {
   if (S.settings.currentProject && !sameProject(S.settings.currentProject, path)) S.settings = await invoke('save_settings', { changes: { currentProject: path } });
   await saveSession(s);
   renderAll();
-  toast('Dossier de travail : ' + path);
+  toast(t('conversation.dossier_travail', { value: path }));
 }
 
 // --- Modèles ---------------------------------------------------------------------------------------------
@@ -145,28 +149,29 @@ export async function refreshModels() {
 
 // Un modèle distant devient le modèle actif (rien à charger : les appels partent au fournisseur).
 export async function selectRemote(p, m) {
-  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
-  Object.assign(S.model, { name: m.id, blockSize: m.contextLength ?? null, device: `réseau · ${p.name}`, remote: { provider: p.id, model: m.id }, vision: null, visionManual: null });
+  if (S.gen) return toast(t('conversation.attends_fin_reponse_stop'), 'warning');
+  Object.assign(S.model, { name: m.id, blockSize: m.contextLength ?? null, // Codé : traduit à l'affichage (et après un changement de langue).
+    device: JSON.stringify({ $t: 'conversation.network_device', p: { name: p.name } }), remote: { provider: p.id, model: m.id }, vision: null, visionManual: null });
   S.lastSpeed = '';
   refreshVision();
   renderModels(); renderStatus(); refreshContext();
   try { S.settings = await invoke('save_settings', { changes: { lastModel: `remote:${p.id}/${m.id}` } }); } catch { /* sans gravité */ }
-  toast(`${m.id} (${p.name}) : modèle distant.`, 'success', 2500);
+  toast(t('conversation.modele_distant', { id: m.id, name: p.name }), 'success', 2500);
 }
 
 export async function loadModel(name) {
-  if (S.model.loading) return toast(`Chargement de ${S.model.loading} en cours…`, 'warning');
-  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  if (S.model.loading) return toast(t('conversation.chargement_cours', { loading: S.model.loading }), 'warning');
+  if (S.gen) return toast(t('conversation.attends_fin_reponse_stop'), 'warning');
   try { await invoke('load_model', { name }); } catch (e) { toast(errText(e), 'error'); }
 }
 
 export async function deleteModel(name) {
-  const ok = await confirmDialog('Supprimer le modèle ?', `Le dossier du modèle « ${name} » sera supprimé (aussi pour Nel Code C#).`, 'Supprimer', true);
+  const ok = await confirmDialog(t('conversation.supprimer_modele'), t('conversation.dossier_modele_sera_supprime_aussi', { name: name }), t('conversation.supprimer'), true);
   if (!ok) return;
   try {
     await invoke('delete_model', { name });
     if (S.model.name === name) Object.assign(S.model, { name: null, blockSize: null });
-    toast(`Modèle « ${name} » supprimé.`, 'success');
+    toast(t('conversation.modele_supprime', { name: name }), 'success');
   } catch (e) { toast(errText(e), 'error'); }
   await refreshModels();
   renderStatus(); refreshContext();
@@ -178,39 +183,39 @@ export async function importFlow(path) {
   if (!path) return;
   if (!/^[a-zA-Z]:[\\/]|^\\\\/.test(path) && S.current?.workingDirectory) path = S.current.workingDirectory.replace(/[\\/]$/, '') + '\\' + path;
   let pkg;
-  try { pkg = await invoke('inspect_package', { path }); } catch (e) { return toast('Import refusé : ' + errText(e), 'error', 8000); }
+  try { pkg = await invoke('inspect_package', { path }); } catch (e) { return toast(t('conversation.import_refuse', { error: errText(e) }), 'error', 8000); }
   const i = pkg.info;
   const nameInput = h('input', { class: 'text-input', value: pkg.name, spellcheck: 'false' });
   const warn = h('div', { class: 'warn-text' });
   const rows = pkg.gguf ? [
-    ['Modèle', i.name], ['Architecture', i.architecture], ['Paramètres', i.parameters?.toLocaleString('fr-CH')],
-    ['Contexte', `${i.contextLength?.toLocaleString('fr-CH')} tokens (Nel Code en utilise au plus ${S.settings.contextLimit})`],
-    ['Format de chat', i.chatFormat], ['Tokenizer', i.tokenizer], ['Licence', i.license ?? 'non indiquée dans le fichier : vérifie-la avant de t\'en servir'],
+    [t('conversation.modele'), i.name], [t('conversation.architecture'), i.architecture], [t('conversation.parametres'), i.parameters?.toLocaleString(locale())],
+    [t('conversation.contexte'), t('conversation.tokens_nel_code_utilise_au', { v0: i.contextLength?.toLocaleString(locale()), contextLimit: S.settings.contextLimit })],
+    [t('conversation.format_chat'), i.chatFormat], [t('conversation.tokenizer'), i.tokenizer], [t('conversation.licence'), i.license ?? t('conversation.non_indiquee_dans_fichier_verifie')],
   ].filter(([, v]) => v !== undefined && v !== null && v !== '') : [
-    ['Nom proposé', i.name], ['Architecture', i.architecture], ['Paramètres', i.parameters?.toLocaleString('fr-CH')],
-    ['Loss', i.valLoss?.toFixed?.(3)], ['Pas', i.trainingSteps], ['Créé le', i.createdAt && new Date(i.createdAt).toLocaleString('fr-CH')],
-    ['Description', i.description], ['Format', 'version ' + i.formatVersion],
+    [t('conversation.nom_propose'), i.name], [t('conversation.architecture'), i.architecture], [t('conversation.parametres'), i.parameters?.toLocaleString(locale())],
+    [t('conversation.loss'), i.valLoss?.toFixed?.(3)], [t('conversation.pas'), i.trainingSteps], [t('conversation.cree'), i.createdAt && new Date(i.createdAt).toLocaleString(locale())],
+    [t('conversation.description'), i.description], [t('conversation.format'), 'version ' + i.formatVersion],
   ].filter(([, v]) => v !== undefined && v !== null && v !== '');
   const body = [
     h('dl', { class: 'info-grid' }, rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
-    h('label', { class: 'field' }, h('div', { class: 'row' }, 'Installer sous le nom'), nameInput), warn,
+    h('label', { class: 'field' }, h('div', { class: 'row' }, t('conversation.installer_sous_nom')), nameInput), warn,
   ];
   const check = () => {
     const n = nameInput.value.trim();
     const taken = S.models.some((m) => m.name.toLowerCase() === n.toLowerCase());
-    warn.textContent = taken ? `Un modèle « ${n} » existe déjà : « Remplacer » l'écrase une fois le nouveau vérifié.` : '';
+    warn.textContent = taken ? t('conversation.modele_existe_deja_remplacer_ecrase', { n: n }) : '';
     return taken;
   };
   nameInput.addEventListener('input', check);
   check();
-  const choice = await dialog('Importer un modèle', body, [
-    { label: 'Annuler', value: null },
-    { label: 'Remplacer', value: 'replace', danger: true, show: () => check() },
-    { label: 'Importer', value: 'import', primary: true },
+  const choice = await dialog(t('conversation.importer_modele'), body, [
+    { label: t('conversation.annuler'), value: null },
+    { label: t('conversation.remplacer'), value: 'replace', danger: true, show: () => check() },
+    { label: t('conversation.importer'), value: 'import', primary: true },
   ], nameInput);
   if (!choice) return;
   const name = nameInput.value.trim();
-  if (choice === 'import' && check()) return toast('Ce nom est déjà pris : choisis-en un autre, ou « Remplacer ».', 'warning');
+  if (choice === 'import' && check()) return toast(t('conversation.ce_nom_est_deja_pris'), 'warning');
   try { await invoke('import_model', { path, name, replace: choice === 'replace' }); } catch (e) { toast(errText(e), 'error'); }
 }
 
@@ -248,8 +253,8 @@ export async function expandMentions(text, quiet = false) {
       try { content = await invoke('read_file', { dir, path }); } catch (e) {
         const [tag, pattern, rel] = errText(e).split('\t');
         if (tag !== 'PROTECTED' || quiet) throw e;
-        const ok = await confirmDialog('Fichier protégé', `« ${rel} » est protégé (${pattern}) : il peut contenir des mots de passe ou des clés. Le lire et l'envoyer au modèle avec ce message ?`, 'Lire et envoyer', true);
-        if (!ok) { toast(`« ${rel} » n'a pas été lu : le message n'est pas envoyé.`, 'warning'); return null; }
+        const ok = await confirmDialog(t('conversation.fichier_protege'), t('conversation.est_protege_il_peut_contenir', { rel: rel, pattern: pattern }), t('conversation.lire_envoyer'), true);
+        if (!ok) { toast(t('conversation.pas_ete_lu_message_est', { rel: rel }), 'warning'); return null; }
         content = await invoke('read_file', { dir, path, confirm: true });
       }
       const lang = EXT_LANG[path.split('.').pop().toLowerCase()] ?? '';
@@ -275,10 +280,10 @@ export function genOptions() {
 
 export function canGenerate() {
   if (S.gen || UI.preparing) return false;
-  if (S.bench) { toast('Test de vitesse en cours…', 'warning'); return false; }
-  if (U.state === 'installing') { toast('Installation de la mise à jour en cours…', 'warning'); return false; }
+  if (S.bench) { toast(t('conversation.test_vitesse_cours'), 'warning'); return false; }
+  if (U.state === 'installing') { toast(t('conversation.installation_mise_jour_cours'), 'warning'); return false; }
   if (!S.model.name && !S.current?.compare && !S.current?.claudeAgent) {
-    toast(S.model.loading ? `Le modèle ${S.model.loading} se charge…` : 'Aucun modèle chargé : choisis-en un à gauche, importe un .nelmodel ou un .gguf, ou ouvre le catalogue.', 'warning');
+    toast(S.model.loading ? t('conversation.modele_se_charge', { loading: S.model.loading }) : t('conversation.aucun_modele_charge_choisis_gauche'), 'warning');
     return false;
   }
   return true;
@@ -332,12 +337,12 @@ export async function startGen(s, g) {
       await invoke('compare_generate', { a: s.compare.a, b: s.compare.b, historyA: g.history, historyB: g.historyB, message: g.question, options: genOptions(), project: s.workingDirectory || '' });
     else if (s.claudeAgent) {
       // Claude Agent : l'outil claude reprend sa propre session ; l'historique n'est pas renvoyé.
-      if (!s.workingDirectory) throw new Error('Claude Agent : choisis d\'abord un dossier de travail (/dir).');
+      if (!s.workingDirectory) throw new Error(t('conversation.claude_agent_choisis_abord_dossier'));
       await invoke('claude_agent_send', { sessionId: s.claudeAgent.sessionId ?? null, message: g.question, dir: s.workingDirectory });
     } else if (s.agent && g.kind !== 'summary') {
       // Le mode Agent : seulement un modèle distant qui gère les outils ; jamais un .nelmodel ni un GGUF local.
-      if (!r) throw new Error(AGENT_LOCAL);
-      if (!s.workingDirectory) throw new Error('Mode Agent : choisis d\'abord un dossier de travail (/dir).');
+      if (!r) throw new Error(t(AGENT_LOCAL));
+      if (!s.workingDirectory) throw new Error(t('conversation.mode_agent_choisis_abord_dossier'));
       // Les serveurs MCP démarrent pour cette conversation (arrêtés quand on en ouvre une autre).
       mcpStarted(s);
       await invoke('agent_generate', { provider: r.provider, model: r.model, history: g.history, message: g.question, images: g.images ?? null, dir: s.workingDirectory, options: genOptions(), session: s.id, mcpOff: mcpOff(s) });
@@ -397,14 +402,14 @@ async function finishReply(g, s, p) {
   let text = (p.text ?? '').trim();
   // Mode Agent : les étapes restent dans la conversation même sans réponse finale (pour voir et annuler les écritures).
   if (p.agent?.steps?.length && (p.error || !text)) {
-    if (p.error) toast('Agent : ' + p.error, 'error', 10000);
-    text = text || (p.stopped ? '(arrêté)' : '(pas de réponse finale)');
+    if (p.error) toast(t('conversation.agent', { error: p.error }), 'error', 10000);
+    text = text || (p.stopped ? t('conversation.arrete') : t('conversation.pas_reponse_finale'));
     p.error = null;
   }
-  if (p.limit) toast(`Agent : nombre maximal de tours atteint (${p.limit}). Augmente-le dans les Réglages si besoin.`, 'warning', 8000);
+  if (p.limit) toast(t('conversation.agent_nombre_maximal_tours_atteint', { limit: p.limit }), 'warning', 8000);
   if (p.error || !text) {
     if (g.kind === 'send') { giveBack(s, s.messages.pop().images); if (S.current === s) $('input').value ||= g.question; }
-    toast(p.error ? 'Erreur pendant la réponse : ' + p.error : 'Le modèle n\'a rien répondu.', p.error ? 'error' : 'warning');
+    toast(p.error ? t('conversation.erreur_pendant_reponse', { error: p.error }) : t('conversation.modele_rien_repondu'), p.error ? 'error' : 'warning');
   } else {
     // La réflexion d'un modèle distant : gardée avec la réponse, jamais renvoyée au modèle (turnsOf ne prend que content).
     const thought = p.reasoning?.trim() ? { reasoning: p.reasoning.trim(), reasoningSeconds: p.reasoningSeconds ?? 0 } : { reasoning: undefined, reasoningSeconds: undefined };
@@ -428,10 +433,10 @@ async function finishReply(g, s, p) {
   }
   if (text) { touch(s); await saveSession(s); }
   if (!p.error && p.tokens) {
-    S.lastSpeed = `${p.tokens} tokens · ${(p.tokens / p.seconds).toFixed(1)} tokens/s${p.stopped ? ' · arrêtée' : ''}`;
+    S.lastSpeed = t('conversation.tokens_tokens', { tokens: p.tokens, v1: num(p.tokens / p.seconds, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), v2: p.stopped ? t('conversation.arretee') : '' });
   }
   if (p.claude) {
-    S.lastSpeed = claudeCost(p.claude) + (p.stopped ? ' · arrêtée' : '');
+    S.lastSpeed = claudeCost(p.claude) + (p.stopped ? t('conversation.arretee') : '');
   }
 }
 
@@ -440,7 +445,7 @@ export async function onSummaryDone(g, s, p) {
   const text = (p.text ?? '').trim();
   let result = 'ok';
   if (p.stopped) result = 'stopped';
-  else if (p.error || !text) { result = 'error'; toast(p.error ? 'Résumé impossible : ' + p.error : 'Le modèle n\'a pas écrit de résumé.', 'warning', 6000); }
+  else if (p.error || !text) { result = 'error'; toast(p.error ? t('conversation.resume_impossible', { error: p.error }) : t('conversation.modele_pas_ecrit_resume'), 'warning', 6000); }
   else { s.summary = { text, upTo: g.upTo, date: localIso() }; await saveSession(s); }
   renderAll();
   g.resolve(result);
@@ -449,11 +454,11 @@ export async function onSummaryDone(g, s, p) {
 export async function onCompareDone(g, s, p) {
   const a = (p.a.text ?? '').trim(), b = (p.b.text ?? '').trim();
   const error = p.a.error || p.b.error;
-  if (error) toast('Erreur pendant la réponse : ' + error, 'error');
+  if (error) toast(t('conversation.erreur_pendant_reponse', { error: error }), 'error');
   if (!a && !b) {
     s.messages.pop();
     if (S.current === s) $('input').value ||= g.question;
-    if (!error) toast('Les modèles n\'ont rien répondu.', 'warning');
+    if (!error) toast(t('conversation.modeles_ont_rien_repondu'), 'warning');
   } else {
     const tokens = (x) => x.tokens.length ? x.tokens : undefined;
     s.messages.push({ role: 'assistant', content: a, model: s.compare.a, tokens: tokens(g.a), compare: { model: s.compare.b, content: b, tokens: tokens(g.b) } });
@@ -469,7 +474,7 @@ export function stop() { if (S.gen) invoke('stop_generation'); }
 
 // Le bloc « Réflexion » repliable, au-dessus de la réponse ; ouvert pendant qu'elle s'écrit.
 export function reasoningEl(text, seconds, live) {
-  const label = live ? 'Réflexion…' : `Réflexion · ${Number(seconds ?? 0).toLocaleString('fr-CH', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} s`;
+  const label = live ? t('conversation.reflexion') : t('conversation.reflexion_2', { v0: Number(seconds ?? 0).toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 }) });
   return h('details', { class: 'reasoning', open: live }, h('summary', {}, icon('chevron-right'), label), h('div', { class: 'think' }, text));
 }
 
@@ -489,7 +494,7 @@ export function showReasoning() {
 
 export async function toggleTransparency() {
   try { S.settings = await invoke('save_settings', { changes: { transparency: !S.settings.transparency } }); } catch (e) { return toast(errText(e), 'error'); }
-  toast(S.settings.transparency ? 'Transparence activée : survole les mots des prochaines réponses.' : 'Transparence désactivée.', '', 2500);
+  toast(S.settings.transparency ? t('conversation.transparence_activee_survole_mots_prochaines') : t('conversation.transparence_desactivee'), '', 2500);
   renderHeader(); renderMessages();
 }
 
@@ -512,13 +517,13 @@ export function bodyEl(content, tokens) {
   return body;
 }
 
-export const visible = (t) => t.replace(/\n/g, '↵').replace(/ /g, '·') || '∅';
+export const visible = (tx) => tx.replace(/\n/g, '↵').replace(/ /g, '·') || '∅';
 
 // --- Mode comparaison ------------------------------------------------------------------------------------
 
 export async function openCompare() {
-  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
-  if (S.models.length < 2) return toast('Il faut au moins deux modèles installés pour comparer.', 'warning');
+  if (S.gen) return toast(t('conversation.attends_fin_reponse_stop'), 'warning');
+  if (S.models.length < 2) return toast(t('conversation.il_faut_au_moins_deux'), 'warning');
   const select = (value) => {
     const el = h('select', { class: 'text-input' }, S.models.map((m) => h('option', { value: m.name }, m.name)));
     el.value = value;
@@ -526,10 +531,10 @@ export async function openCompare() {
   };
   const a = select(S.model.name ?? S.models[0].name);
   const b = select(S.models.find((m) => m.name !== a.value).name);
-  const body = [h('label', { class: 'field' }, h('div', { class: 'row' }, 'Modèle A'), a), h('label', { class: 'field' }, h('div', { class: 'row' }, 'Modèle B'), b),
-    h('div', { class: 'hint' }, 'Chaque message part aux deux modèles ; les réponses s\'écrivent l\'une après l\'autre.')];
-  if (!(await dialog('Conversation comparée', body, [{ label: 'Annuler', value: false }, { label: 'Comparer', value: true, primary: true }], a))) return;
-  if (a.value === b.value) return toast('Choisis deux modèles différents.', 'warning');
+  const body = [h('label', { class: 'field' }, h('div', { class: 'row' }, t('conversation.modele_2')), a), h('label', { class: 'field' }, h('div', { class: 'row' }, t('conversation.modele_3')), b),
+    h('div', { class: 'hint' }, t('conversation.chaque_message_part_aux_deux'))];
+  if (!(await dialog(t('conversation.conversation_comparee'), body, [{ label: t('conversation.annuler'), value: false }, { label: t('conversation.comparer'), value: true, primary: true }], a))) return;
+  if (a.value === b.value) return toast(t('conversation.choisis_deux_modeles_differents'), 'warning');
   closeEdit();
   S.current = { ...newSession(), compare: { a: a.value, b: b.value } };
   renderAll();
@@ -545,7 +550,7 @@ export async function vote(i, winner) {
 }
 
 export function sideEl(side, model, content, tokens, won) {
-  return h('div', { class: 'side' + (won ? ' won' : ''), 'data-side': side }, h('div', { class: 'who' }, `${side.toUpperCase()} · ${model}`), bodyEl(content || '(pas de réponse)', tokens));
+  return h('div', { class: 'side' + (won ? ' won' : ''), 'data-side': side }, h('div', { class: 'who' }, `${side.toUpperCase()} · ${model}`), bodyEl(content || t('conversation.pas_reponse'), tokens));
 }
 
 export function compareEl(m, i) {
@@ -553,12 +558,12 @@ export function compareEl(m, i) {
   const btn = (winner, label) => h('button', { class: m.vote === winner ? 'on' : '', disabled: busy, onclick: () => vote(i, winner) }, label);
   return h('div', { class: 'msg compare' },
     h('div', { class: 'pair' }, sideEl('a', m.model, m.content, m.tokens, m.vote === 'a'), sideEl('b', m.compare.model, m.compare.content, m.compare.tokens, m.vote === 'b')),
-    h('div', { class: 'votes' }, btn('a', [icon('chevron-left'), 'A est meilleur']), btn('tie', [icon('equal'), 'Égalité']), btn('b', ['B est meilleur', icon('chevron-right')])));
+    h('div', { class: 'votes' }, btn('a', [icon('chevron-left'), t('conversation.est_meilleur')]), btn('tie', [icon('equal'), t('conversation.egalite')]), btn('b', [t('conversation.est_meilleur_2'), icon('chevron-right')])));
 }
 
 export function compareStreamingEl() {
   const g = S.gen, s = g.session.compare;
-  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), liveBody(g[k].text, 'en attente…'));
+  const side = (k, model) => h('div', { class: 'side ' + (g[k].text ? 'streaming' : 'thinking'), 'data-side': k }, h('div', { class: 'who' }, `${k.toUpperCase()} · ${model}`), liveBody(g[k].text, t('conversation.attente')));
   return h('div', { class: 'msg compare' }, h('div', { class: 'pair' }, side('a', s.a), side('b', s.b)));
 }
 
@@ -580,10 +585,10 @@ export async function openLeaderboard() {
   const { votes } = await invoke('arena');
   const rows = ranking(votes);
   const body = rows.length
-    ? h('table', { class: 'board' }, h('tr', {}, ['', 'Modèle', 'Score', 'Victoires', 'V / N / D'].map((t) => h('th', {}, t))),
+    ? h('table', { class: 'board' }, h('tr', {}, ['', t('conversation.modele'), t('conversation.score'), t('conversation.victoires'), 'V / N / D'].map((tx) => h('th', {}, tx))),
       rows.map((m, k) => h('tr', {}, h('td', {}, k + 1), h('td', {}, m.name), h('td', {}, Math.round(m.elo)), h('td', {}, Math.round(100 * m.w / (m.w + m.t + m.l)) + ' %'), h('td', {}, `${m.w} / ${m.t} / ${m.l}`))))
-    : h('p', {}, 'Pas encore de vote. Ctrl+Maj+N ouvre une conversation comparée.');
-  dialog(`Classement · ${votes.length} vote(s)`, body, [{ label: 'Fermer', value: null, primary: true }]);
+    : h('p', {}, t('conversation.pas_encore_vote_ctrl_maj'));
+  dialog(t('conversation.leaderboard_votes', { n: votes.length }), body, [{ label: t('conversation.fermer'), value: null, primary: true }]);
 }
 
 export function stepVersion(index, delta) {
@@ -624,7 +629,7 @@ export function renderAll() {
 
 export function renderSessions() {
   const q = fold($('search').value.trim());
-  const has = (t) => fold(t).includes(q);
+  const has = (tx) => fold(tx).includes(q);
   const all = [...S.sessions]
     .filter((s) => !q || has(titleOf(s)) || s.messages.some((m) => has(m.content)))
     .sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
@@ -633,17 +638,17 @@ export function renderSessions() {
   const ul = $('sessions');
   ul.replaceChildren();
   if (S.current && !S.current.messages.length && !q)
-    ul.append(h('li', { class: 'active' }, h('span', { class: 'label' }, 'Nouvelle conversation')));
+    ul.append(h('li', { class: 'active' }, h('span', { class: 'label' }, t('conversation.nouvelle_conversation'))));
   for (const s of groups.flatMap((g) => g.sessions)) {
     if (grouped && !q && groups.find((g) => g.sessions[0] === s)) ul.append(h('li', { class: 'group', title: s.workingDirectory || '' }, icon('folder'), h('span', { class: 'label' }, projectName(s.workingDirectory))));
-    const more = h('button', { class: 'more', title: 'Plus…', 'aria-label': 'Plus', onclick: (e) => { e.stopPropagation(); sessionMenu(s, e); } }, icon('ellipsis'));
+    const more = h('button', { class: 'more', title: t('conversation.plus'), 'aria-label': t('conversation.plus_2'), onclick: (e) => { e.stopPropagation(); sessionMenu(s, e); } }, icon('ellipsis'));
     ul.append(h('li', {
       class: s === S.current ? 'active' : '', title: titleOf(s),
       onclick: () => openSession(s), oncontextmenu: (e) => { e.preventDefault(); sessionMenu(s, e); },
       ondblclick: () => renameSession(s),
     }, h('span', { class: 'label' }, s.compare ? icon('arrow-left-right') : s.claudeAgent ? icon('bot') : null, titleOf(s)), S.gen?.session === s ? h('span', { class: 'spinner' }) : h('span', { class: 'meta' }, relDate(s.date)), more));
   }
-  if (!ul.children.length) ul.append(h('li', { class: 'none' }, q ? 'Aucun résultat.' : S.settings.currentProject ? 'Pas encore de conversation dans ce projet.' : 'Pas encore de conversation.'));
+  if (!ul.children.length) ul.append(h('li', { class: 'none' }, q ? t('conversation.aucun_resultat') : S.settings.currentProject ? t('conversation.pas_encore_conversation_dans_ce') : t('conversation.pas_encore_conversation')));
 }
 
 export function renderModels() {
@@ -651,33 +656,33 @@ export function renderModels() {
   ul.replaceChildren();
   for (const m of S.models) {
     const active = m.name === S.model.name && !S.model.remote, loading = m.name === S.model.loading;
-    const tip = [m.name, sizeText(m.bytes), m.parameters && `${m.parameters.toLocaleString('fr-CH')} paramètres`, m.blockSize && `contexte ${m.blockSize} tokens`, { 'weights.dat': 'poids TorchSharp (weights.dat)', gguf: 'modèle GGUF' }[m.weights] ?? 'poids safetensors', m.license && `licence ${m.license}`].filter(Boolean).join('\n');
+    const tip = [m.name, sizeText(m.bytes), m.parameters && t('conversation.parametres_2', { parameters: m.parameters.toLocaleString(locale()) }), m.blockSize && `contexte ${m.blockSize} tokens`, { 'weights.dat': t('conversation.poids_torchsharp_weights_dat'), gguf: t('conversation.modele_gguf') }[m.weights] ?? 'poids safetensors', m.license && `licence ${m.license}`].filter(Boolean).join('\n');
     ul.append(h('li', {
       class: (active ? 'active ' : '') + (loading ? 'loading' : ''), title: tip,
       onclick: () => !active && loadModel(m.name), oncontextmenu: (e) => { e.preventDefault(); modelMenu(m, e); },
-    }, h('span', { class: 'dot' }), h('span', { class: 'label' }, m.name), h('span', { class: 'meta' }, loading ? 'chargement…' : paramsText(m.parameters)),
-    h('button', { class: 'more', title: 'Plus…', 'aria-label': 'Plus', onclick: (e) => { e.stopPropagation(); modelMenu(m, e); } }, icon('ellipsis'))));
+    }, h('span', { class: 'dot' }), h('span', { class: 'label' }, m.name), h('span', { class: 'meta' }, loading ? t('conversation.chargement') : paramsText(m.parameters)),
+    h('button', { class: 'more', title: t('conversation.plus'), 'aria-label': t('conversation.plus_2'), onclick: (e) => { e.stopPropagation(); modelMenu(m, e); } }, icon('ellipsis'))));
   }
   for (const p of S.providers) for (const m of p.models ?? []) {
     const active = S.model.remote?.provider === p.id && S.model.remote?.model === m.id;
-    const tip = [`${m.label ?? m.id} · ${p.name}`, p.url, m.contextLength && `contexte ${m.contextLength} tokens`, m.temperature !== undefined && `température ${m.temperature}`,
+    const tip = [`${m.label ?? m.id} · ${p.name}`, p.url, m.contextLength && `contexte ${m.contextLength} tokens`, m.temperature !== undefined && t('conversation.temperature', { temperature: m.temperature }),
       m.topP !== undefined && `top-p ${m.topP}`, m.maxTokens && `max ${m.maxTokens} tokens`].filter(Boolean).join('\n');
     ul.append(h('li', { class: 'remote' + (active ? ' active' : ''), title: tip, 'data-provider': p.id, 'data-model': m.id, onclick: () => !active && selectRemote(p, m) },
-      h('span', { class: 'dot' }), h('span', { class: 'label' }, m.id), h('span', { class: 'badge' }, 'réseau'), h('span', { class: 'meta' }, p.name)));
+      h('span', { class: 'dot' }), h('span', { class: 'label' }, m.id), h('span', { class: 'badge' }, t('conversation.reseau')), h('span', { class: 'meta' }, p.name)));
   }
-  if (!S.models.length && !S.providers.some((p) => p.models?.length)) ul.append(h('li', { class: 'none', onclick: () => openCatalog() }, 'Aucun modèle. Glisse un .nelmodel ou un .gguf ici, ou ouvre le catalogue ', icon('download'), '.'));
+  if (!S.models.length && !S.providers.some((p) => p.models?.length)) ul.append(h('li', { class: 'none', onclick: () => openCatalog() }, t('conversation.aucun_modele_glisse_nelmodel_gguf'), icon('download'), '.'));
 }
 
 export function renderHeader() {
   const s = S.current;
   $('title').textContent = titleOf(s);
   const dir = s.workingDirectory || '';
-  $('folder-name').textContent = dir ? dir.split(/[\\/]/).filter(Boolean).pop() || dir : 'aucun dossier';
-  $('folder-chip').title = 'Dossier de travail : ' + (dir || '(aucun)') + '\nClic : changer';
-  document.title = `${titleOf(s)} — Nel Code`;
+  $('folder-name').textContent = dir ? dir.split(/[\\/]/).filter(Boolean).pop() || dir : t('conversation.no_folder');
+  $('folder-chip').title = t('conversation.folder_title', { dir: dir || t('conversation.folder_none') });
+  document.title = t('conversation.nel_code', { titleOf: titleOf(s) });
   $('compare-chip').hidden = !s.compare;
   $('claude-chip').hidden = !s.claudeAgent;
-  if (s.claudeAgent) $('claude-chip').replaceChildren(icon('bot'), h('span', {}, `Claude Agent${s.claudeAgent.cost ? ' · ' + money(s.claudeAgent.cost) : ''}`));
+  if (s.claudeAgent) $('claude-chip').replaceChildren(icon('bot'), h('span', {}, t('conversation.claude_agent', { v0: s.claudeAgent.cost ? ' · ' + money(s.claudeAgent.cost) : '' })));
   $('agent-btn').hidden = !!s.claudeAgent;
   renderUsageChip();
   if (s.compare) $('compare-chip').replaceChildren(`A ${s.compare.a}`, icon('arrow-left-right'), h('span', {}, `B ${s.compare.b}`));
@@ -709,7 +714,7 @@ export function renderMessages() {
   const fadedEnd = summarized + 2 * Math.max(0, dropped - (sm ? 1 : 0));
   s.messages.forEach((m, i) => {
     if (sm && i === summarized) box.append(summaryEl(sm));
-    if (fadedEnd > summarized && i === fadedEnd) box.append(h('div', { class: 'faded-sep' }, 'au-dessus : hors de la mémoire du modèle'));
+    if (fadedEnd > summarized && i === fadedEnd) box.append(h('div', { class: 'faded-sep' }, t('conversation.au_dessus_hors_memoire_modele')));
     if (g?.kind === 'regen' && i === g.index) return box.append(g.el = streamingEl());
     box.append(m.compare ? compareEl(m, i) : messageEl(m, i, i < fadedEnd));
   });
@@ -733,7 +738,7 @@ export function streamingEl() {
   return h('div', { class: 'msg assistant ' + (g.text ? 'streaming' : 'thinking') },
     g.reasoning ? reasoningEl(g.reasoning, ((g.thinkEnd ?? Date.now()) - g.thinkStart) / 1000, !g.thinkEnd) : null,
     g.steps.length ? stepsEl(g.steps, null) : null,
-    liveBody(g.text, 'réfléchit…'));
+    liveBody(g.text, t('conversation.reflechit')));
 }
 
 export function messageEl(m, i, faded) {
@@ -749,8 +754,8 @@ export function messageEl(m, i, faded) {
       if (e.key === 'Escape') { e.stopPropagation(); closeEdit(); renderMessages(); }
     });
     el.append(ta, h('div', { class: 'edit-actions' },
-      h('button', { class: 'btn', onclick: () => { closeEdit(); renderMessages(); } }, 'Annuler'),
-      h('button', { class: 'btn primary', onclick: go }, 'Envoyer')));
+      h('button', { class: 'btn', onclick: () => { closeEdit(); renderMessages(); } }, t('conversation.annuler')),
+      h('button', { class: 'btn primary', onclick: go }, t('conversation.envoyer'))));
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); autoGrow(ta); }, 0);
     return el;
   }
@@ -760,23 +765,23 @@ export function messageEl(m, i, faded) {
   el.append(user ? h('div', { class: 'body' }, richText(m.content)) : bodyEl(m.content, m.tokens));
   const busy = !!S.gen;
   const acts = h('div', { class: 'actions' });
-  acts.append(actionButton([icon('copy'), 'Copier'], 'Copier le message', async (e) => {
+  acts.append(actionButton([icon('copy'), t('conversation.copier')], t('conversation.copier_message'), async (e) => {
     const b = e.currentTarget;
     await navigator.clipboard.writeText(m.content);
-    b.replaceChildren(icon('check'), 'Copié'); setTimeout(() => b.replaceChildren(icon('copy'), 'Copier'), 1200);
+    b.replaceChildren(icon('check'), t('conversation.copie')); setTimeout(() => b.replaceChildren(icon('copy'), t('conversation.copier')), 1200);
   }));
-  if (user && !S.current.claudeAgent) acts.append(actionButton([icon('pencil'), 'Modifier'], 'Modifier et renvoyer (la suite est retirée)', () => startEdit(i), busy));
+  if (user && !S.current.claudeAgent) acts.append(actionButton([icon('pencil'), t('conversation.modifier')], t('conversation.modifier_renvoyer_suite_est_retiree'), () => startEdit(i), busy));
   else {
     const prev = S.current.messages[i - 1];
-    if (m.claude) acts.append(h('span', { class: 'claude-cost', title: 'Coût estimé par l\'outil claude, et durée de la demande' }, claudeCost(m.claude)));
-    if (prev?.role === 'user' && !S.current.compare && !S.current.claudeAgent) acts.append(actionButton([icon('refresh-cw'), 'Régénérer'], 'Nouvelle réponse, gardée comme une version de plus', () => regenerate(i), busy));
-    if (m.agent?.checkpoint) acts.append(actionButton([icon('undo-2'), 'Revenir à avant cette demande'], 'Remettre les fichiers du projet dans leur état d\'avant cette demande (point de restauration git)', () => restoreCheckpoint(i), busy));
+    if (m.claude) acts.append(h('span', { class: 'claude-cost', title: t('conversation.cout_estime_par_outil_claude') }, claudeCost(m.claude)));
+    if (prev?.role === 'user' && !S.current.compare && !S.current.claudeAgent) acts.append(actionButton([icon('refresh-cw'), t('conversation.regenerer')], t('conversation.nouvelle_reponse_gardee_comme_version'), () => regenerate(i), busy));
+    if (m.agent?.checkpoint) acts.append(actionButton([icon('undo-2'), t('conversation.revenir_avant_cette_demande')], t('conversation.remettre_fichiers_projet_dans_leur'), () => restoreCheckpoint(i), busy));
     if (m.versions?.length > 1) {
       const at = m.versions.indexOf(m.content);
       acts.append(h('span', { class: 'versions' },
-        actionButton(icon('chevron-left'), 'Version précédente', () => stepVersion(i, -1), busy || at <= 0),
+        actionButton(icon('chevron-left'), t('conversation.version_precedente'), () => stepVersion(i, -1), busy || at <= 0),
         `${at + 1}/${m.versions.length}`,
-        actionButton(icon('chevron-right'), 'Version suivante', () => stepVersion(i, +1), busy || at >= m.versions.length - 1)));
+        actionButton(icon('chevron-right'), t('conversation.version_suivante'), () => stepVersion(i, +1), busy || at >= m.versions.length - 1)));
       acts.classList.add('keep');
     }
   }
@@ -787,14 +792,14 @@ export function messageEl(m, i, faded) {
 // Mode Agent dans un dépôt git : le dossier reprend l'état du point de restauration pris avant la demande de la
 // réponse i. Les écritures acceptées de cette demande et des suivantes deviennent « annulée » ; les messages restent.
 export async function restoreCheckpoint(i) {
-  if (S.gen) return toast('Attends la fin de la réponse (ou Stop).', 'warning');
+  if (S.gen) return toast(t('conversation.attends_fin_reponse_stop'), 'warning');
   const s = S.current, c = s.messages[i].agent.checkpoint;
-  if (!(await confirmDialog('Revenir à avant cette demande',
-    `Tous les fichiers du projet (${c.dir}) reviennent à leur état d'avant cette demande, y compris les modifications faites depuis (à la main ou par les demandes suivantes), et les fichiers créés depuis sont supprimés. Les fichiers ignorés par .gitignore et les fichiers protégés (.env, clés…) ne sont pas touchés. La conversation reste telle quelle.`,
-    'Revenir à avant cette demande', true))) return;
-  try { await invoke('agent_restore', { dir: c.dir, id: c.id }); } catch (e) { return toast('Restauration impossible : ' + errText(e), 'error', 8000); }
+  if (!(await confirmDialog(t('conversation.revenir_avant_cette_demande'),
+    t('conversation.tous_fichiers_projet_reviennent_leur', { dir: c.dir }),
+    t('conversation.revenir_avant_cette_demande'), true))) return;
+  try { await invoke('agent_restore', { dir: c.dir, id: c.id }); } catch (e) { return toast(t('conversation.restauration_impossible', { error: errText(e) }), 'error', 8000); }
   for (const m of s.messages.slice(i)) for (const st of m.agent?.steps ?? []) if ((st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted') st.status = 'undone';
-  toast('Fichiers remis dans leur état d\'avant cette demande.', 'success');
+  toast(t('conversation.fichiers_remis_dans_leur_etat'), 'success');
   await saveSession(s);
   renderMessages();
   refreshFiles(true);
@@ -804,39 +809,38 @@ export function renderComposer() {
   const b = $('send');
   b.classList.toggle('stop', !!S.gen);
   b.replaceChildren(icon(S.gen ? 'square' : 'arrow-up'));
-  b.title = S.gen ? 'Arrêter (Échap)' : 'Envoyer (Entrée)';
-  b.setAttribute('aria-label', S.gen ? 'Arrêter' : 'Envoyer');
+  b.title = S.gen ? t('conversation.arreter_echap') : t('conversation.envoyer_entree');
+  b.setAttribute('aria-label', S.gen ? t('conversation.stop') : t('conversation.envoyer'));
 }
 
 export function renderStatus() {
   const st = $('status');
   st.replaceChildren();
-  if (S.model.loading) st.append(h('span', { class: 'spinner' }), `Chargement de ${S.model.loading}…`);
-  else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), `${S.gen.side.toUpperCase()} · ${S.gen.session.compare[S.gen.side]} écrit…  Échap pour arrêter`);
-  else if (S.gen?.kind === 'summary') st.append(h('span', { class: 'spinner' }), `${S.model.name} résume les échanges précédents…  Échap pour arrêter`);
-  else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
-  else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
-  else if (S.current?.claudeAgent) st.append(`Claude Agent${S.claudeStatus?.model ? ' · ' + S.claudeStatus.model : ''} · ${S.claudeStatus?.permissionMode === 'acceptEdits' ? 'modifications de fichiers acceptées' : 'rien d\'automatique'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
+  if (S.model.loading) st.append(h('span', { class: 'spinner' }), t('conversation.chargement_2', { loading: S.model.loading }));
+  else if (S.gen?.kind === 'compare') st.append(h('span', { class: 'spinner' }), t('conversation.ecrit_echap_pour_arreter', { side: S.gen.side.toUpperCase(), v1: S.gen.session.compare[S.gen.side] }));
+  else if (S.gen?.kind === 'summary') st.append(h('span', { class: 'spinner' }), t('conversation.resume_echanges_precedents_echap_pour', { name: S.model.name }));
+  else if (S.gen) st.append(h('span', { class: 'spinner' }), t('conversation.ecrit_echap_pour_arreter_2', { name: S.model.name }));
+  else if (S.bench) st.append(h('span', { class: 'spinner' }), t('conversation.test_vitesse', { bench: S.bench }));
+  else if (S.current?.claudeAgent) st.append(t('conversation.claude_agent_2', { v0: S.claudeStatus?.model ? ' · ' + S.claudeStatus.model : '', v1: S.claudeStatus?.permissionMode === 'acceptEdits' ? t('conversation.modifications_fichiers_acceptees') : t('conversation.nothing_automatic'), v2: S.lastSpeed ? ' · ' + S.lastSpeed : '' }));
   // Liens directs : le modèle → Réglages → Modèles ; le calcul (CPU, GPU) → Calcul ; un serveur → Fournisseurs.
-  else if (S.model.name) st.append(h('button', { class: 'status-link', 'data-settings': 'models', title: 'Réglages → Modèles' }, S.model.name), ' · ',
-    S.model.remote ? h('button', { class: 'status-link', 'data-settings': 'providers', title: 'Réglages → Fournisseurs' }, S.model.device)
-      : h('button', { class: 'status-link', 'data-settings': 'calc', 'data-setting': 'device', title: 'Réglages → Calcul (CPU ou GPU)' }, S.model.device ?? 'CPU'),
+  else if (S.model.name) st.append(h('button', { class: 'status-link', 'data-settings': 'models', title: t('conversation.reglages_modeles') }, S.model.name), ' · ',
+    S.model.remote ? h('button', { class: 'status-link', 'data-settings': 'providers', title: t('conversation.reglages_fournisseurs') }, tr(S.model.device))
+      : h('button', { class: 'status-link', 'data-settings': 'calc', 'data-setting': 'device', title: t('conversation.reglages_calcul_cpu_gpu') }, tr(S.model.device ?? 'CPU')),
     S.lastSpeed ? ' · ' + S.lastSpeed : '');
-  else st.append('aucun modèle chargé');
-  if (S.server.port) st.append(h('span', { class: 'server-on', title: `Serveur local (API OpenAI) : http://127.0.0.1:${S.server.port}/v1` },
-    S.server.busy ? h('span', { class: 'spinner' }) : h('span', { class: 'dot' }), S.server.busy ? `API · répond…` : `API :${S.server.port}`));
+  else st.append(t('conversation.aucun_modele_charge'));
+  if (S.server.port) st.append(h('span', { class: 'server-on', title: t('conversation.serveur_local_api_openai_http', { port: S.server.port }) },
+    S.server.busy ? h('span', { class: 'spinner' }) : h('span', { class: 'dot' }), S.server.busy ? t('conversation.api_repond') : `API :${S.server.port}`));
 }
 
 // Si les anciens échanges sont résumés : ce que le modèle lit à leur place.
-const summaryNote = () => { const sm = summaryOf(S.current); return sm ? `
-Les ${sm.upTo / 2} premiers échanges sont remplacés par leur résumé (/compact pour le refaire).` : ''; };
+const summaryNote = () => { const sm = summaryOf(S.current); return sm ? t('conversation.summary_note', { n: sm.upTo / 2 }) : ''; };
 
 export function refreshContext() {
   clearTimeout(UI.contextTimer);
   UI.contextTimer = setTimeout(async () => {
     const fill = $('context-fill');
-    if (S.current?.claudeAgent) { S.context = null; $('context-text').textContent = 'contexte géré par Claude Agent'; fill.style.width = '0'; return; }
-    if (!S.model.name) { S.context = null; $('context-text').textContent = '— / — tokens'; fill.style.width = '0'; return; }
+    if (S.current?.claudeAgent) { S.context = null; $('context-text').textContent = t('conversation.contexte_gere_par_claude_agent'); fill.style.width = '0'; return; }
+    if (!S.model.name) { S.context = null; $('context-text').textContent = t('conversation.tokens'); fill.style.width = '0'; return; }
     if (S.model.remote) {
       // Pas de tokenizer pour un modèle distant : environ 4 caractères par token, et l'estimation de chaque image.
       const chars = historyOf(S.current).flat().join('').length + (await expandMentions($('input').value, true)).length;
@@ -847,9 +851,9 @@ export function refreshContext() {
       S.context = null;
       fill.style.width = ctx ? Math.min(100, 100 * n / ctx) + '%' : '0';
       fill.className = ctx && n > ctx ? 'full' : ctx && n > 0.8 * ctx ? 'warn' : '';
-      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (count ? ` · ${count} image${count > 1 ? 's' : ''} ≈ ${pics} (estimation)` : '') + (tools ? ` · outils ≈ ${tools}` : '') + (summaryOf(S.current) ? ' · résumé' : '');
-      $('context').title = 'Estimation (environ 4 caractères par token) : le modèle distant compte lui-même.' + (count ? '\nImages (estimation, environ largeur × hauteur / 750) :\n' + detail.join('\n') : '')
-        + (tools ? `\nDéfinitions d'outils du mode Agent : ≈ ${tools} tokens (Nel Code ≈ ${S.mcpCtx.builtin}${S.mcpCtx.servers.filter((x) => x.on).map((x) => `, MCP ${x.name} ≈ ${x.tokens}`).join('')})` : '') + summaryNote();
+      $('context-text').textContent = (ctx ? `≈ ${n} / ${ctx} tokens` : `≈ ${n} tokens`) + (count ? t('conversation.images_estimate', { n: count, pics }) : '') + (tools ? t('conversation.outils', { tools: tools }) : '') + (summaryOf(S.current) ? t('conversation.resume') : '');
+      $('context').title = t('conversation.estimation_environ_caracteres_par_token', { value: (count ? t('conversation.images_estimation_environ_largeur_hauteur') + detail.join('\n') : '') })
+        + (tools ? t('conversation.definitions_outils_mode_agent_tokens', { tools: tools, builtin: S.mcpCtx.builtin, v2: S.mcpCtx.servers.filter((x) => x.on).map((x) => `, MCP ${x.name} ≈ ${x.tokens}`).join('') }) : '') + summaryNote();
       return;
     }
     try {
@@ -859,8 +863,8 @@ export function refreshContext() {
       const ratio = (c.tokens + c.reserve) / c.blockSize;
       fill.style.width = Math.min(100, 100 * c.tokens / c.blockSize) + '%';
       fill.className = ratio > 1 ? 'full' : ratio > 0.8 ? 'warn' : '';
-      $('context-text').textContent = `${c.tokens} / ${c.blockSize} tokens` + (summaryOf(S.current) ? ' · résumé' : '');
-      $('context').title = `Le modèle verra ${c.tokens} tokens au prochain message (contexte max ${c.blockSize}, dont ${c.reserve} gardés pour la réponse).\n${c.keptTurns} échange(s) précédent(s) en mémoire.${ratio > 1 ? '\nTrop long : le modèle n\'en lira que la fin.' : ''}${summaryNote()}`;
+      $('context-text').textContent = `${c.tokens} / ${c.blockSize} tokens` + (summaryOf(S.current) ? t('conversation.resume') : '');
+      $('context').title = t('conversation.context_title', { n: c.keptTurns, tokens: c.tokens, blockSize: c.blockSize, reserve: c.reserve, keptTurns: c.keptTurns, v4: ratio > 1 ? t('conversation.trop_long_modele_lira_que') : '', summaryNote: summaryNote() });
       if (changed && !S.gen && UI.editing === null) renderMessages();
     } catch { /* modèle en cours de changement */ }
   }, 150);
@@ -868,21 +872,21 @@ export function refreshContext() {
 
 export function sessionMenu(s, e) {
   showMenu(e, [
-    { label: 'Ouvrir', run: () => openSession(s) },
-    { label: 'Renommer…', run: () => renameSession(s) },
-    { label: 'Exporter en Markdown…', run: () => exportSession(s, true) },
-    { label: 'Exporter en texte…', run: () => exportSession(s, false) },
-    { label: 'Dossier de travail…', run: () => chooseFolder(s) },
+    { label: t('conversation.ouvrir'), run: () => openSession(s) },
+    { label: t('conversation.renommer'), run: () => renameSession(s) },
+    { label: t('conversation.exporter_markdown'), run: () => exportSession(s, true) },
+    { label: t('conversation.exporter_texte'), run: () => exportSession(s, false) },
+    { label: t('conversation.dossier_travail_2'), run: () => chooseFolder(s) },
     '-',
-    { label: 'Supprimer…', danger: true, run: () => deleteSession(s) },
+    { label: t('conversation.supprimer_2'), danger: true, run: () => deleteSession(s) },
   ]);
 }
 
 export function modelMenu(m, e) {
   showMenu(e, [
-    { label: m.name === S.model.name ? 'Recharger' : 'Charger', run: () => loadModel(m.name) },
+    { label: m.name === S.model.name ? t('conversation.recharger') : t('conversation.charger'), run: () => loadModel(m.name) },
     '-',
-    { label: 'Supprimer…', danger: true, run: () => deleteModel(m.name) },
+    { label: t('conversation.supprimer_2'), danger: true, run: () => deleteModel(m.name) },
   ]);
 }
 
@@ -908,7 +912,7 @@ export async function submitInput() {
   if (text !== line && S.model.name && !S.current.compare) {
     try {
       const c = await invoke('context_info', { history: historyOf(S.current), message: text });
-      if (c.tokens + c.reserve > c.blockSize && !(await confirmDialog('Le message dépasse le contexte', `Avec ses fichiers, le message fait ${c.tokens.toLocaleString('fr-CH')} tokens, et le modèle n'en voit que ${c.blockSize.toLocaleString('fr-CH')} (dont ${c.reserve} pour la réponse) : il n'en lira que la fin.`, 'Envoyer quand même'))) return;
+      if (c.tokens + c.reserve > c.blockSize && !(await confirmDialog(t('conversation.message_depasse_contexte'), t('conversation.avec_ses_fichiers_message_fait', { tokens: c.tokens.toLocaleString(locale()), blockSize: c.blockSize.toLocaleString(locale()), reserve: c.reserve }), t('conversation.envoyer_quand_meme')))) return;
     } catch { /* modèle en cours de changement */ }
   }
   input.value = ''; autoGrow(input); refreshContext();
@@ -921,5 +925,5 @@ export function onDrop(paths) {
   const pictures = paths.filter(isImagePath);
   if (pkg) importFlow(pkg);
   else if (pictures.length) addPaths(pictures);
-  else if (paths.length) toast('Seuls les images (PNG, JPEG, WebP, GIF), les .nelmodel et les .gguf peuvent être déposés.', 'warning');
+  else if (paths.length) toast(t('conversation.seuls_images_png_jpeg_webp'), 'warning');
 }

@@ -86,7 +86,7 @@ test('position hors des écrans (écran débranché) : 80 % centrée, état remp
       const s = await savedState(A, (s) => s.x !== off.x || s.y !== off.y, 'nouvel état enregistré');
       assert.equal(s.maximized, false);
       const logs = fs.readdirSync(path.join(A.home, 'logs')).map((f) => fs.readFileSync(path.join(A.home, 'logs', f), 'utf8')).join('');
-      assert.match(logs, /position enregistrée hors des écrans actuels/);
+      assert.match(logs, /saved position outside the current screens/);
     } finally { await A.close(); }
   }
 });

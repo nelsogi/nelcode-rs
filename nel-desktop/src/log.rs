@@ -39,7 +39,8 @@ fn write(level: &str, message: &str) {
     static LOCK: Mutex<()> = Mutex::new(());
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (day, time) = now();
-    let line = format!("{time} {level:<5} {}\n", message.replace(['\r', '\n'], " "));
+    // En anglais : un message codé (une erreur de Nel Code) est rendu avec le catalogue anglais.
+    let line = format!("{time} {level:<5} {}\n", crate::i18n::english(message).replace(['\r', '\n'], " "));
     let _ = fs::create_dir_all(dir());
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(dir().join(format!("nelcode-{day}.log"))) {
         let _ = f.write_all(line.as_bytes());

@@ -5,6 +5,7 @@
 
 // http:// vers une autre machine : les messages passent en clair sur le réseau.
 
+import { t } from './i18n.js';
 import { errText, h, invoke, toast } from './util.js';
 import { S } from './state.js';
 import { refreshContext, renderModels, renderStatus } from './conversation.js';
@@ -22,7 +23,7 @@ export async function refreshProviders() {
 export async function providersSection() {
   await refreshProviders();
   let sel = S.providers[0] ?? null;   // le fournisseur affiché (ou un nouveau, pas encore enregistré)
-  const list = h('div', { class: 'provider-list', role: 'listbox', 'aria-label': 'Fournisseurs' });
+  const list = h('div', { class: 'provider-list', role: 'listbox', 'aria-label': t('providers.fournisseurs') });
   const detail = h('div', { class: 'provider-detail' });
   const isSel = (p) => !!sel && (p.id ? p.id === sel.id : p === sel);
   // La liste seule (après un enregistrement : le formulaire ouvert reste, avec son état et ses messages).
@@ -36,12 +37,12 @@ export async function providersSection() {
         const b = e.key === 'ArrowDown' ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling;
         if (b) { b.click(); list.querySelector('.sel')?.focus(); }
       } },
-      h('span', { class: 'name' }, p.name || 'Nouveau fournisseur'), h('span', { class: 'meta' }, p.id ? `${p.models?.length ?? 0} modèle(s)${p.hasKey ? ' · clé' : ''}` : 'pas encore enregistré'))) : [h('div', { class: 'hint' }, 'Aucun fournisseur.')]));
+      h('span', { class: 'name' }, p.name || t('providers.nouveau_fournisseur')), h('span', { class: 'meta' }, p.id ? t('providers.models_meta', { n: p.models?.length ?? 0, key: p.hasKey ? t('providers.cle') : '' }) : t('providers.pas_encore_enregistre')))) : [h('div', { class: 'hint' }, t('providers.aucun_fournisseur'))]));
   };
   const draw = () => {
     if (sel?.id) sel = S.providers.find((p) => p.id === sel.id) ?? S.providers[0] ?? null;   // à jour, ou supprimé
     drawList();
-    detail.replaceChildren(sel ? providerForm(sel, () => { sel = S.providers[0] ?? null; draw(); }, drawList) : h('p', { class: 'hint' }, 'Ajoute un fournisseur pour utiliser les modèles d\'un serveur (Ollama, llama.cpp, LM Studio…) ou l\'API Claude.'));
+    detail.replaceChildren(sel ? providerForm(sel, () => { sel = S.providers[0] ?? null; draw(); }, drawList) : h('p', { class: 'hint' }, t('providers.ajoute_fournisseur_pour_utiliser_modeles')));
   };
   const add = (p) => { sel = p; draw(); (detail.querySelector(p.kind === 'anthropic' ? '.key' : 'input'))?.focus(); };
   draw();
@@ -49,27 +50,27 @@ export async function providersSection() {
   const qwen = h('button', { class: 'btn', onclick: async () => {
     try {
       const r = await invoke('import_qwen');
-      toast(`Qwen Code : ${r.providers} fournisseur(s) créé(s), ${r.models} modèle(s) importé(s)${r.keys ? `, clé rangée dans le ${S.info.keystore}` : ''}.`, 'success', 6000);
+      toast(t('providers.qwen_code_fournisseur_cree_modele', { providers: r.providers, models: r.models, v2: r.keys ? t('providers.cle_rangee_dans', { keystore: S.info.keystore }) : '' }), 'success', 6000);
       await refreshProviders(); draw();
-    } catch (e) { toast('Import depuis Qwen Code : ' + errText(e), 'error', 8000); }
-  } }, icon('download'), 'Importer depuis Qwen Code');
+    } catch (e) { toast(t('providers.import_depuis_qwen_code', { error: errText(e) }), 'error', 8000); }
+  } }, icon('download'), t('providers.importer_depuis_qwen_code'));
   return h('div', { class: 'providers-field' },
     h('div', { class: 'providers-split' },
       h('div', { class: 'providers-side' }, list,
         h('div', { class: 'col-btns' },
-          h('button', { class: 'btn', onclick: () => add({ models: [] }) }, icon('plus'), 'Ajouter un fournisseur'),
-          h('button', { class: 'btn', title: 'API d\'Anthropic, clé API de la Console Anthropic', onclick: () => add({ name: 'Claude', url: 'https://api.anthropic.com/v1/', kind: 'anthropic', omitSampling: true, models: [] }) }, icon('plus'), 'Ajouter Claude (Anthropic)'),
+          h('button', { class: 'btn', onclick: () => add({ models: [] }) }, icon('plus'), t('providers.ajouter_fournisseur')),
+          h('button', { class: 'btn', title: t('providers.api_anthropic_cle_api_console'), onclick: () => add({ name: 'Claude', url: 'https://api.anthropic.com/v1/', kind: 'anthropic', omitSampling: true, models: [] }) }, icon('plus'), t('providers.ajouter_claude_anthropic')),
           qwen)),
       detail),
-    h('div', { class: 'hint' }, `Un serveur compatible avec l'API OpenAI : llama.cpp, Ollama (http://hôte:11434/v1), LM Studio… Ses modèles apparaissent dans la liste avec le badge « réseau ». La clé va dans le ${S.info.keystore}, jamais dans settings.json.`));
+    h('div', { class: 'hint' }, t('providers.serveur_compatible_avec_api_openai', { keystore: S.info.keystore })));
 }
 
 export function providerForm(p, redraw, onSaved = () => {}) {
-  const name = h('input', { class: 'text-input name', placeholder: 'Nom (ex. Ollama du labo)', value: p.name ?? '', spellcheck: 'false' });
-  const url = h('input', { class: 'text-input url', placeholder: 'http://10.5.33.228:11434/v1', value: p.url ?? '', spellcheck: 'false' });
-  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)' });
-  const warn = h('div', { class: 'warn-text http' }, icon('circle-alert'), 'Adresse en http : les messages passent en clair sur le réseau. Préfère https si le serveur le permet.');
-  const status = h('div', { class: 'hint status' }, p.models?.length ? `${p.models.length} modèle(s) : ${p.models.map((m) => m.id).join(', ')}` : '');
+  const name = h('input', { class: 'text-input name', placeholder: t('providers.nom_ex_ollama_labo'), value: p.name ?? '', spellcheck: 'false' });
+  const url = h('input', { class: 'text-input url', placeholder: t('providers.http_10_33_228_11434'), value: p.url ?? '', spellcheck: 'false' });
+  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: p.hasKey ? t('providers.cle_enregistree_vide_inchangee') : t('providers.cle_facultative') });
+  const warn = h('div', { class: 'warn-text http' }, icon('circle-alert'), t('providers.adresse_http_messages_passent_clair'));
+  const status = h('div', { class: 'hint status' }, p.models?.length ? t('providers.models_list', { n: p.models.length, list: p.models.map((m) => m.id).join(', ') }) : '');
   const omit = h('input', { type: 'checkbox', class: 'omit-sampling', checked: !!p.omitSampling });
   const showWarn = () => (warn.hidden = !cleartext(url.value));
   url.addEventListener('input', showWarn);
@@ -81,7 +82,7 @@ export function providerForm(p, redraw, onSaved = () => {}) {
       const saved = await invoke('save_provider', { id: p.id ?? null, name: name.value, url: url.value, key: newKey, kind: p.kind ?? 'openai', omitSampling: omit.checked });
       Object.assign(p, saved);
       key.value = '';
-      key.placeholder = p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)';
+      key.placeholder = p.hasKey ? t('providers.cle_enregistree_vide_inchangee') : t('providers.cle_facultative');
       form.dataset.id = p.id;
       url.value = p.url;
       await refreshProviders();
@@ -92,34 +93,34 @@ export function providerForm(p, redraw, onSaved = () => {}) {
   const test = async () => {
     if (!(await save())) return;
     status.className = 'hint status';
-    status.replaceChildren(h('span', { class: 'spinner' }), 'Test…');
+    status.replaceChildren(h('span', { class: 'spinner' }), t('providers.test'));
     try {
       const ids = await invoke('test_provider', { id: p.id });
-      status.textContent = ids.length ? `${ids.length} modèle(s) : ${ids.join(', ')}` : 'Le serveur répond, mais ne propose aucun modèle.';
+      status.textContent = ids.length ? t('providers.models_list', { n: ids.length, list: ids.join(', ') }) : t('providers.serveur_repond_mais_ne_propose');
       await refreshProviders();
       onSaved(p);
     } catch (e) { status.className = 'warn-text status'; status.textContent = errText(e); }
   };
-  form.append(h('div', { class: 'row-btns' }, name, h('button', { class: 'btn', onclick: test }, icon('refresh-cw'), 'Tester'),
-    h('button', { class: 'btn', onclick: async () => (await save()) && toast('Fournisseur enregistré.', 'success', 2000) }, 'Enregistrer'),
-    h('button', { class: 'btn danger', title: 'Supprimer le fournisseur (et sa clé)', onclick: async () => {
+  form.append(h('div', { class: 'row-btns' }, name, h('button', { class: 'btn', onclick: test }, icon('refresh-cw'), t('providers.tester')),
+    h('button', { class: 'btn', onclick: async () => (await save()) && toast(t('providers.fournisseur_enregistre'), 'success', 2000) }, t('providers.enregistrer')),
+    h('button', { class: 'btn danger', title: t('providers.supprimer_fournisseur_sa_cle'), onclick: async () => {
       if (!p.id) return redraw();   // pas encore enregistré
       await invoke('delete_provider', { id: p.id });
       if (S.model.remote?.provider === p.id) Object.assign(S.model, { name: null, remote: null, blockSize: null });
       await refreshProviders(); redraw(); renderStatus(); refreshContext();
-    } }, 'Supprimer')),
-  url, h('div', { class: 'row-btns' }, key, p.hasKey ? h('button', { class: 'btn', onclick: () => save('').then(() => toast('Clé retirée.', 'success', 2000)) }, 'Retirer la clé') : null),
-  h('label', { class: 'check' }, omit, 'Ne pas envoyer temperature/top_p', p.kind === 'anthropic' ? h('span', { class: 'badge' }, 'Anthropic') : null), warn, status,
+    } }, t('providers.supprimer'))),
+  url, h('div', { class: 'row-btns' }, key, p.hasKey ? h('button', { class: 'btn', onclick: () => save('').then(() => toast(t('providers.cle_retiree'), 'success', 2000)) }, t('providers.retirer_cle')) : null),
+  h('label', { class: 'check' }, omit, t('providers.ne_pas_envoyer_temperature_top'), p.kind === 'anthropic' ? h('span', { class: 'badge' }, t('providers.anthropic')) : null), warn, status,
   p.id && p.models?.length ? visionTable(p) : null);
   return form;
 }
 
 // Images : chaque modèle, détecté automatiquement (Claude, Ollama, llama.cpp) ou réglé à la main.
 function visionTable(p) {
-  const detected = (m) => ({ true: 'voit les images', false: 'ne les voit pas' })[m.visionDetected] ?? 'inconnu';
+  const detected = (m) => ({ true: t('providers.voit_images'), false: t('providers.ne_voit_pas') })[m.visionDetected] ?? 'inconnu';
   const rows = p.models.map((m) => {
     const sel = h('select', { class: 'text-input vision', 'data-model': m.id },
-      h('option', { value: 'auto' }, `Automatique (${detected(m)})`), h('option', { value: 'yes' }, 'Voit les images'), h('option', { value: 'no' }, 'Ne voit pas les images'));
+      h('option', { value: 'auto' }, t('providers.automatique', { detected: detected(m) })), h('option', { value: 'yes' }, t('providers.voit_images_2')), h('option', { value: 'no' }, t('providers.ne_voit_pas_images')));
     sel.value = m.vision === true ? 'yes' : m.vision === false ? 'no' : 'auto';
     sel.addEventListener('change', async () => {
       try {
@@ -130,6 +131,6 @@ function visionTable(p) {
     });
     return h('tr', {}, h('td', {}, m.id), h('td', {}, sel));
   });
-  return h('details', { class: 'vision-models' }, h('summary', {}, icon('image'), 'Images'),
-    h('table', {}, rows), h('div', { class: 'hint' }, 'Automatique : les modèles Claude voient les images ; pour Ollama et llama.cpp, Nel Code le demande au serveur quand le modèle est choisi. Les autres serveurs ne le disent pas : règle-le ici.'));
+  return h('details', { class: 'vision-models' }, h('summary', {}, icon('image'), t('providers.images')),
+    h('table', {}, rows), h('div', { class: 'hint' }, t('providers.automatique_modeles_claude_voient_images')));
 }

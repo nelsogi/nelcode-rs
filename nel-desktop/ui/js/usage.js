@@ -3,13 +3,14 @@
 // Les textes (noms de modèles, projets) passent toujours par textContent, jamais par innerHTML.
 // Toutes les sommes d'argent sont des estimations (table de prix, ou coût donné par Claude Agent).
 
+import { locale, t } from './i18n.js';
 import { $, confirmDialog, dialog, errText, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { commit } from './settings-page.js';
 
 // --- Formats ----------------------------------------------------------------------------------------------
 
-const nf = (x, d = 0) => Number(x ?? 0).toLocaleString('fr-CH', { minimumFractionDigits: d, maximumFractionDigits: d });
+const nf = (x, d = 0) => Number(x ?? 0).toLocaleString(locale(), { minimumFractionDigits: d, maximumFractionDigits: d });
 
 /** Un coût estimé : « ≈ 0,0123 $ » (4 décimales sous 1 $, 2 au-delà). */
 export const usd = (x) => `≈ ${nf(x, Math.abs(x ?? 0) >= 1 ? 2 : 4)} $`;
@@ -17,7 +18,7 @@ export const usd = (x) => `≈ ${nf(x, Math.abs(x ?? 0) >= 1 ? 2 : 4)} $`;
 /** Des tokens : « 950 », « 12,3 k », « 4,56 M ». */
 export const tokensText = (n) => (n >= 1e6 ? nf(n / 1e6, 2) + ' M' : n >= 1e4 ? nf(n / 1e3, 1) + ' k' : nf(n));
 
-export const KIND_LABEL = { chat: 'chat', agent: 'mode Agent', 'claude-agent': 'Claude Agent', api: 'serveur local (API)' };
+export const KIND_LABEL = { chat: 'usage.kind.chat', agent: 'usage.kind.agent', 'claude-agent': 'usage.kind.claude', api: 'usage.kind.api' };   // clés
 
 const pad = (n) => String(n).padStart(2, '0');
 /** Le jour local « AAAA-MM-JJ » d'une date. */
@@ -39,9 +40,9 @@ const inRange = (e, [a, b]) => { const d = String(e.date ?? '').slice(0, 10); re
 
 /** Les sommes d'une liste de lignes : réponses, tokens d'entrée et de sortie, durée, coût. */
 export function totals(entries) {
-  const t = { n: 0, input: 0, output: 0, seconds: 0, cost: 0 };
-  for (const e of entries) { t.n += e.n ?? 1; t.input += e.input ?? 0; t.output += e.output ?? 0; t.seconds += e.seconds ?? 0; t.cost += e.cost ?? 0; }
-  return t;
+  const tx = { n: 0, input: 0, output: 0, seconds: 0, cost: 0 };
+  for (const e of entries) { tx.n += e.n ?? 1; tx.input += e.input ?? 0; tx.output += e.output ?? 0; tx.seconds += e.seconds ?? 0; tx.cost += e.cost ?? 0; }
+  return tx;
 }
 
 /** Les lignes regroupées par `key(e)`, triées par `metric` décroissant : [{ key, ...totals }]. */
@@ -51,7 +52,7 @@ export function groupBy(entries, key, metric = 'tokens') {
   return [...m].map(([k, list]) => ({ key: k, ...totals(list) })).sort((a, b) => value(b, metric) - value(a, metric));
 }
 
-const value = (t, metric) => (metric === 'cost' ? t.cost : t.input + t.output);
+const value = (tx, metric) => (metric === 'cost' ? tx.cost : tx.input + tx.output);
 
 /** Par jour sur les `days` derniers jours (jours vides compris, du plus ancien au plus récent). */
 export function byDay(entries, days, now = new Date()) {
@@ -77,11 +78,11 @@ function svg(tag, attrs = {}, ...children) {
 // Une barre au bout arrondi (4 px) du côté de la valeur, l'autre bout carré sur la ligne de base.
 function columnPath(x, y, w, base) {
   const r = Math.min(4, w / 2, base - y);
-  return `M${x},${base}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${base}Z`;
+  return `M${x},${base}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${base}Z`;   // i18n-ignore (chemin SVG)
 }
 function rowPath(x, y, w, hgt) {
   const r = Math.min(4, hgt / 2, w);
-  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt - r}Q${x + w},${y + hgt} ${x + w - r},${y + hgt}H${x}Z`;
+  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt - r}Q${x + w},${y + hgt} ${x + w - r},${y + hgt}H${x}Z`;   // i18n-ignore (chemin SVG)
 }
 
 const fmt = (v, metric) => (metric === 'cost' ? usd(v) : tokensText(v) + ' tokens');
@@ -99,17 +100,17 @@ export function dayChart(rows, metric) {
   const max = niceMax(Math.max(...rows.map((r) => value(r, metric))));
   const step = (W - left) / rows.length, bw = Math.max(2, Math.min(28, step - 2));
   const every = Math.ceil(rows.length / 10);
-  const label = (d) => d.toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' });
+  const label = (d) => d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
   const marks = rows.map((r, i) => {
     const v = value(r, metric), x = left + i * step + (step - bw) / 2, y = base - (base - top) * (v / max);
-    const tip = `${r.date.toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'long' })} : ${fmt(v, metric)} · ${nf(r.n)} réponse${r.n > 1 ? 's' : ''}`;
+    const tip = t('usage.day_tip', { date: r.date.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'long' }), value: fmt(v, metric), n: r.n, count: nf(r.n) });
     return svg('g', { class: 'mark' },
       svg('title', {}, tip),
       svg('rect', { class: 'hit', x: left + i * step, y: top, width: step, height: base - top }),
       v > 0 ? svg('path', { class: 'bar', d: columnPath(x, Math.min(y, base - 1), bw, base) }) : null,
       i % every === 0 || i === rows.length - 1 ? svg('text', { class: 'axis', x: x + bw / 2, y: base + 16, 'text-anchor': 'middle' }, label(r.date)) : null);
   });
-  return svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Par jour (${metric === 'cost' ? 'coût estimé' : 'tokens'})` },
+  return svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': t('usage.par_jour', { v0: metric === 'cost' ? t('usage.cout_estime') : 'tokens' }) },
     svg('line', { class: 'grid', x1: 0, x2: W, y1: top, y2: top }),
     svg('text', { class: 'axis', x: W, y: top - 5, 'text-anchor': 'end' }, fmt(max, metric)),
     svg('line', { class: 'baseline', x1: 0, x2: W, y1: base, y2: base }),
@@ -123,15 +124,15 @@ export function rankChart(groups, metric, label = (k) => k) {
     const rest = rows.slice(7);
     rows = [...rows.slice(0, 7), { key: null, ...totals(rest), others: rest.length }];
   }
-  if (!rows.length) return h('div', { class: 'chart-empty' }, metric === 'cost' ? 'Aucun coût sur la période (modèles gratuits).' : 'Rien sur la période.');
+  if (!rows.length) return h('div', { class: 'chart-empty' }, metric === 'cost' ? t('usage.aucun_cout_sur_periode_modeles') : t('usage.rien_sur_periode'));
   const W = 840, row = 26, bh = 14, lw = 220, vw = 150, H = rows.length * row;
   const max = Math.max(...rows.map((r) => value(r, metric)));
   return svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img' }, rows.map((r, i) => {
     const v = value(r, metric), y = i * row + (row - bh) / 2, w = Math.max(2, (W - lw - vw) * v / max);
-    const name = r.key === null ? `Autres (${r.others})` : label(r.key);
+    const name = r.key === null ? t('usage.autres', { others: r.others }) : label(r.key);
     const short = name.length > 30 ? name.slice(0, 29) + '…' : name;
     return svg('g', { class: 'mark' },
-      svg('title', {}, `${name} : ${fmt(v, metric)} · ${nf(r.n)} réponse${r.n > 1 ? 's' : ''}${r.key && r.key !== name ? '\n' + r.key : ''}`),
+      svg('title', {}, t('usage.bar_tip', { name, value: fmt(v, metric), n: r.n, count: nf(r.n), key: r.key && r.key !== name ? '\n' + r.key : '' })),
       svg('rect', { class: 'hit', x: 0, y: i * row, width: W, height: row }),
       svg('text', { class: 'label', x: 0, y: y + bh - 2 }, short),
       svg('path', { class: 'bar', d: rowPath(lw, y, w, bh) }),
@@ -146,25 +147,25 @@ const VIEW = { metric: 'tokens', days: 30 };
 export async function openUsage() {
   let entries, budget;
   try { [entries, budget] = await Promise.all([invoke('usage_entries'), invoke('budget_status', { model: null, claude: true })]); }
-  catch (e) { return toast('Suivi : ' + errText(e), 'error'); }
+  catch (e) { return toast(t('usage.suivi', { error: errText(e) }), 'error'); }
   const box = h('div', { class: 'usage' });
   const draw = () => box.replaceChildren(...usageBody(entries, budget, draw));
   draw();
-  const choice = await dialog('Suivi', box, [{ label: 'Exporter en CSV…', value: 'csv' }, { label: 'Fermer', value: null, primary: true }]);
+  const choice = await dialog(t('usage.suivi_2'), box, [{ label: t('usage.exporter_csv'), value: 'csv' }, { label: t('usage.fermer'), value: null, primary: true }]);
   if (choice === 'csv') {
-    try { const path = await invoke('save_usage_csv'); if (path) toast('Suivi exporté : ' + path, 'success'); } catch (e) { toast(errText(e), 'error'); }
+    try { const path = await invoke('save_usage_csv'); if (path) toast(t('usage.suivi_exporte', { value: path }), 'success'); } catch (e) { toast(errText(e), 'error'); }
   }
 }
 
 function usageBody(entries, budget, redraw) {
   const p = periods();
   const tile = (name, range) => {
-    const t = totals(entries.filter((e) => inRange(e, range)));
+    const tx = totals(entries.filter((e) => inRange(e, range)));
     return h('div', { class: 'tile', 'data-period': name },
-      h('div', { class: 'tile-name' }, { today: 'Aujourd\'hui', week: 'Cette semaine', month: 'Ce mois' }[name]),
-      h('div', { class: 'tile-value' }, tokensText(t.input + t.output), h('span', {}, ' tokens')),
-      h('div', { class: 'tile-meta' }, `${usd(t.cost)} · ${nf(t.n)} réponse${t.n > 1 ? 's' : ''}`),
-      h('div', { class: 'tile-meta' }, `entrée ${tokensText(t.input)} · sortie ${tokensText(t.output)}`));
+      h('div', { class: 'tile-name' }, { today: t('usage.aujourd_hui'), week: t('usage.cette_semaine'), month: t('usage.ce_mois') }[name]),
+      h('div', { class: 'tile-value' }, tokensText(tx.input + tx.output), h('span', {}, ' tokens')),
+      h('div', { class: 'tile-meta' }, t('usage.tile_meta', { usd: usd(tx.cost), n: tx.n, count: nf(tx.n) })),
+      h('div', { class: 'tile-meta' }, t('usage.entree_sortie', { tokensText: tokensText(tx.input), tokensText2: tokensText(tx.output) })));
   };
   const seg = (key, options) => h('div', { class: 'seg', role: 'group' }, options.map(([v, text]) =>
     h('button', { class: VIEW[key] === v ? 'on' : '', 'aria-pressed': VIEW[key] === v ? 'true' : 'false', 'data-view': `${key}:${v}`, onclick: () => { VIEW[key] = v; redraw(); } }, text)));
@@ -177,26 +178,26 @@ function usageBody(entries, budget, redraw) {
   ];
   if (budget.budget > 0) {
     const pc = budget.percent, state = pc >= 100 ? 'over' : pc >= 80 ? 'warn' : '';
-    out.push(h('div', { class: 'budget ' + state, title: 'Fournisseurs payants seulement (coûts estimés)' },
-      h('span', {}, `Budget du mois : ${usd(budget.monthCost)} sur ${nf(budget.budget, 2)} $ (${nf(pc)} %)`),
+    out.push(h('div', { class: 'budget ' + state, title: t('usage.fournisseurs_payants_seulement_couts_estimes') },
+      h('span', {}, t('usage.budget_mois_sur', { usd: usd(budget.monthCost), nf: nf(budget.budget, 2), nf2: nf(pc) })),
       h('div', { class: 'bar' }, h('div', { style: `width:${Math.min(100, pc)}%` }))));
   }
   if (!entries.length) {
-    out.push(h('p', { class: 'hint' }, 'Pas encore de réponse enregistrée. Chaque réponse (chat, mode Agent, Claude Agent, serveur local) ajoute une ligne : date, projet, modèle, tokens, durée — jamais le texte des messages.'));
+    out.push(h('p', { class: 'hint' }, t('usage.pas_encore_reponse_enregistree_chaque')));
     return out;
   }
   out.push(
-    h('div', { class: 'filters' }, seg('metric', [['tokens', 'Tokens'], ['cost', 'Coût estimé']]), seg('days', [[7, '7 jours'], [30, '30 jours'], [90, '90 jours']])),
-    section('Par jour', dayChart(byDay(entries, VIEW.days), VIEW.metric), 'by-day'),
-    section('Par fournisseur', rankChart(groupBy(period, (e) => e.provider || '?', VIEW.metric), VIEW.metric, (k) => (k === 'local' ? 'Ce PC' : k)), 'by-provider'),
-    section('Par modèle', rankChart(models, VIEW.metric), 'by-model'),
-    section('Par projet', rankChart(groupBy(period, (e) => e.project || '', VIEW.metric), VIEW.metric, projectLabel), 'by-project'),
-    section('Temps de réponse par modèle', h('table', { class: 'board speed' },
-      h('tr', {}, ['Modèle', 'Réponses', 'Temps moyen', 'Tokens/s', 'Tokens', 'Coût estimé'].map((t) => h('th', {}, t))),
+    h('div', { class: 'filters' }, seg('metric', [['tokens', t('usage.tokens')], ['cost', t('usage.cout_estime_2')]]), seg('days', [[7, '7 jours'], [30, '30 jours'], [90, '90 jours']])),
+    section(t('usage.par_jour_2'), dayChart(byDay(entries, VIEW.days), VIEW.metric), 'by-day'),
+    section(t('usage.par_fournisseur'), rankChart(groupBy(period, (e) => e.provider || '?', VIEW.metric), VIEW.metric, (k) => (k === 'local' ? t('usage.ce_pc') : k)), 'by-provider'),
+    section(t('usage.par_modele'), rankChart(models, VIEW.metric), 'by-model'),
+    section(t('usage.par_projet'), rankChart(groupBy(period, (e) => e.project || '', VIEW.metric), VIEW.metric, projectLabel), 'by-project'),
+    section(t('usage.temps_reponse_par_modele'), h('table', { class: 'board speed' },
+      h('tr', {}, [t('usage.modele'), t('usage.reponses'), t('usage.temps_moyen'), t('usage.tokens_2'), t('usage.tokens'), t('usage.cout_estime_2')].map((tx) => h('th', {}, tx))),
       [...models].sort((a, b) => b.n - a.n).map((m) => h('tr', {},
         h('td', {}, m.key), h('td', {}, nf(m.n)), h('td', {}, nf(m.seconds / Math.max(1, m.n), 1) + ' s'),
         h('td', {}, m.seconds > 0 ? nf(m.output / m.seconds, 1) : '—'), h('td', {}, tokensText(m.input + m.output)), h('td', {}, usd(m.cost))))), 'by-speed'),
-    h('div', { class: 'hint' }, `Les ${VIEW.days} derniers jours. Coûts estimés avec la table de prix des Réglages (0 pour les modèles de ce PC et ceux sans prix) ; Claude Agent donne son propre coût. Au-delà de 90 jours, les réponses sont regroupées par jour.`),
+    h('div', { class: 'hint' }, t('usage.derniers_jours_couts_estimes_avec', { days: VIEW.days })),
   );
   return out;
 }
@@ -214,8 +215,8 @@ export function renderUsageChip() {
   const chip = $('usage-chip'), u = S.current?.usage;
   chip.hidden = !u || !(u.input + u.output);
   if (chip.hidden) return;
-  chip.replaceChildren(h('span', {}, `${tokensText(u.input + u.output)} tokens · ${usd(u.cost)}`));
-  chip.title = `Conversation : ${nf(u.input)} tokens d'entrée, ${nf(u.output)} de sortie.\nCoût estimé : ${usd(u.cost)} (estimation, table de prix des Réglages). Clic : page Suivi.`;
+  chip.replaceChildren(h('span', {}, t('usage.tokens_3', { tokensText: tokensText(u.input + u.output), usd: usd(u.cost) })));
+  chip.title = t('usage.conversation_tokens_entree_sortie_cout', { nf: nf(u.input), nf2: nf(u.output), usd: usd(u.cost) });
 }
 
 // --- Budget mensuel -------------------------------------------------------------------------------------------
@@ -228,8 +229,8 @@ export async function budgetOk({ model = null, claude = false }) {
   if (!b.paid || !(b.budget > 0)) return true;
   if (b.percent >= 100) {
     if (!b.confirm) return true;
-    return confirmDialog('Budget du mois atteint',
-      `Ce mois-ci : ${usd(b.monthCost)} sur un budget de ${nf(b.budget, 2)} $ (estimation). Cette demande est payante : l'envoyer quand même ?`, 'Envoyer quand même');
+    return confirmDialog(t('usage.budget_mois_atteint'),
+      t('usage.ce_mois_ci_sur_budget', { usd: usd(b.monthCost), nf: nf(b.budget, 2) }), t('usage.envoyer_quand_meme'));
   }
   warnBudget(b);
   return true;
@@ -244,7 +245,7 @@ export async function afterPaid(usage) {
 function warnBudget(b) {
   if (!(b.budget > 0) || b.percent < 80 || UI.budgetWarned === b.month) return;
   UI.budgetWarned = b.month;
-  toast(`Budget du mois : ${nf(b.percent)} % utilisés (${usd(b.monthCost)} sur ${nf(b.budget, 2)} $).`, 'warning', 6000);
+  toast(t('usage.budget_mois_utilises_sur', { nf: nf(b.percent), usd: usd(b.monthCost), nf2: nf(b.budget, 2) }), 'warning', 6000);
 }
 
 // --- Réglages : budget et table de prix ---------------------------------------------------------------------
@@ -267,7 +268,7 @@ export function parsePrices(text) {
  *  réglages (elle suit celle de Nel Code). */
 export async function pricesBlock() {
   const info = await invoke('usage_prices');
-  const table = h('textarea', { class: 'text-input prices', rows: 7, spellcheck: 'false', 'aria-label': 'Prix par million de tokens', 'aria-describedby': 'prices-err' });
+  const table = h('textarea', { class: 'text-input prices', rows: 7, spellcheck: 'false', 'aria-label': t('usage.prix_par_million_tokens'), 'aria-describedby': 'prices-err' });
   table.value = priceLines(info.prices);
   const err = h('div', { class: 'setting-error', id: 'prices-err', role: 'alert', hidden: true });
   const key = (list) => JSON.stringify(list.map((p) => [p.model, Number(p.input), Number(p.output)]));
@@ -276,7 +277,7 @@ export async function pricesBlock() {
     clearTimeout(timer);
     const { prices, bad } = parsePrices(table.value);
     err.hidden = !bad.length;
-    err.textContent = bad.length ? `Format « modèle entrée sortie » attendu : ${bad.join(' · ')}` : '';
+    err.textContent = bad.length ? t('usage.format_modele_entree_sortie_attendu', { bad: bad.join(' · ') }) : '';
     table.setAttribute('aria-invalid', bad.length ? 'true' : 'false');
     if (bad.length || key(prices) === last) return;
     last = key(prices);
@@ -285,9 +286,9 @@ export async function pricesBlock() {
   };
   table.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(save, 800); });
   table.addEventListener('blur', save);
-  const checked = new Date(info.checked + 'T12:00:00').toLocaleDateString('fr-CH', { day: 'numeric', month: 'long', year: 'numeric' });
+  const checked = new Date(info.checked + 'T12:00:00').toLocaleDateString(locale(), { day: 'numeric', month: 'long', year: 'numeric' });
   return h('div', { class: 'usage-field' }, table, err,
-    h('div', { class: 'row-btns' }, h('button', { class: 'btn', onclick: () => { table.value = priceLines(info.defaults); save(); } }, 'Prix par défaut')),
-    h('div', { class: 'hint prices-checked' }, `Prix des modèles Claude vérifiés le ${checked} sur la page officielle des tarifs d'Anthropic (${info.source}), tarif de base. `
-      + 'Un nom couvre aussi ses variantes datées (claude-sonnet-4-5 → claude-sonnet-4-5-20250929). Tous les coûts sont des estimations ; modèles de ce PC et modèles sans prix : 0.'));
+    h('div', { class: 'row-btns' }, h('button', { class: 'btn', onclick: () => { table.value = priceLines(info.defaults); save(); } }, t('usage.prix_par_defaut'))),
+    h('div', { class: 'hint prices-checked' }, t('usage.prix_modeles_claude_verifies_sur', { checked: checked, source: info.source })
+      + t('usage.nom_couvre_aussi_ses_variantes')));
 }

@@ -1,6 +1,7 @@
 //! Le catalogue : quelques modèles ouverts vérifiés, téléchargés depuis Hugging Face à une révision fixe, empreinte
 //! SHA-256 écrite ici et vérifiée avant l'installation. Aussi le téléchargement vérifié du pack GPU.
 
+use crate::t;
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,7 +32,7 @@ pub struct Entry {
 pub const CATALOG: [Entry; 2] = [
     Entry {
         name: "Qwen2.5-Coder-0.5B-Instruct",
-        description: "Petit modèle de code d'Alibaba (Qwen), rapide même sur CPU. Quantifié Q4_K_M.",
+        description: "rs.catalog.qwen_small",
         url: "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/ebb2015119c907b064c512bf053e945850b5875f/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
         sha256: "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
         bytes: 491_400_064,
@@ -42,7 +43,7 @@ pub const CATALOG: [Entry; 2] = [
     },
     Entry {
         name: "Qwen2.5-Coder-1.5B-Instruct",
-        description: "Modèle de code d'Alibaba (Qwen), meilleur que le 0.5B, plus lent. Quantifié Q4_K_M.",
+        description: "rs.catalog.qwen_large",
         url: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/f86cb2c1fa58255f8052cc32aeede1b7482d4361/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
         sha256: "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
         bytes: 1_117_320_768,
@@ -78,7 +79,7 @@ pub async fn download(app: &AppHandle, url: &str, dest: &Path, sha256: &str, byt
 async fn download_inner(app: &AppHandle, url: &str, dest: &Path, sha256: &str, bytes: u64, cancel: &AtomicBool, event: &str, tag: serde_json::Value) -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::Client::builder().user_agent("NelCode").build().map_err(|e| e.to_string())?;
-    let mut resp = client.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|e| format!("téléchargement impossible : {e}"))?;
+    let mut resp = client.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|e| t!("rs.catalog.download_failed", error = e.to_string()))?;
     let total = resp.content_length().unwrap_or(bytes);
     let mut file = fs::File::create(dest).map_err(|e| e.to_string())?;
     let mut hash = Sha256::new();
@@ -88,16 +89,16 @@ async fn download_inner(app: &AppHandle, url: &str, dest: &Path, sha256: &str, b
         p.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
         let _ = app.emit(event, p);
     };
-    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("téléchargement interrompu : {e}"))? {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| t!("rs.catalog.interrupted", error = e.to_string()))? {
         if cancel.load(Ordering::SeqCst) {
             return Err("annulé".into());
         }
         received += chunk.len() as u64;
         if received > bytes + 1_000_000 {
-            return Err("le fichier téléchargé est plus gros que prévu".into());
+            return Err(t!("rs.catalog.too_big"));
         }
         hash.update(&chunk);
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("écriture impossible : {e}"))?;
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| t!("rs.catalog.write_failed", error = e.to_string()))?;
         if received - last > 1_000_000 || received == total {
             last = received;
             progress(received, json!({}));
@@ -106,7 +107,7 @@ async fn download_inner(app: &AppHandle, url: &str, dest: &Path, sha256: &str, b
     drop(file);
     let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
     if digest != sha256 {
-        return Err(format!("empreinte SHA-256 incorrecte : le fichier est refusé ({digest})"));
+        return Err(t!("rs.catalog.bad_hash", digest = digest));
     }
     progress(received, json!({ "extracting": true }));
     Ok(())
@@ -126,12 +127,12 @@ pub fn list() -> serde_json::Value {
 
 /// Télécharge et installe le modèle `name` du catalogue (« catalog-progress »).
 pub async fn install(app: &AppHandle, name: &str, cancel: &AtomicBool) -> Result<store::ImportReport> {
-    let e = CATALOG.iter().find(|e| e.name == name).ok_or_else(|| format!("« {name} » n'est pas dans le catalogue"))?;
+    let e = CATALOG.iter().find(|e| e.name == name).ok_or_else(|| t!("rs.catalog.unknown", name = name))?;
     fs::create_dir_all(store::root()).map_err(|e| e.to_string())?;
     if let Some(free) = crate::os::free_bytes(&store::root())
         && free < 2 * e.bytes
     {
-        return Err(format!("espace disque insuffisant : {} Mo libres, {} Mo nécessaires", free / 1_000_000, 2 * e.bytes / 1_000_000));
+        return Err(t!("rs.disk.space", free = free / 1_000_000, need = 2 * e.bytes / 1_000_000));
     }
     let tmp = store::temp_folder();
     fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
@@ -145,7 +146,7 @@ pub async fn install(app: &AppHandle, name: &str, cancel: &AtomicBool) -> Result
     .await;
     let _ = fs::remove_dir_all(&tmp);
     match &result {
-        Ok(_) => crate::log::info(&format!("modèle « {name} » installé depuis le catalogue")),
+        Ok(_) => crate::log::info(&format!("model \"{name}\" installed from the catalog")),
         Err(err) => crate::log::error(&format!("catalogue, « {name} » : {err}")),
     }
     result

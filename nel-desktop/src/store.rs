@@ -1,6 +1,7 @@
 //! Les fichiers de Nel Code, partagés avec la version C# : %APPDATA%\NelCode\{models, sessions, settings.json} sous
 //! Windows ; ailleurs, le dossier de données du système (voir `os::data_dir`).
 
+use crate::t;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -124,7 +125,7 @@ fn load_counted(folder: &Path, device: &Device) -> Result<(NelModel, u64)> {
     let config: Config = serde_json::from_slice(&read(&folder.join("config.json"))?).map_err(|e| format!("config.json : {e}"))?;
     let tok = read(&folder.join("tokenizer.json"))?;
     let tokenizer = Tokenizer::from_json(std::str::from_utf8(&tok).map_err(|e| e.to_string())?, config.vocab_size).map_err(|e| e.to_string())?;
-    let (weights, kind) = weights_file(folder).ok_or("ni model.safetensors ni weights.dat")?;
+    let (weights, kind) = weights_file(folder).ok_or_else(|| t!("rs.store.no_weights"))?;
     let tensors = if kind == "safetensors" {
         candle_core::safetensors::load(&weights, &Device::Cpu).map_err(|e| format!("model.safetensors : {e}"))?
     } else {
@@ -163,23 +164,21 @@ pub struct ImportReport {
 /// Le contenu de model-info.json d'un .nelmodel, vérifié (zip lisible, fichiers présents, formatVersion).
 pub fn read_package_info(path: &Path) -> Result<serde_json::Value> {
     let file = fs::File::open(path).map_err(|e| format!("{} : {e}", path.display()))?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|_| format!("« {} » n'est pas une archive zip valide", file_name(path)))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|_| t!("rs.store.not_zip", name = file_name(path)))?;
     let has = |zip: &zip::ZipArchive<fs::File>, f: &str| zip.index_for_name(f).is_some();
     let mut missing: Vec<&str> = ["config.json", "tokenizer.json", "model-info.json"].into_iter().filter(|f| !has(&zip, f)).collect();
     if !has(&zip, "model.safetensors") && !has(&zip, "weights.dat") {
         missing.push("model.safetensors");
     }
     if !missing.is_empty() {
-        return Err(format!("fichier(s) manquant(s) dans le .nelmodel : {}", missing.join(", ")));
+        return Err(t!("rs.store.missing_files", files = missing.join(", ")));
     }
     let info: serde_json::Value = serde_json::from_slice(&read_zip_entry(&mut zip, "model-info.json", 1 << 20)?)
-        .map_err(|e| format!("model-info.json illisible : {e}"))?;
+        .map_err(|e| t!("rs.store.info_unreadable", error = e.to_string()))?;
     match info["formatVersion"].as_u64() {
-        None => Err("model-info.json n'indique pas de formatVersion".into()),
-        Some(0) => Err("formatVersion 0 invalide".into()),
-        Some(v) if v > FORMAT_VERSION => Err(format!(
-            "format trop récent (formatVersion {v}, Nel Code lit jusqu'à la version {FORMAT_VERSION}) : mets Nel Code à jour"
-        )),
+        None => Err(t!("rs.store.no_format_version")),
+        Some(0) => Err(t!("rs.store.format_zero")),
+        Some(v) if v > FORMAT_VERSION => Err(t!("rs.store.format_too_new", v = v, max = FORMAT_VERSION)),
         Some(_) => Ok(info),
     }
 }
@@ -196,7 +195,7 @@ fn read_zip_entry(zip: &mut zip::ZipArchive<fs::File>, name: &str, limit: u64) -
     let mut bytes = Vec::new();
     entry.take(limit + 1).read_to_end(&mut bytes).map_err(|e| format!("{name} : {e}"))?;
     if bytes.len() as u64 > limit {
-        return Err(format!("{name} est trop gros"));
+        return Err(t!("rs.store.entry_too_big", name = name));
     }
     Ok(bytes)
 }
@@ -219,7 +218,7 @@ pub fn suggested_name(path: &Path, info: &serde_json::Value) -> String {
 /// `replace`) qu'une fois le nouveau vérifié. Erreur "exists" si le nom est pris et `replace` est faux.
 pub fn import(path: &Path, name: &str, replace: bool) -> Result<ImportReport> {
     if !valid_name(name) {
-        return Err(format!("« {name} » n'est pas un nom de modèle valide"));
+        return Err(t!("rs.store.bad_name", name = name));
     }
     if is_gguf(path) {
         return import_gguf(path, name, replace, serde_json::json!({ "source": file_name(path) }));
@@ -238,12 +237,12 @@ pub fn import(path: &Path, name: &str, replace: bool) -> Result<ImportReport> {
                 fs::write(staging.join(file), read_zip_entry(&mut zip, file, limit)?).map_err(|e| e.to_string())?;
             }
         }
-        let (_, parameters) = load_counted(&staging, &Device::Cpu).map_err(|e| format!("le modèle ne se charge pas : {e}"))?;
+        let (_, parameters) = load_counted(&staging, &Device::Cpu).map_err(|e| t!("rs.store.load_failed", error = e.to_string()))?;
         install(&staging, &target)?;
         let warning = info["parameters"]
             .as_u64()
             .filter(|&p| p != parameters)
-            .map(|p| format!("model-info.json annonce {p} paramètres, le modèle en a {parameters}"));
+            .map(|p| t!("rs.store.param_mismatch", announced = p, actual = parameters));
         Ok(ImportReport { name: name.to_string(), parameters, warning })
     })();
     if staging.exists() {
@@ -267,7 +266,7 @@ pub fn read_gguf_info(path: &Path) -> Result<serde_json::Value> {
 /// `path` peut déjà être dans le dossier temporaire (catalogue) : il y est alors déplacé, pas copié.
 pub fn import_gguf(path: &Path, name: &str, replace: bool, extra: serde_json::Value) -> Result<ImportReport> {
     if !valid_name(name) {
-        return Err(format!("« {name} » n'est pas un nom de modèle valide"));
+        return Err(t!("rs.store.bad_name", name = name));
     }
     let target = models_dir().join(name);
     if target.exists() && !replace {
@@ -280,7 +279,7 @@ pub fn import_gguf(path: &Path, name: &str, replace: bool, extra: serde_json::Va
         if path.starts_with(root()) {
             fs::rename(path, staging.join(GGUF_FILE)).map_err(|e| e.to_string())?;
         } else {
-            fs::copy(path, staging.join(GGUF_FILE)).map_err(|e| format!("copie impossible : {e}"))?;
+            fs::copy(path, staging.join(GGUF_FILE)).map_err(|e| t!("rs.store.copy_failed", error = e.to_string()))?;
         }
         if let Some(tok) = path.parent().map(|d| d.join("tokenizer.json")).filter(|t| t.is_file()) {
             fs::copy(tok, staging.join("tokenizer.json")).map_err(|e| e.to_string())?;
@@ -292,7 +291,7 @@ pub fn import_gguf(path: &Path, name: &str, replace: bool, extra: serde_json::Va
             meta[k] = v.clone();
         }
         fs::write(staging.join("model-info.json"), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
-        GgufModel::load(&staging.join(GGUF_FILE), &Device::Cpu, 512).map_err(|e| format!("le modèle ne se charge pas : {e}"))?;
+        GgufModel::load(&staging.join(GGUF_FILE), &Device::Cpu, 512).map_err(|e| t!("rs.store.load_failed", error = e.to_string()))?;
         install(&staging, &target)?;
         Ok(ImportReport { name: name.to_string(), parameters: info.parameters, warning: None })
     })();
@@ -309,7 +308,7 @@ fn install(staging: &Path, target: &Path) -> Result<()> {
         return fs::rename(staging, target).map_err(|e| e.to_string());
     }
     let old = temp_folder();
-    fs::rename(target, &old).map_err(|e| format!("l'ancien modèle est utilisé ({e})"))?;
+    fs::rename(target, &old).map_err(|e| t!("rs.store.old_in_use", error = e.to_string()))?;
     if let Err(e) = fs::rename(staging, target) {
         let _ = fs::rename(&old, target);
         return Err(e.to_string());
@@ -321,7 +320,7 @@ fn install(staging: &Path, target: &Path) -> Result<()> {
 pub fn delete_model(name: &str) -> Result<()> {
     let folder = models_dir().join(name);
     if !valid_name(name) || !is_model_folder(&folder) {
-        return Err(format!("modèle inconnu : « {name} »"));
+        return Err(t!("rs.store.unknown_model", name = name));
     }
     fs::remove_dir_all(folder).map_err(|e| e.to_string())
 }
@@ -348,7 +347,7 @@ pub fn list_sessions() -> Vec<serde_json::Value> {
 
 /// Écrit à côté puis remplace : une coupure pendant l'écriture ne perd pas la conversation.
 pub fn save_session(session: &serde_json::Value) -> Result<()> {
-    let id = session["id"].as_str().filter(|id| valid_name(id)).ok_or("conversation sans id valide")?;
+    let id = session["id"].as_str().filter(|id| valid_name(id)).ok_or_else(|| t!("rs.store.bad_session_id"))?;
     fs::create_dir_all(sessions_dir()).map_err(|e| e.to_string())?;
     let path = sessions_dir().join(format!("{id}.json"));
     let tmp = path.with_extension("json.tmp");
@@ -358,13 +357,13 @@ pub fn save_session(session: &serde_json::Value) -> Result<()> {
 
 pub fn delete_session(id: &str) -> Result<()> {
     if !valid_name(id) {
-        return Err("id invalide".into());
+        return Err(t!("rs.store.bad_id"));
     }
     match fs::remove_file(sessions_dir().join(format!("{id}.json"))) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
         // Ses images partent avec elle.
         _ => match fs::remove_dir_all(sessions_dir().join(id)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("images de la conversation : {e}")),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(t!("rs.store.session_images", error = e.to_string())),
             _ => Ok(()),
         },
     }
@@ -398,11 +397,11 @@ fn read_settings() -> Result<Option<serde_json::Value>> {
             Err(e) => last = e.to_string(),
             Ok(b) => match serde_json::from_slice::<serde_json::Value>(&b) {
                 Ok(v) if v.is_object() => return Ok(Some(v)),
-                _ => last = "pas un objet JSON".into(),
+                _ => last = "not a JSON object".into(),
             },
         }
     }
-    Err(format!("settings.json illisible ({last})"))
+    Err(t!("rs.store.settings_unreadable", error = last))
 }
 
 pub fn load_settings() -> serde_json::Value {
@@ -422,8 +421,8 @@ pub fn update_settings<T>(change: impl FnOnce(&mut serde_json::Value) -> Result<
         Ok(s) => s,
         Err(e) => {
             // Jamais écraser des réglages qu'on n'a pas su lire : le fichier est mis de côté.
-            fs::rename(&path, root().join("settings.illisible.json")).map_err(|r| format!("{e} ; réglages non enregistrés ({r})"))?;
-            crate::log::error(&format!("{e} : mis de côté dans settings.illisible.json"));
+            fs::rename(&path, root().join("settings.illisible.json")).map_err(|r| t!("rs.store.settings_not_saved_moved", error = e.clone(), reason = r.to_string()))?;
+            crate::log::error(&format!("{e}: moved aside to settings.illisible.json"));
             None
         }
     };
@@ -444,7 +443,7 @@ pub fn update_settings<T>(change: impl FnOnce(&mut serde_json::Value) -> Result<
     }
     if let Err(e) = renamed {
         let _ = fs::remove_file(&tmp);
-        return Err(format!("réglages non enregistrés : {e}"));
+        return Err(t!("rs.store.settings_not_saved", error = e.to_string()));
     }
     Ok((s, out))
 }
@@ -500,6 +499,14 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["allowedCommands"] = allowed.into();
+    // MCP : les serveurs désactivés par défaut dans les nouvelles conversations (leurs clés « g:nom », « p…:nom »).
+    let mut mcp_off: Vec<String> = Vec::new();
+    for k in s["mcpDefaultOff"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(str::trim) {
+        if !k.is_empty() && k.len() <= 300 && !mcp_off.iter().any(|x| x == k) && mcp_off.len() < 200 {
+            mcp_off.push(k.to_string());
+        }
+    }
+    s["mcpDefaultOff"] = mcp_off.into();
     // Claude Agent : mode de permission (rien d'automatique par défaut, ou acceptEdits) et outils autorisés.
     let mode = s["claudePermissionMode"].as_str().filter(|m| crate::claude_agent::PERMISSION_MODES.contains(m)).unwrap_or("default").to_string();
     s["claudePermissionMode"] = mode.into();
@@ -528,9 +535,10 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     // Interface : taille du texte (80 à 150 %, par pas de 10), panneau Fichiers ouvert, premier lancement fait.
     s["textSize"] = ((num(&s["textSize"], 100.0).clamp(80.0, 150.0) / 10.0).round() as u64 * 10).into();
     s["filesPanel"] = s["filesPanel"].as_bool().unwrap_or(false).into();
-    // Le thème (« dark » ou « light ») reste tel quel : il est partagé avec Nel Code C#. Langue (le français seulement pour l'instant), densité de l'interface, et le
+    // Le thème (« dark » ou « light ») reste tel quel : il est partagé avec Nel Code C#. Langue (auto : celle du système, fr, en), densité de l'interface, et le
     // modèle chargé au démarrage (vide : le dernier utilisé ; sinon un nom de modèle ou « remote:fournisseur/modèle »).
-    s["language"] = "fr".into();
+    let language = s["language"].as_str().filter(|l| ["auto", "fr", "en"].contains(l)).unwrap_or("auto").to_string();
+    s["language"] = language.into();
     let density = s["density"].as_str().filter(|d| DENSITIES.contains(d)).unwrap_or("normal").to_string();
     s["density"] = density.into();
     let default_model = s["defaultModel"].as_str().map(str::trim).filter(|m| m.len() <= 300).unwrap_or_default().to_string();
@@ -582,13 +590,13 @@ pub fn export_settings() -> serde_json::Value {
 /// montre d'abord ce qui change). Rend aussi les clés ignorées.
 pub fn parse_settings_export(text: &str) -> Result<serde_json::Value> {
     if text.len() > 1 << 20 {
-        return Err("fichier trop gros pour des réglages (plus de 1 Mo)".into());
+        return Err(t!("rs.settings.too_big"));
     }
-    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("pas un fichier JSON valide ({e})"))?;
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| t!("rs.settings.not_json", error = e.to_string()))?;
     // Le fichier d'export, ou directement l'objet des réglages.
     let src = if v["nelcode"] == "settings" { &v["settings"] } else { &v };
     let Some(obj) = src.as_object() else {
-        return Err("ce fichier ne contient pas de réglages de Nel Code".into());
+        return Err(t!("rs.settings.not_settings"));
     };
     let mut changes = serde_json::Map::new();
     let mut ignored = Vec::new();
@@ -600,7 +608,7 @@ pub fn parse_settings_export(text: &str) -> Result<serde_json::Value> {
         }
     }
     if changes.is_empty() {
-        return Err("aucun réglage de Nel Code dans ce fichier".into());
+        return Err(t!("rs.settings.none"));
     }
     // Les valeurs comme elles seraient enregistrées (bornes, listes nettoyées) : ce que l'interface montre.
     let mut norm = normalize(serde_json::Value::Object(changes.clone()));
@@ -654,10 +662,10 @@ pub fn load_arena() -> serde_json::Value {
 pub fn arena_vote(vote: serde_json::Value) -> Result<serde_json::Value> {
     let str_of = |k: &str| vote[k].as_str().filter(|s| !s.is_empty());
     let (Some(id), Some(_), Some(_), Some(winner)) = (str_of("id"), str_of("a"), str_of("b"), str_of("winner")) else {
-        return Err("vote incomplet".into());
+        return Err(t!("rs.store.vote_incomplete"));
     };
     if !["a", "b", "tie"].contains(&winner) {
-        return Err(format!("vote inconnu : {winner}"));
+        return Err(t!("rs.store.vote_unknown", vote = winner));
     }
     let mut arena = load_arena();
     let votes = arena["votes"].as_array_mut().unwrap();
@@ -677,7 +685,7 @@ pub fn arena_vote(vote: serde_json::Value) -> Result<serde_json::Value> {
 /// sa forme et ses données brutes (little-endian). Les entiers sont en LEB128, le nom en UTF-8 préfixé
 /// de sa longueur (BinaryWriter de .NET). Seul le type 6 (float32) est accepté.
 pub fn read_torchsharp(bytes: &[u8]) -> Result<HashMap<String, Tensor>> {
-    let bad = || "weights.dat tronqué ou illisible".to_string();
+    let bad = || t!("rs.store.weights_bad");
     let mut pos = 0usize;
     let leb = |pos: &mut usize| -> Result<u64> {
         let (mut v, mut shift) = (0u64, 0);
@@ -702,7 +710,7 @@ pub fn read_torchsharp(bytes: &[u8]) -> Result<HashMap<String, Tensor>> {
         pos += len;
         let dtype = leb(&mut pos)?;
         if dtype != 6 {
-            return Err(format!("weights.dat : {name} n'est pas en float32 (type {dtype})"));
+            return Err(t!("rs.store.weights_dtype", name = name, dtype = dtype));
         }
         let ndim = leb(&mut pos)? as usize;
         if ndim > 8 {
@@ -722,6 +730,8 @@ pub fn read_torchsharp(bytes: &[u8]) -> Result<HashMap<String, Tensor>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn test_model() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-models/minichat-v3b.nelmodel")
@@ -908,11 +918,11 @@ mod tests {
         // Refus : pas un zip, fichier manquant, version trop récente ; un chemin piégé n'écrit rien dehors.
         let bad = home.join("bad.nelmodel");
         fs::write(&bad, b"pas un zip").unwrap();
-        assert!(import(&bad, "b", false).unwrap_err().contains("zip"));
+        assert!(import(&bad, "b", false).unwrap_err().fr().contains("zip"));
         let p = package(&home, "missing.nelmodel", &["tokenizer.json"], &[]);
-        assert!(import(&p, "b", false).unwrap_err().contains("tokenizer.json"));
+        assert!(import(&p, "b", false).unwrap_err().fr().contains("tokenizer.json"));
         let p = package(&home, "v9.nelmodel", &["model-info.json"], &[("model-info.json", br#"{"formatVersion":9}"#)]);
-        assert!(import(&p, "b", false).unwrap_err().contains("trop récent"));
+        assert!(import(&p, "b", false).unwrap_err().fr().contains("trop récent"));
         let p = package(&home, "evil.nelmodel", &[], &[("../evil.txt", b"x"), ("sub/config.json", b"x")]);
         import(&p, "evil", false).unwrap();
         assert!(!home.join("models/evil.txt").exists() && !home.join("evil.txt").exists());
@@ -944,7 +954,7 @@ mod tests {
         // Un .gguf : refusé s'il est faux ; sinon copié avec son model-info.json, dans la liste, contexte limité à 8192.
         let fake = home.join("faux.gguf");
         fs::write(&fake, b"GGUF pas vraiment").unwrap();
-        assert!(import(&fake, "faux", false).unwrap_err().contains("gguf"));
+        assert!(import(&fake, "faux", false).unwrap_err().fr().contains("gguf"));
         let gguf = test_model().with_file_name("qwen2.5-coder-0.5b-instruct-q4_k_m.gguf");
         if gguf.is_file() {
             import(&gguf, "qwen", false).unwrap();

@@ -6,6 +6,22 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ### Ajouté
 
+- **Interface en anglais** : Réglages → Général → **Langue** (Automatique : la langue du système, l'anglais si ce n'est
+  ni le français ni l'anglais ; Français ; English), appliquée tout de suite, sans redémarrer : menus, réglages,
+  fenêtres, notifications, palette, commandes `/` et raccourcis (Maj / Shift, Échap / Esc…), Suivi, MCP, images,
+  explorateurs, Claude Agent, confirmation des liens du rendu Markdown, fenêtres natives de choix de fichiers. Les
+  nombres et les dates suivent la langue (Intl), et les pluriels sont de vrais pluriels (« 1 étape », « 3 étapes »).
+- **Textes** dans `ui/i18n/fr.json` et `ui/i18n/en.json` (plus de 1 200 clés), inclus dans l'exécutable et donnés à
+  l'interface par une commande Rust (la politique de sécurité du contenu ne change pas) ; tout passe par
+  `t('clé', paramètres)`.
+- **Messages de la partie Rust** (erreurs, refus du bac à sable, étapes du mode Agent et de Claude Agent, import,
+  catalogue, pack GPU, Serveur local, MCP, fournisseurs, mises à jour) : un code et des paramètres, traduits par
+  l'interface. Les titres d'étapes sont enregistrés ainsi : une conversation enregistrée change de langue avec
+  l'interface. Ce qui part au modèle (message système, résultats des outils, résumés) reste en français.
+- **Mode Agent** : une phrase de plus dans le message système, pour répondre dans la langue de l'utilisateur.
+- **Installateur** Windows en français et en anglais (selon la langue de Windows).
+- **README.en.md** complet (avec des captures en anglais dans `docs/en/`), lié au README français.
+
 - **Page Réglages** à la place de la fenêtre : les catégories à gauche (Général, Modèles, Fournisseurs, Agent, Claude
   Agent, MCP, Images, Calcul, Suivi et budget, Serveur local, Avancé), leurs réglages à droite. Chaque réglage a son
   libellé, une courte explication, un contrôle adapté (interrupteur, liste, curseur avec champ numérique), un point
@@ -22,7 +38,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   (l'ancienne page MCP), où restent les accords des serveurs de projet.
 - **Puce MCP** : un clic ouvre une petite fenêtre juste sous la puce, avec les serveurs de la conversation à cocher
   (enregistré tout de suite) et leur état (en marche, arrêté, erreur…), et un lien « Réglages MCP… » vers la page.
-  Échap ou un clic dehors la ferme.
+  Échap ou un clic dehors la ferme. Réglages → MCP ne propose plus ce choix : à la place, chaque serveur a une option
+  « Activé par défaut dans les nouvelles conversations » (désactivé : la conversation créée part avec ce serveur
+  décoché ; les conversations existantes ne changent pas).
 - **Clavier** : flèches, Début et Fin dans les catégories, Entrée ou flèche droite vers les réglages, Ctrl+F vers la
   recherche, Échap pour fermer (la recherche d'abord, si elle est remplie). Le reste de la fenêtre est inerte tant que
   la page est ouverte.
@@ -37,6 +55,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ### Modifié
 
+- **Le journal et le rapport de bug sont en anglais** (ils étaient en français), quelle que soit la langue de
+  l'interface ; une erreur de Nel Code y est écrite en anglais.
 - **Interface plus grande** : texte de base de 15 px (14 px avant), toutes les autres tailles de texte en proportion,
   icônes et colonne de gauche un peu plus grandes. Les utilisateurs qui n'avaient jamais changé la taille ont la
   nouvelle taille par défaut ; un zoom choisi avant est gardé.

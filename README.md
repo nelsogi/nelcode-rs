@@ -7,7 +7,8 @@ modèles ouverts (Qwen2.5-Coder…), **sur ton PC, sans connexion**.
 
 Nel Code est une application de bureau pour Windows (Linux et macOS : expérimental ; Tauri v2) qui fait tourner les modèles `.nelmodel` et les modèles GGUF (Qwen2, Llama)
 sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](https://github.com/huggingface/candle)). C'est la version Rust de [Nel Code](https://github.com/nelsogi/NelCode)
-(C#, TorchSharp), dont elle reprend les conversations et les réglages.
+(C#, TorchSharp), dont elle reprend les conversations et les réglages. L'interface est en **français ou en anglais**
+(Réglages → Général → Langue ; automatique par défaut : la langue du système).
 
 ![Une conversation dans Nel Code](docs/conversation.png)
 
@@ -491,6 +492,15 @@ valeur impossible est signalée sous son champ et n'est pas enregistrée.
 
 ![La page Réglages](docs/reglages.png)
 
+### Langue
+
+L'interface est en français ou en anglais : **Réglages → Général → Langue** (Automatique par défaut : la langue du
+système, l'anglais si ce n'est ni le français ni l'anglais). Tout change tout de suite, sans redémarrer : menus,
+réglages, messages, dates et nombres, titres des étapes du mode Agent (aussi dans les anciennes conversations),
+fenêtres de choix de fichiers. Le journal et le rapport de bug restent en anglais. En mode Agent, le modèle est invité à
+répondre dans la langue de l'utilisateur. L'installateur Windows est en français ou en anglais, selon la langue de
+Windows.
+
 ### Serveur local (API OpenAI) et Continue
 
 Nel Code peut servir ses modèles à d'autres programmes, comme [Continue](https://continue.dev) dans VS Code, par un
@@ -603,7 +613,7 @@ demander). Au-delà de 90 jours, les lignes sont regroupées par jour.
 
 ### En cas de problème
 
-Nel Code tient un journal dans `%APPDATA%\NelCode\logs` (un fichier par jour, 7 jours gardés) : démarrage, modèles,
+Nel Code tient un journal en anglais dans `%APPDATA%\NelCode\logs` (un fichier par jour, 7 jours gardés) : démarrage, modèles,
 erreurs, mises à jour, GPU, jamais le texte des conversations. **Copier un rapport de bug** (Réglages, palette Ctrl+K)
 copie la version, le système, le modèle actif et les 50 dernières lignes du journal : à coller dans une
 [issue](https://github.com/nelsogi/nelcode-rs/issues).
@@ -771,7 +781,10 @@ et contexte, en-têtes et variables secrets, page MCP, arrêt des processus, ser
 `e2e/markdown.test.mjs` couvre le rendu Markdown : tests unitaires de `markdown.js` sur un faux DOM (réponses piégées,
 textes coupés à chaque caractère), puis l'application (réponse en morceaux, liens, images, réglage, Copier).
 `e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
-petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et le zoom. `e2e/window.test.mjs` couvre la fenêtre (taille,
+petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et le zoom. `e2e/i18n.test.mjs` couvre les traductions : `fr.json` et
+`en.json` ont les mêmes clés, paramètres et pluriels, toutes les clés utilisées existent (JS, HTML, codes Rust), aucun
+texte n'est écrit en dur dans les modules, les écrans principaux dans les deux langues, le changement de langue depuis
+les Réglages, une ancienne conversation qui change de langue, le journal en anglais. `e2e/window.test.mjs` couvre la fenêtre (taille,
 position et état agrandi retenus, retour à 80 % centrée si la position est hors des écrans). `e2e/settings.test.mjs` couvre la page
 Réglages : catégories, enregistrement automatique, erreurs de saisie, valeur par défaut et « Tout réinitialiser »,
 recherche, clavier, liens directs (barre d'état, `/settings`, palette), zoom, thème et densité, export et import sans
@@ -826,15 +839,16 @@ cargo run --release -p nel-engine --bin nel-chat -- test-models\minichat-v3b.nel
 | Dossier | Contenu |
 |---|---|
 | `nel-engine/` | La bibliothèque : `ChatModel` (l'interface commune), tokenizer BPE, réseau MiniGpt, cache KV, génération, modèles GGUF (`gguf.rs`), GPU (`gpu.rs`) ; tests contre `reference.json` et Qwen2.5-Coder ; `nel-chat` |
-| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, images, mode Agent, Claude Agent, journal, pack GPU), `ui/` (HTML, CSS, et `js/` : modules ES sans framework, voir ci-dessous) |
+| `nel-desktop/` | L'application Tauri : `src/` (commandes, fichiers, import, catalogue, serveur local, modèles distants, images, mode Agent, Claude Agent, journal, pack GPU, `i18n.rs` : catalogues et messages codés), `ui/` (HTML, CSS, `i18n/fr.json` et `i18n/en.json`, et `js/` : modules ES sans framework, voir ci-dessous) |
 | `e2e/` | Les tests de l'interface (Node, port de débogage de WebView2) |
-| `docs/` | Captures d'écran (`node scripts/captures.mjs` les refait, après `cargo build -p nel-desktop`) |
+| `docs/` | Captures d'écran, en français et en anglais (`docs/en/`) (`node scripts/captures.mjs [--lang en]` les refait, après `cargo build -p nel-desktop`) |
 | `scripts/` | `test.ps1` (tous les tests, résumé), `captures.mjs`, `updater-json.sh` (latest.json des mises à jour), `linux-startup-test.sh` |
 
 L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `index.html` (`js/main.js`) :
 
 | Module | Contenu |
 |---|---|
+| `i18n.js` | Traductions : `t('clé', paramètres)`, pluriels, nombres et dates selon la langue, messages codés de la partie Rust |
 | `util.js` | Appels au Rust, éléments du DOM, notifications, fenêtres et menus, coloration du code |
 | `state.js` | L'état partagé : `S` (conversations, modèles, réponse en cours) et `UI` (petits états de l'interface) |
 | `conversation.js` | Conversations, modèles, fichiers `@`, génération, réflexion, transparence, comparaison, affichage, saisie |
@@ -842,7 +856,7 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `agent.js` | Mode Agent et Claude Agent : étapes, plan, NELCODE.md |
 | `mcp.js` | Serveurs MCP : Réglages → MCP, accord des serveurs de projet, fenêtre de la puce MCP, contexte de la conversation |
 | `settings-page.js` | Page Réglages : catégories, liste des réglages, recherche, enregistrement automatique, valeurs par défaut, liens directs, export et import |
-| `settings.js` | Thème, zoom et densité, mises à jour, blocs Serveur local et Calcul (GPU, test de vitesse) |
+| `settings.js` | Langue, thème, zoom et densité, mises à jour, blocs Serveur local et Calcul (GPU, test de vitesse) |
 | `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |
 | `palette.js` | Commandes `/`, palette Ctrl+K, aide et raccourcis |
 | `usage.js` | Page Suivi (totaux, graphiques SVG, CSV), tokens et coût de la conversation, budget, table de prix |

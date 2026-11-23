@@ -149,7 +149,7 @@ pub fn record(r: Rec) -> Value {
     let _ = fs::create_dir_all(store::root());
     let written = fs::OpenOptions::new().create(true).append(true).open(path()).and_then(|mut f| f.write_all(format!("{l}\n").as_bytes()));
     if let Err(e) = written {
-        crate::log::error(&format!("suivi : usage.jsonl non écrit ({e})"));
+        crate::log::error(&format!("usage: usage.jsonl not written ({e})"));
     }
     json!({ "input": l["input"], "output": l["output"], "cost": l["cost"] })
 }
@@ -220,8 +220,8 @@ pub fn prune() {
     let tmp = file.with_extension("jsonl.tmp");
     let text: String = kept.iter().map(|e| format!("{e}\n")).collect();
     match fs::write(&tmp, text).and_then(|_| fs::rename(&tmp, &file)) {
-        Ok(()) => crate::log::info(&format!("suivi : {before} lignes, {} après regroupement par jour des plus de {KEEP_DAYS} jours", kept.len())),
-        Err(e) => crate::log::error(&format!("suivi : regroupement impossible ({e})")),
+        Ok(()) => crate::log::info(&format!("usage: {before} lines, {} after grouping by day those older than {KEEP_DAYS} days", kept.len())),
+        Err(e) => crate::log::error(&format!("usage: cannot group ({e})")),
     }
 }
 
@@ -269,6 +269,8 @@ pub fn csv(entries: &[Value]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn rec<'a>(model: &'a str, local: bool, cost: Option<f64>) -> Rec<'a> {
         Rec { project: "C:\\p", provider: "x", model, kind: "chat", input: 1_000_000, output: 100_000, seconds: 2.0, cost, local }

@@ -109,7 +109,7 @@ test('fournisseur dans les réglages : avertissement http, clé rangée hors de 
   assert.equal(await setUrl('https://exemple.ch/v1'), false, 'https : pas d\'avertissement');
   assert.equal(await setUrl(`http://127.0.0.1:${PORT}/v1`), false, 'http local : rien ne sort du PC');
   await A.ev(`T.setValue(${form}.querySelector('.name'), 'Faux'); T.setValue(${form}.querySelector('.key'), ${JSON.stringify(KEY)}); T.button('Tester', ${form})`);
-  await A.waitFor(`${form}.querySelector('.status').textContent.includes('7 modèle(s)')`, 10_000, 'liste des modèles');
+  await A.waitFor(`${form}.querySelector('.status').textContent.includes('7 modèles')`, 10_000, 'liste des modèles');
   assert.match(await A.ev(`${form}.querySelector('.status').textContent`), /fake-chat, fake-think/);
   const models = requests.find((r) => r.url === '/v1/models');
   assert.equal(models.auth, `Bearer ${KEY}`, 'la clé est relue depuis le Gestionnaire d\'identification');
@@ -119,7 +119,7 @@ test('fournisseur dans les réglages : avertissement http, clé rangée hors de 
   assert.deepEqual([p.length, p[0].name, p[0].url, p[0].models.length], [1, 'Faux', `http://127.0.0.1:${PORT}/v1`, 7]);
   assert.equal(await A.ev(`S.providers[0].hasKey`), true);
   // La liste à gauche : le fournisseur enregistré.
-  assert.match(await A.ev(`T.settings().querySelector('.provider-list .item.sel').textContent`), /^Faux7 modèle\(s\) · clé$/);
+  assert.match(await A.ev(`T.settings().querySelector('.provider-list .item.sel').textContent`), /^Faux7 modèles · clé$/);
   await A.ev(`T.key('Escape', {}, document)`);
 });
 
@@ -229,7 +229,7 @@ test('import depuis Qwen Code : fournisseurs, réglages de chaque modèle, clé'
   assert.deepEqual([r.body.temperature, r.body.top_p, r.body.max_tokens], [0.3, 0.5, 77]);
   // Sans settings.json de Qwen Code : un message clair.
   fs.rmSync(path.join(QWEN, 'settings.json'));
-  assert.match(await A.ev(`window.__TAURI__.core.invoke('import_qwen').catch((e) => String(e))`), /introuvable : Qwen Code n'est pas configuré/);
+  assert.match(await A.ev(`window.__TAURI__.core.invoke('import_qwen').catch((e) => I18N.tr(String(e)))`), /introuvable : Qwen Code n'est pas configuré/);
 });
 
 test('au redémarrage de l\'interface, le modèle distant reste choisi ; supprimer un fournisseur retire sa clé', async () => {

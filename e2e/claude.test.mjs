@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ROOT, launch, sleep } from './harness.mjs';
+import { ROOT, fr, launch, sleep } from './harness.mjs';
 
 const KEY = 'sk-ant-test-cle-claude-agent';
 let A, TMP, DIR, LOG;
@@ -87,8 +87,8 @@ test('conversation : texte au fil de l\'eau, outil Lecture en étape, coût et d
   const m = await A.ev(`S.current.messages.at(-1)`);
   assert.equal(m.content, 'Program.cs définit la classe Program.');
   assert.equal(m.reasoning, 'Il faut lire Program.cs.');
-  assert.deepEqual(m.agent.steps.map((s) => [s.kind, s.title, s.status]), [['note', 'Je lis le fichier.', 'done'], ['read', 'Lecture de src/Program.cs', 'done']]);
-  assert.match(m.agent.steps[1].detail, /class Program \{/);
+  assert.deepEqual(m.agent.steps.map((s) => [s.kind, fr(s.title), s.status]), [['note', 'Je lis le fichier.', 'done'], ['read', 'Lecture de src/Program.cs', 'done']]);
+  assert.match(fr(m.agent.steps[1].detail), /class Program \{/);
   assert.deepEqual(m.claude, { cost: 0.0123, durationMs: 4567, turns: 2 });
   assert.equal(await A.ev(`${msg}.querySelector('.claude-cost').textContent`), '0,0123 $ · 4,6 s · 2 tours');
   assert.match(await A.ev(`document.getElementById('status').textContent`), /Claude Agent · rien d'automatique · 0,0123 \$ · 4,6 s/);
@@ -133,12 +133,12 @@ test('écriture avec diff, commande et plan ; réglages acceptEdits, outils auto
   await A.waitFor(`[...document.querySelectorAll('#plan .plan-tasks li')].map((li) => li.dataset.status).join() === 'in_progress,todo'`, 15_000, 'plan en direct');
   await A.waitFor('!S.gen', 30_000);
   const m = await A.ev(`S.current.messages.at(-1)`);
-  assert.deepEqual(m.agent.steps.map((s) => [s.kind, s.title, s.status]), [
+  assert.deepEqual(m.agent.steps.map((s) => [s.kind, fr(s.title), s.status]), [
     ['edit', 'Modification de src/Program.cs (+1 −1)', 'done'],
     ['write', 'Écriture de notes/journal.txt (+2)', 'done'],
     ['command', 'Commande : dotnet build', 'done'],
   ]);
-  assert.match(m.agent.steps[2].detail, /Build succeeded/);
+  assert.match(fr(m.agent.steps[2].detail), /Build succeeded/);
   await A.ev(`${msg}.querySelector('.step.edit summary').click()`);
   const diff = await A.ev(`[...${msg}.querySelectorAll('.step.edit .diff > div')].map((d) => d.className + ':' + d.textContent)`);
   assert.deepEqual(diff, ['del:-var p = new Player();', 'add:+var joueur = new Player();']);
@@ -153,7 +153,7 @@ test('outil refusé par le mode de permission : étape « refusée »', async ()
   await A.ask('refus : renomme la classe');
   const m = await A.ev(`S.current.messages.at(-1)`);
   assert.deepEqual(m.agent.steps.map((s) => [s.kind, s.status]), [['edit', 'rejected']]);
-  assert.match(m.agent.steps[0].detail, /Non autorisé par le mode de permission/);
+  assert.match(fr(m.agent.steps[0].detail), /Non autorisé par le mode de permission/);
   // La raison du refus s'affiche avec le diff.
   assert.match(await A.ev(`${msg}.querySelector('.step.edit .step-body .detail').textContent`), /Non autorisé par le mode de permission/);
   assert.ok(await A.ev(`!!${msg}.querySelector('.step.edit .step-body .diff')`));
@@ -221,8 +221,8 @@ test('sous-agents : étapes regroupées dans l\'étape Sous-agent, texte du sous
   await A.waitFor('!S.gen', 30_000, 'fin');
   const m = await A.ev(`S.current.messages.at(-1)`);
   assert.equal(m.content, 'Le sous-agent a trouvé une seule classe, Program.');
-  const task = m.agent.steps.find((s) => s.title === 'Sous-agent : Explorer le projet');
-  assert.deepEqual(m.agent.steps.filter((s) => s.parent === task.id).map((s) => s.title), ['Lecture de src/Program.cs', 'Recherche de "class"', 'Message du sous-agent']);
+  const task = m.agent.steps.find((s) => fr(s.title) === 'Sous-agent : Explorer le projet');
+  assert.deepEqual(m.agent.steps.filter((s) => s.parent === task.id).map((s) => fr(s.title)), ['Lecture de src/Program.cs', 'Recherche de "class"', 'Message du sous-agent']);
   const check = async () => {
     assert.deepEqual(await groups(), [['Sous-agent : Explorer le projet', '3 étapes', ['Lecture de src/Program.cs', 'Recherche de "class"', 'Message du sous-agent']]]);
     assert.match(await A.ev(`${msg}.querySelector('.substeps').textContent`), /Le projet ne contient qu'une classe : Program\./);

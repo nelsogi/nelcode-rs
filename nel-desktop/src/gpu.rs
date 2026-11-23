@@ -2,6 +2,7 @@
 //! L'installateur n'en contient aucune. Installation tout ou rien : téléchargement dans gpu.download, empreinte
 //! SHA-256 vérifiée, extraction dans gpu.partial, puis renommage en gpu. Tout reste est effacé au démarrage.
 
+use crate::t;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -57,9 +58,9 @@ pub fn installed() -> bool {
 pub fn startup() {
     if remove_marker().exists() {
         match fs::remove_dir_all(dir()) {
-            Ok(()) => crate::log::info("pack GPU retiré"),
+            Ok(()) => crate::log::info("GPU pack removed"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => crate::log::error(&format!("retrait du pack GPU impossible : {e}")),
+            Err(e) => crate::log::error(&format!("cannot remove the GPU pack: {e}")),
         }
         let _ = fs::remove_file(remove_marker());
     }
@@ -100,28 +101,28 @@ impl Drop for Cleanup {
 pub async fn install(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
     let r = install_inner(app, cancel).await;
     match &r {
-        Ok(()) => crate::log::info("pack GPU installé"),
-        Err(e) => crate::log::error(&format!("installation du pack GPU : {e}")),
+        Ok(()) => crate::log::info("GPU pack installed"),
+        Err(e) => crate::log::error(&format!("GPU pack installation: {e}")),
     }
     r
 }
 
 async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
     if !nel_engine::gpu::compiled() {
-        return Err("cette version de Nel Code est compilée sans CUDA".into());
+        return Err(t!("rs.gpu.no_cuda"));
     }
     if installed() {
-        return Err("le pack GPU est déjà installé".into());
+        return Err(t!("rs.gpu.installed"));
     }
     if dir().exists() {
-        return Err("un retrait du pack est en attente : redémarre Nel Code avant de le réinstaller".into());
+        return Err(t!("rs.gpu.removal_pending"));
     }
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
     let need = PACK_BYTES + PACK_UNPACKED_BYTES + 50_000_000;
     if let Some(free) = crate::os::free_bytes(&root())
         && free < need
     {
-        return Err(format!("espace disque insuffisant : {} Mo libres, {} Mo nécessaires", free / 1_000_000, need / 1_000_000));
+        return Err(t!("rs.disk.space", free = free / 1_000_000, need = need / 1_000_000));
     }
     let mut cleanup = Cleanup(false);
 
@@ -130,7 +131,7 @@ async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
     // Extraction : seulement les fichiers attendus, à plat, dans gpu.partial ; puis gpu.partial devient gpu.
     let _ = fs::remove_dir_all(partial());
     fs::create_dir_all(partial()).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipArchive::new(fs::File::open(download()).map_err(|e| e.to_string())?).map_err(|e| format!("pack illisible : {e}"))?;
+    let mut zip = zip::ZipArchive::new(fs::File::open(download()).map_err(|e| e.to_string())?).map_err(|e| t!("rs.gpu.unreadable", error = e.to_string()))?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         let name = entry.name().map_err(|e| e.to_string())?.to_string();
@@ -138,7 +139,7 @@ async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
             continue;
         }
         if !PACK_DLLS.contains(&name.as_str()) && name != LICENSE_FILE {
-            return Err(format!("fichier inattendu dans le pack : {name}"));
+            return Err(t!("rs.gpu.unexpected", name = name));
         }
         if cancel.load(Ordering::SeqCst) {
             return Err("annulé".into());
@@ -148,9 +149,9 @@ async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
         fs::write(partial().join(&name), bytes).map_err(|e| format!("{name} : {e}"))?;
     }
     if let Some(missing) = PACK_DLLS.iter().find(|f| !partial().join(f).is_file()) {
-        return Err(format!("{missing} manque dans le pack"));
+        return Err(t!("rs.gpu.missing", name = missing));
     }
-    fs::rename(partial(), dir()).map_err(|e| format!("installation impossible : {e}"))?;
+    fs::rename(partial(), dir()).map_err(|e| t!("rs.gpu.install_failed", error = e.to_string()))?;
     cleanup.0 = true;
     Ok(())
 }
@@ -160,14 +161,14 @@ async fn install_inner(app: &AppHandle, cancel: &AtomicBool) -> Result<()> {
 pub fn remove(loaded: bool) -> Result<bool> {
     if loaded {
         fs::write(remove_marker(), b"").map_err(|e| e.to_string())?;
-        crate::log::info("retrait du pack GPU au prochain démarrage");
+        crate::log::info("GPU pack removed at the next startup");
         return Ok(false);
     }
     match fs::remove_dir_all(dir()) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("retrait impossible : {e}")),
+        Err(e) => return Err(t!("rs.gpu.remove_failed", error = e.to_string())),
     }
-    crate::log::info("pack GPU retiré");
+    crate::log::info("GPU pack removed");
     Ok(true)
 }

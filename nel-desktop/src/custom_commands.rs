@@ -4,6 +4,7 @@
 //! rien n'est lancé ici, et le mode Agent garde toutes ses validations.
 //! Front matter facultatif : `description: …`. Une commande du projet remplace une globale du même nom.
 
+use crate::t;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -72,19 +73,19 @@ pub fn list(dir: &str) -> Vec<Value> {
 pub fn create(dir: &str, scope: &str, name: &str, description: &str, body: &str) -> Result<String> {
     let name = name.trim().trim_start_matches('/').to_lowercase();
     if !valid_name(&name) {
-        return Err("nom invalide : lettres minuscules, chiffres, « - » et « _ », 40 caractères au plus".into());
+        return Err(t!("rs.commands.bad_name"));
     }
     let folder = match scope {
         "project" => Sandbox::new(dir)?.resolve(PROJECT_DIR)?,
         "global" => store::root().join("commands"),
-        _ => return Err("portée inconnue (project ou global)".into()),
+        _ => return Err(t!("rs.commands.bad_scope")),
     };
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let file = folder.join(format!("{name}.md"));
     let description = description.lines().next().unwrap_or_default().trim();
     let text = format!("---\ndescription: {description}\n---\n{body}");
     fs::OpenOptions::new().write(true).create_new(true).open(&file).and_then(|mut f| f.write_all(text.as_bytes())).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists { format!("la commande /{name} existe déjà : {}", file.display()) } else { e.to_string() }
+        if e.kind() == std::io::ErrorKind::AlreadyExists { t!("rs.commands.exists", name = name, path = file.display().to_string()) } else { e.to_string() }
     })?;
     Ok(file.to_string_lossy().into_owned())
 }
@@ -92,6 +93,8 @@ pub fn create(dir: &str, scope: &str, name: &str, description: &str, body: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn tmp() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("nelcode-cmds-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
@@ -146,9 +149,9 @@ mod tests {
         assert!(file.replace('\\', "/").ends_with(".nelcode/commands/relire.md"));
         let projet: Vec<_> = list(dir).into_iter().filter(|c| c["origin"] == "project").collect();
         assert_eq!((projet[0]["name"].as_str(), projet[0]["description"].as_str()), (Some("relire"), Some("Relire le code")));
-        assert!(create(dir, "project", "relire", "autre", "").unwrap_err().contains("existe déjà"));
+        assert!(create(dir, "project", "relire", "autre", "").unwrap_err().fr().contains("existe déjà"));
         assert!(fs::read_to_string(&file).unwrap().contains("Relire le code"), "le fichier existant n'est pas touché");
-        assert!(create(dir, "project", "../x", "", "").unwrap_err().contains("nom invalide"));
+        assert!(create(dir, "project", "../x", "", "").unwrap_err().fr().contains("nom invalide"));
         assert!(create(dir, "ailleurs", "x", "", "").is_err());
     }
 }

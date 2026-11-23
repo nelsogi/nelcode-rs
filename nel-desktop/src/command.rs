@@ -4,6 +4,7 @@
 //! la fin de la commande les tuent tous. Les variables d'environnement secrètes (`hidden_var` : KEY, TOKEN, PASSWORD…)
 //! ne sont pas transmises.
 
+use crate::t;
 use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
@@ -38,23 +39,23 @@ fn base(program: &str) -> String {
 pub fn validate(program: &str, args: &[String]) -> Result<(), String> {
     let p = program.trim();
     if p.is_empty() {
-        return Err("program est vide".into());
+        return Err(t!("rs.command.empty"));
     }
     if p.contains(char::is_whitespace) && !p.contains(['/', '\\']) {
-        return Err(format!("« {p} » : program est un seul nom de programme ; les arguments vont dans args (pas de shell)"));
+        return Err(t!("rs.command.one_name", program = p));
     }
     if SHELLS.contains(&base(p).as_str()) {
-        return Err(format!("« {p} » est un shell : refusé. run_command lance un programme directement, sans shell (pas de cmd /c, PowerShell, bash…)"));
+        return Err(t!("rs.command.shell", program = p));
     }
     let lower = p.to_lowercase();
     if [".bat", ".cmd", ".ps1", ".vbs", ".js", ".wsf", ".psm1", ".sh", ".bash", ".zsh", ".command"].iter().any(|x| lower.ends_with(x)) {
-        return Err(format!("« {p} » est un script qui passerait par un shell : refusé"));
+        return Err(t!("rs.command.script", program = p));
     }
     if p.contains(['|', '&', '>', '<', ';']) {
-        return Err(format!("« {p} » : caractère de shell refusé (pas de |, >, &&…)"));
+        return Err(t!("rs.command.shell_char", program = p));
     }
     if let Some(op) = args.iter().find(|a| OPERATORS.contains(&a.trim())) {
-        return Err(format!("« {op} » : pas d'opérateur de shell (|, >, &&…) ; une seule commande, sans redirection"));
+        return Err(t!("rs.command.operator", op = op));
     }
     Ok(())
 }
@@ -148,7 +149,7 @@ pub async fn execute(program: &str, args: &[String], dir: &Path, timeout: Durati
     cmd.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let env: Vec<(OsString, OsString)> = std::env::vars_os().filter(|(k, _)| !hidden_var(&k.to_string_lossy())).collect();
     cmd.env_clear().envs(env);
-    let (mut child, job) = process::spawn(&mut cmd).map_err(|e| format!("« {program} » ne se lance pas : {e} (programme introuvable dans le PATH ?)"))?;
+    let (mut child, job) = process::spawn(&mut cmd).map_err(|e| t!("rs.command.spawn_failed", program = program, error = e.to_string()))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     for mut pipe in [child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)].into_iter().flatten() {
@@ -202,6 +203,8 @@ pub async fn execute(program: &str, args: &[String], dir: &Path, timeout: Durati
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::i18n::Fr;
 
     fn a(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
@@ -210,17 +213,17 @@ mod tests {
     #[test]
     fn sans_shell() {
         for (p, args) in [("cmd", a(&["/c", "dir"])), ("CMD.EXE", a(&[])), ("powershell", a(&["-c", "ls"])), ("pwsh.exe", a(&[])), ("bash", a(&[])), ("C:\\Windows\\System32\\cmd.exe", a(&[])), ("wsl", a(&[]))] {
-            assert!(validate(p, &args).unwrap_err().contains("shell"), "{p}");
+            assert!(validate(p, &args).unwrap_err().fr().contains("shell"), "{p}");
         }
         // Linux et macOS.
         for p in ["/bin/sh", "/usr/bin/zsh", "fish", "open", "xdg-open", "osascript"] {
-            assert!(validate(p, &a(&["-c", "x"])).unwrap_err().contains("shell"), "{p}");
+            assert!(validate(p, &a(&["-c", "x"])).unwrap_err().fr().contains("shell"), "{p}");
         }
-        assert!(validate("./build.sh", &[]).unwrap_err().contains("script"));
+        assert!(validate("./build.sh", &[]).unwrap_err().fr().contains("script"));
         assert!(validate("/usr/bin/git", &a(&["status"])).is_ok());
-        assert!(validate("build.bat", &[]).unwrap_err().contains("script"));
+        assert!(validate("build.bat", &[]).unwrap_err().fr().contains("script"));
         assert!(validate("tools\\x.cmd", &[]).is_err());
-        assert!(validate("dotnet build", &[]).unwrap_err().contains("un seul nom"));
+        assert!(validate("dotnet build", &[]).unwrap_err().fr().contains("un seul nom"));
         for op in ["|", ">", "&&", "2>&1", ";"] {
             assert!(validate("dotnet", &a(&["build", op, "x"])).is_err(), "{op}");
         }

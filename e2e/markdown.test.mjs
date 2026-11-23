@@ -67,11 +67,22 @@ const draw = (text, live = false) => { const box = el(); M.drawMarkdown(box, tex
 
 describe('rendu (unitaire)', () => {
   before(async () => {
+    // Le Rust n'est appelé que pour les textes de l'interface (i18n_catalog, set_language), jamais pendant le rendu.
+    const catalog = (lang) => fs.readFileSync(path.join(ROOT, 'nel-desktop', 'ui', 'i18n', `${lang}.json`), 'utf8');
+    let rendering = false;
+    const invoke = async (cmd, args) => {
+      assert.ok(!rendering, 'rien ne doit appeler le Rust pendant le rendu');
+      if (cmd === 'i18n_catalog') return catalog(args.lang);
+      if (cmd === 'set_language') return null;
+      assert.fail(`appel inattendu : ${cmd}`);
+    };
     Object.assign(globalThis, {
-      Node: FakeNode, icon: () => el('svg'), document: { createElement: (t) => el(t) },
-      window: { __TAURI__: { core: { invoke: () => assert.fail('rien ne doit appeler le Rust pendant le rendu') }, event: { listen() {} } } },
+      Node: FakeNode, icon: () => el('svg'), document: { createElement: (t) => el(t), documentElement: {} },
+      window: { __TAURI__: { core: { invoke }, event: { listen() {} } } },
     });
     const ui = (f) => import(pathToFileURL(path.join(ROOT, 'nel-desktop', 'ui', 'js', f)).href);
+    await (await ui('i18n.js')).loadLang('fr');
+    rendering = true;
     M = await ui('markdown.js');
     STATE = (await ui('state.js')).S;
   });
@@ -403,7 +414,7 @@ describe('application', () => {
     await A.ev(`T.key('Escape', {}, document)`);
     // La partie Rust vérifie elle-même.
     for (const url of ['javascript:alert(1)', 'file:///C:/Windows/System32/calc.exe', 'data:text/html,x', 'calc.exe', 'https://a@b.ch/'])
-      assert.match(await A.ev(`window.__TAURI__.core.invoke('open_link', { url: ${JSON.stringify(url)} }).then(() => 'ouvert', (e) => String(e))`), /adresse refusée/, url);
+      assert.match(await A.ev(`window.__TAURI__.core.invoke('open_link', { url: ${JSON.stringify(url)} }).then(() => 'ouvert', (e) => I18N.tr(String(e)))`), /adresse refusée/, url);
     assert.equal(opened().length, 1);
     // Une navigation ou une nouvelle fenêtre demandée par la page est bloquée par la partie Rust.
     await A.ev(`location.href = 'http://127.0.0.1:${server.address().port}/ailleurs'; window.open('http://127.0.0.1:${server.address().port}/fenetre'); true`);

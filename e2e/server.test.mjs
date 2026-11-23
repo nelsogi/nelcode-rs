@@ -155,7 +155,7 @@ test('désactivé : le port est fermé, l\'indicateur disparaît ; le journal ne
   assert.doesNotMatch(await A.ev(`document.getElementById('status').textContent`), /API/);
   assert.equal(A.readJson('settings.json').serverEnabled, false);
   const logs = fs.readdirSync(path.join(A.home, 'logs')).map((f) => fs.readFileSync(path.join(A.home, 'logs', f), 'utf8')).join('');
-  assert.match(logs, /serveur local démarré sur 127\.0\.0\.1/);
+  assert.match(logs, /local server started on 127\.0\.0\.1/, 'le journal est en anglais');
   assert.ok(!logs.includes(SECRET) && !logs.includes(KEY), 'ni les messages ni la clé dans le journal');
 });
 

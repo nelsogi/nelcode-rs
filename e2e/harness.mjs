@@ -13,6 +13,34 @@ export const MODEL = path.resolve(process.env.NELMODEL ?? path.join(ROOT, 'test-
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Les messages codés de la partie Rust ({"$t":"clé","p":{…}}, aussi inclus dans un texte) rendus en français ou en
+// anglais avec les catalogues de l'interface : pour comparer ce qui est enregistré (titres d'étapes, erreurs).
+const CATALOGS = Object.fromEntries(['fr', 'en'].map((l) => [l, JSON.parse(fs.readFileSync(path.join(ROOT, 'nel-desktop', 'ui', 'i18n', `${l}.json`), 'utf8'))]));
+export function text(s, lang = 'fr') {
+  if (typeof s !== 'string' || !s.includes('{"$t":')) return s;
+  const cat = CATALOGS[lang], plural = new Intl.PluralRules(lang);
+  let out = '', i = 0, j;
+  while ((j = s.indexOf('{"$t":', i)) >= 0) {
+    out += s.slice(i, j);
+    let depth = 0, inStr = false, end = -1;
+    for (let k = j; k < s.length; k++) {
+      const c = s[k];
+      if (inStr) { if (c === '\\') k++; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true; else if (c === '{') depth++; else if (c === '}' && --depth === 0) { end = k + 1; break; }
+    }
+    let m = null;
+    try { m = end > 0 ? JSON.parse(s.slice(j, end)) : null; } catch { m = null; }
+    if (!m) { out += s[j]; i = j + 1; continue; }
+    let v = cat[m.$t] ?? m.$t;
+    const p = m.p ?? {};
+    if (typeof v === 'object') v = v[plural.select(Number(p.n ?? p.count ?? 0))] ?? v.other;
+    out += v.replace(/\{\{|\}\}|\{(\w+)\}/g, (all, k) => (all === '{{' ? '{' : all === '}}' ? '}' : k in p ? text(String(p[k] ?? ''), lang) : all));
+    i = end;
+  }
+  return out + s.slice(i);
+}
+export const fr = (s) => text(s, 'fr');
+
 // Petits gestes dans la page : taper dans la saisie, touches, clics sur un bouton par son texte.
 const HELPERS = `window.T = {
   type(text) { const i = document.getElementById('input'); i.focus(); i.value = text; i.dispatchEvent(new Event('input', { bubbles: true })); },
@@ -44,7 +72,7 @@ export async function launch({ settings = {}, files = {}, env = {} } = {}) {
   const port = 9400 + Math.floor(Math.random() * 500);
   // Pas de recherche de mise à jour pendant les tests, réponses courtes et presque déterministes.
   // Premier lancement déjà fait (sauf `onboarded: false` : les tests de l'assistant).
-  fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ autoUpdate: false, temperature: 0.1, maxReplyTokens: 32, onboarded: true, ...settings }));
+  fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ autoUpdate: false, temperature: 0.1, maxReplyTokens: 32, onboarded: true, language: 'fr', ...settings }));
   for (const [file, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(home, file)), { recursive: true });
     fs.writeFileSync(path.join(home, file), content);

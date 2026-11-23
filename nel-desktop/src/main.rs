@@ -10,6 +10,7 @@ mod custom_commands;
 #[cfg(feature = "cuda")]
 mod delayload;
 mod gpu;
+mod i18n;
 mod images;
 mod log;
 mod mcp;
@@ -78,7 +79,7 @@ fn gpu_device(state: &AppState) -> std::result::Result<(Device, String), String>
                 .map_err(|e| e.to_string());
             match &r {
                 Ok((_, label)) => log::info(&format!("{label} prêt")),
-                Err(e) => log::error(&format!("GPU indisponible, le CPU est utilisé : {e}")),
+                Err(e) => log::error(&format!("GPU unavailable, using the CPU: {e}")),
             }
             r
         })
@@ -97,7 +98,7 @@ fn pick_device(state: &AppState) -> (Device, String) {
 
 fn current(state: &AppState) -> Result<(String, Arc<dyn ChatModel>)> {
     let guard = state.model.lock().unwrap();
-    let loaded = guard.as_ref().ok_or("aucun modèle chargé")?;
+    let loaded = guard.as_ref().ok_or_else(|| t!("rs.main.no_model"))?;
     Ok((loaded.name.clone(), loaded.model.clone()))
 }
 
@@ -110,8 +111,8 @@ fn app_info() -> Value {
         "logs": store::root().join("logs"),
         "home": os::home().unwrap_or_else(store::root),
         "os": os::CURRENT.id(),
-        "keystore": os::CURRENT.keystore(),
-        "fileManager": os::CURRENT.file_manager(),
+        "keystore": t!(os::CURRENT.keystore()),
+        "fileManager": t!(os::CURRENT.file_manager()),
         "selfUpdate": os::self_update(),
         "version": env!("CARGO_PKG_VERSION"),
         "startupFile": startup_file,
@@ -151,12 +152,12 @@ fn model_status(state: State<AppState>) -> ModelStatus {
 #[tauri::command]
 fn load_model(app: AppHandle, state: State<AppState>, name: String) -> Result<()> {
     if !store::valid_name(&name) {
-        return Err(format!("nom de modèle invalide : « {name} »"));
+        return Err(t!("rs.main.bad_model_name", name = name));
     }
     {
         let mut loading = state.loading.lock().unwrap();
         if let Some(other) = loading.as_ref() {
-            return Err(format!("« {other} » est déjà en cours de chargement"));
+            return Err(t!("rs.main.already_loading", name = other));
         }
         *loading = Some(name.clone());
     }
@@ -169,7 +170,7 @@ fn load_model(app: AppHandle, state: State<AppState>, name: String) -> Result<()
         match result {
             Ok(model) => {
                 let block_size = model.context_size();
-                log::info(&format!("modèle « {name} » chargé en {:.2} s sur {label} (contexte {block_size})", clock.elapsed().as_secs_f64()));
+                log::info(&format!("model \"{name}\" loaded in {:.2} s on {label} (context {block_size})", clock.elapsed().as_secs_f64()));
                 *state.model.lock().unwrap() = Some(Loaded { name: name.clone(), model, device: label.clone() });
                 // La réserve de la comparaison suit le périphérique choisi : elle est rechargée au besoin.
                 state.compare.lock().unwrap().clear();
@@ -180,7 +181,7 @@ fn load_model(app: AppHandle, state: State<AppState>, name: String) -> Result<()
                 let _ = app.emit("model-loaded", json!({ "name": name, "blockSize": block_size, "seconds": clock.elapsed().as_secs_f64(), "device": label }));
             }
             Err(error) => {
-                log::error(&format!("chargement de « {name} » impossible : {error}"));
+                log::error(&format!("cannot load \"{name}\": {error}"));
                 *state.loading.lock().unwrap() = None;
                 let _ = app.emit("model-error", json!({ "name": name, "error": error }));
             }
@@ -194,7 +195,7 @@ fn delete_model(state: State<AppState>, name: String) -> Result<()> {
     let mut model = state.model.lock().unwrap();
     if model.as_ref().is_some_and(|m| m.name == name) {
         if state.generating.load(Ordering::SeqCst) {
-            return Err("une réponse est en cours avec ce modèle".into());
+            return Err(t!("rs.main.busy_model"));
         }
         *model = None;
     }
@@ -221,7 +222,7 @@ fn inspect_package(path: String) -> Result<Value> {
 #[tauri::command]
 fn import_model(app: AppHandle, state: State<AppState>, path: String, name: String, replace: bool) -> Result<()> {
     if state.importing.swap(true, Ordering::SeqCst) {
-        return Err("un import est déjà en cours".into());
+        return Err(t!("rs.main.import_running"));
     }
     let _ = app.emit("import-started", &name);
     std::thread::spawn(move || {
@@ -229,11 +230,11 @@ fn import_model(app: AppHandle, state: State<AppState>, path: String, name: Stri
         app.state::<AppState>().importing.store(false, Ordering::SeqCst);
         let _ = match result {
             Ok(report) => {
-                log::info(&format!("modèle « {name} » importé"));
+                log::info(&format!("model \"{name}\" imported"));
                 app.emit("import-done", report)
             }
             Err(error) => {
-                log::error(&format!("import de « {name} » impossible : {error}"));
+                log::error(&format!("cannot import \"{name}\": {error}"));
                 app.emit("import-error", json!({ "error": error, "path": path, "name": name }))
             }
         };
@@ -243,7 +244,7 @@ fn import_model(app: AppHandle, state: State<AppState>, path: String, name: Stri
 
 #[tauri::command]
 async fn pick_nelmodel(app: AppHandle) -> Option<String> {
-    let file = app.dialog().file().set_title("Importer un modèle").add_filter("Modèle (.nelmodel, .gguf)", &["nelmodel", "gguf"]).blocking_pick_file()?;
+    let file = app.dialog().file().set_title(i18n::text("rs.dialog.import_model")).add_filter(i18n::text("rs.dialog.model_filter"), &["nelmodel", "gguf"]).blocking_pick_file()?;
     Some(file.into_path().ok()?.to_string_lossy().into_owned())
 }
 
@@ -267,8 +268,8 @@ fn delete_session(id: String) -> Result<()> {
 /// Demande où enregistrer, puis écrit `content`. Rend le chemin, ou rien si l'utilisateur annule.
 #[tauri::command]
 async fn export_session(app: AppHandle, file_name: String, content: String, markdown: bool, directory: String) -> Result<Option<String>> {
-    let (label, ext) = if markdown { ("Markdown", "md") } else { ("Texte", "txt") };
-    let mut dialog = app.dialog().file().set_title("Exporter la conversation").set_file_name(&file_name).add_filter(label, &[ext]);
+    let (label, ext) = if markdown { ("Markdown".to_string(), "md") } else { (i18n::text("rs.dialog.text"), "txt") };
+    let mut dialog = app.dialog().file().set_title(i18n::text("rs.dialog.export_conversation")).set_file_name(&file_name).add_filter(label, &[ext]);
     if std::path::Path::new(&directory).is_dir() {
         dialog = dialog.set_directory(&directory);
     }
@@ -276,13 +277,13 @@ async fn export_session(app: AppHandle, file_name: String, content: String, mark
         return Ok(None);
     };
     let path = file.into_path().map_err(|e| e.to_string())?;
-    std::fs::write(&path, content).map_err(|e| format!("export impossible : {e}"))?;
+    std::fs::write(&path, content).map_err(|e| t!("rs.main.export_failed", error = e.to_string()))?;
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
 async fn pick_folder(app: AppHandle, start: String) -> Option<String> {
-    let mut dialog = app.dialog().file().set_title("Dossier de travail");
+    let mut dialog = app.dialog().file().set_title(i18n::text("rs.dialog.working_folder"));
     if std::path::Path::new(&start).is_dir() {
         dialog = dialog.set_directory(&start);
     }
@@ -292,7 +293,7 @@ async fn pick_folder(app: AppHandle, start: String) -> Option<String> {
 #[tauri::command]
 fn open_folder(path: String) -> Result<()> {
     if !std::path::Path::new(&path).is_dir() {
-        return Err(format!("dossier introuvable : {path}"));
+        return Err(t!("rs.main.folder_missing", path = path));
     }
     os::open(&path)
 }
@@ -301,6 +302,18 @@ fn open_folder(path: String) -> Result<()> {
 #[tauri::command]
 fn open_link(url: String) -> Result<()> {
     os::open_link(&url)
+}
+
+/// Les textes de l'interface dans une langue (« fr » ou « en ») : le JSON de ui/i18n, inclus dans l'exécutable.
+#[tauri::command]
+fn i18n_catalog(lang: String) -> &'static str {
+    i18n::catalog(&lang)
+}
+
+/// La langue choisie par l'interface : celle des fenêtres natives (choix de fichiers).
+#[tauri::command]
+fn set_language(lang: String) {
+    i18n::set_lang(&lang);
 }
 
 #[tauri::command]
@@ -321,7 +334,7 @@ fn settings_export_json() -> String {
 
 #[tauri::command]
 async fn export_settings(app: AppHandle) -> Result<Option<String>> {
-    let Some(file) = app.dialog().file().set_title("Exporter les réglages").set_file_name("nelcode-reglages.json").add_filter("JSON", &["json"]).blocking_save_file() else {
+    let Some(file) = app.dialog().file().set_title(i18n::text("rs.dialog.export_settings")).set_file_name(i18n::text("rs.dialog.settings_file")).add_filter("JSON", &["json"]).blocking_save_file() else {
         return Ok(None);
     };
     let path = file.into_path().map_err(|e| e.to_string())?;
@@ -332,12 +345,12 @@ async fn export_settings(app: AppHandle) -> Result<Option<String>> {
 /// Réglages → Importer : le fichier choisi, lu et filtré, sans rien enregistrer (l'interface montre ce qui change).
 #[tauri::command]
 async fn import_settings(app: AppHandle) -> Result<Option<Value>> {
-    let Some(file) = app.dialog().file().set_title("Importer des réglages").add_filter("JSON", &["json"]).blocking_pick_file() else {
+    let Some(file) = app.dialog().file().set_title(i18n::text("rs.dialog.import_settings")).add_filter("JSON", &["json"]).blocking_pick_file() else {
         return Ok(None);
     };
     let path = file.into_path().map_err(|e| e.to_string())?;
     if std::fs::metadata(&path).map_err(|e| e.to_string())?.len() > 1 << 20 {
-        return Err("fichier trop gros pour des réglages (plus de 1 Mo)".into());
+        return Err(t!("rs.settings.too_big"));
     }
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     store::parse_settings_export(&text).map(Some)
@@ -444,7 +457,7 @@ fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(S
             })
         }
         Err(e) => {
-            log::error(&format!("génération avec « {name} » : {e}"));
+            log::error(&format!("generation with \"{name}\": {e}"));
             json!({ "error": e.to_string() })
         }
     }
@@ -456,7 +469,7 @@ fn write_reply(app: &AppHandle, model: &dyn ChatModel, name: &str, history: &[(S
 fn generate(app: AppHandle, state: State<AppState>, history: Vec<(String, String)>, message: String, options: GenOptions, project: Option<String>) -> Result<()> {
     let (name, model) = current(&state)?;
     if state.generating.swap(true, Ordering::SeqCst) {
-        return Err("une réponse est déjà en cours".into());
+        return Err(t!("rs.main.busy_already"));
     }
     state.stop.store(false, Ordering::SeqCst);
     let (generating, stop) = (state.generating.clone(), state.stop.clone());
@@ -479,8 +492,8 @@ fn compare_model(state: &AppState, name: &str) -> Result<Arc<dyn ChatModel>> {
     }
     let (device, label) = pick_device(state);
     let clock = Instant::now();
-    let model = store::load_folder(&store::models_dir().join(name), &device).inspect_err(|e| log::error(&format!("comparaison : « {name} » ne se charge pas : {e}")))?;
-    log::info(&format!("comparaison : « {name} » chargé en {:.2} s sur {label}", clock.elapsed().as_secs_f64()));
+    let model = store::load_folder(&store::models_dir().join(name), &device).inspect_err(|e| log::error(&format!("comparison: \"{name}\" does not load: {e}")))?;
+    log::info(&format!("comparison: \"{name}\" loaded in {:.2} s on {label}", clock.elapsed().as_secs_f64()));
     cache.push(Loaded { name: name.to_string(), model: model.clone(), device: label });
     Ok(model)
 }
@@ -491,10 +504,10 @@ fn compare_model(state: &AppState, name: &str) -> Result<Arc<dyn ChatModel>> {
 #[allow(clippy::too_many_arguments)]
 fn compare_generate(app: AppHandle, state: State<AppState>, a: String, b: String, history_a: Vec<(String, String)>, history_b: Vec<(String, String)>, message: String, options: GenOptions, project: Option<String>) -> Result<()> {
     if !store::valid_name(&a) || !store::valid_name(&b) {
-        return Err("nom de modèle invalide".into());
+        return Err(t!("rs.main.bad_model_name_short"));
     }
     if state.generating.swap(true, Ordering::SeqCst) {
-        return Err("une réponse est déjà en cours".into());
+        return Err(t!("rs.main.busy_already"));
     }
     state.stop.store(false, Ordering::SeqCst);
     // ponytail: la réserve ne garde que A et B (au pire 3 modèles en mémoire avec celui chargé) ; décharger si la RAM manque.
@@ -539,20 +552,20 @@ fn log_event(level: String, message: String) {
 /// « Copier un rapport de bug » : version, système, modèle actif, les 50 dernières lignes du journal.
 #[tauri::command]
 fn bug_report(state: State<AppState>) -> String {
-    let model = state.model.lock().unwrap().as_ref().map(|m| format!("{} ({})", m.name, m.device)).unwrap_or_else(|| "(aucun)".into());
+    let model = state.model.lock().unwrap().as_ref().map(|m| format!("{} ({})", m.name, m.device)).unwrap_or_else(|| "(none)".into());
     let probe = nel_engine::gpu::probe();
     let gpu = match (nel_engine::gpu::compiled(), probe.card) {
-        (false, _) => "compilé sans CUDA".to_string(),
-        (true, None) => "aucune carte NVIDIA".to_string(),
+        (false, _) => "built without CUDA".to_string(),
+        (true, None) => "no NVIDIA card".to_string(),
         (true, Some(card)) => format!(
-            "{card}, pilote {} (CUDA {}), pack {}",
+            "{card}, driver {} (CUDA {}), pack {}",
             probe.driver.as_deref().unwrap_or("?"),
             probe.driver_cuda.map(|(a, b)| format!("{a}.{b}")).unwrap_or_else(|| "?".into()),
-            if gpu::installed() { "installé" } else { "absent" }
+            if gpu::installed() { "installed" } else { "missing" }
         ),
     };
     format!(
-        "Nel Code {}\nSystème : {}\nModèle actif : {model}\nGPU : {gpu}\n\nJournal (50 dernières lignes, heures UTC) :\n{}\n",
+        "Nel Code {}\nSystem: {}\nActive model: {model}\nGPU: {gpu}\n\nLog (last 50 lines, UTC times):\n{}\n",
         env!("CARGO_PKG_VERSION"),
         os::version(),
         log::tail(50).join("\n")
@@ -571,7 +584,7 @@ fn gpu_status(state: State<AppState>) -> Value {
 async fn install_gpu_pack(app: AppHandle) -> Result<()> {
     let state = app.state::<AppState>();
     if state.gpu_installing.swap(true, Ordering::SeqCst) {
-        return Err("installation déjà en cours".into());
+        return Err(t!("rs.gpu.install_running"));
     }
     state.gpu_cancel.store(false, Ordering::SeqCst);
     let result = gpu::install(&app, &state.gpu_cancel).await;
@@ -626,7 +639,7 @@ fn bench_one(folder: &std::path::Path, device: &Device, label: &str) -> Result<V
 fn benchmark(app: AppHandle, state: State<AppState>) -> Result<()> {
     let (name, _) = current(&state)?;
     if state.generating.swap(true, Ordering::SeqCst) {
-        return Err("une réponse est en cours".into());
+        return Err(t!("rs.main.busy"));
     }
     let generating = state.generating.clone();
     std::thread::spawn(move || {
@@ -641,13 +654,13 @@ fn benchmark(app: AppHandle, state: State<AppState>) -> Result<()> {
             let _ = app.emit("bench-progress", &label);
             match bench_one(&folder, &device, &label) {
                 Ok(r) => {
-                    log::info(&format!("test de vitesse « {name} » sur {label} : {:.1} tokens/s", r["tokensPerSecond"].as_f64().unwrap_or(0.0)));
+                    log::info(&format!("speed test \"{name}\" on {label}: {:.1} tokens/s", r["tokensPerSecond"].as_f64().unwrap_or(0.0)));
                     if let Err(e) = store::save_benchmark(&name, key, r) {
                         error = Some(e);
                     }
                 }
                 Err(e) => {
-                    log::error(&format!("test de vitesse « {name} » sur {label} : {e}"));
+                    log::error(&format!("speed test \"{name}\" on {label}: {e}"));
                     error = Some(format!("{label} : {e}"));
                 }
             }
@@ -681,7 +694,7 @@ fn catalog() -> Value {
 async fn install_catalog_model(app: AppHandle, name: String) -> Result<store::ImportReport> {
     let state = app.state::<AppState>();
     if state.catalog_installing.swap(true, Ordering::SeqCst) {
-        return Err("un téléchargement est déjà en cours".into());
+        return Err(t!("rs.catalog.download_running"));
     }
     state.catalog_cancel.store(false, Ordering::SeqCst);
     let result = catalog::install(&app, &name, &state.catalog_cancel).await;
@@ -701,7 +714,7 @@ fn cancel_catalog(state: State<AppState>) {
 fn list_files(dir: String) -> Result<Vec<String>> {
     let root = PathBuf::from(&dir);
     if !root.is_dir() {
-        return Err(format!("dossier introuvable : {dir}"));
+        return Err(t!("rs.main.folder_missing", path = dir));
     }
     Ok(agent::walk(&root))
 }
@@ -724,7 +737,7 @@ fn create_custom_command(dir: String, scope: String, name: String, description: 
 #[tauri::command]
 fn read_file(dir: String, path: String, confirm: Option<bool>) -> Result<String> {
     let sb = agent::Sandbox::new(&dir)?;
-    let abs = sb.resolve(&path).map_err(|e| if e.contains("sort du dossier") || e.contains("« .. »") || e.contains("chemin absolu") { format!("« {path} » n'est pas un fichier du dossier de travail") } else { e })?;
+    let abs = sb.resolve(&path).map_err(|e| if i18n::parse(&e).is_some_and(|(k, _)| ["rs.sandbox.link_outside", "rs.sandbox.parent_dir", "rs.sandbox.absolute"].contains(&k.as_str())) { t!("rs.main.not_in_workdir", path = path) } else { e })?;
     if let Some(pattern) = sb.protected(&abs)
         && confirm != Some(true)
     {
@@ -754,7 +767,7 @@ fn server_apply(app: AppHandle) -> Result<Option<u16>> {
 fn regenerate_server_key() -> Result<String> {
     let key = server::new_key();
     server::set_key(&key)?;
-    log::info("serveur local : nouvelle clé d'accès");
+    log::info("local server: new access key");
     Ok(key)
 }
 
@@ -794,7 +807,7 @@ fn import_qwen() -> Result<Value> {
 #[allow(clippy::too_many_arguments)]
 fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, images: Option<images::Attached>, options: GenOptions, project: Option<String>) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
-        return Err("une réponse est déjà en cours".into());
+        return Err(t!("rs.main.busy_already"));
     }
     state.stop.store(false, Ordering::SeqCst);
     let cancel = Arc::new(tokio::sync::Notify::new());
@@ -816,7 +829,7 @@ fn remote_generate(app: AppHandle, state: State<AppState>, provider: String, mod
                 })
             }
             Err(e) => {
-                log::error(&format!("modèle distant « {model} » : {e}"));
+                log::error(&format!("remote model \"{model}\": {e}"));
                 json!({ "error": e })
             }
         };
@@ -849,7 +862,7 @@ async fn image_prepare_path(session: String, path: String) -> Result<Value> {
 /// Le bouton Image : choisir une ou plusieurs images.
 #[tauri::command]
 async fn pick_images(app: AppHandle) -> Vec<String> {
-    let files = app.dialog().file().set_title("Ajouter des images").add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif"]).blocking_pick_files();
+    let files = app.dialog().file().set_title(i18n::text("rs.dialog.add_images")).add_filter(i18n::text("rs.dialog.images"), &["png", "jpg", "jpeg", "webp", "gif"]).blocking_pick_files();
     files.unwrap_or_default().into_iter().filter_map(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned()).collect()
 }
 
@@ -883,7 +896,7 @@ fn set_model_vision(provider: String, model: String, value: Option<bool>) -> Res
 #[allow(clippy::too_many_arguments)]
 fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, model: String, history: Vec<(String, String)>, message: String, images: Option<images::Attached>, dir: String, options: GenOptions, session: Option<String>, mcp_off: Option<Vec<String>>) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
-        return Err("une réponse est déjà en cours".into());
+        return Err(t!("rs.main.busy_already"));
     }
     state.stop.store(false, Ordering::SeqCst);
     let cancel = Arc::new(tokio::sync::Notify::new());
@@ -894,7 +907,7 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
         let s = options.sampling();
         let d = dir.clone();
         let checkpoint = tauri::async_runtime::spawn_blocking(move || checkpoint::create(&d)).await.map_err(|e| e.to_string()).and_then(|r| r).unwrap_or_else(|e| {
-            log::error(&format!("point de restauration impossible : {e}"));
+            log::error(&format!("cannot create restore point: {e}"));
             None
         });
         let (session, off) = (session.unwrap_or_default(), mcp_off.unwrap_or_default());
@@ -928,10 +941,10 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
 #[tauri::command]
 fn agent_decide(state: State<AppState>, request: String, step: String, decision: String) -> Result<()> {
     if !["accept", "reject", "accept_all", "always"].contains(&decision.as_str()) {
-        return Err(format!("décision inconnue : {decision}"));
+        return Err(t!("rs.main.bad_decision", decision = decision));
     }
-    let tx = state.approvals.lock().unwrap().remove(&format!("{request}/{step}")).ok_or("cette écriture n'attend plus de réponse")?;
-    tx.send(decision).map_err(|_| "la demande est finie".to_string())
+    let tx = state.approvals.lock().unwrap().remove(&format!("{request}/{step}")).ok_or_else(|| t!("rs.main.no_longer_waiting"))?;
+    tx.send(decision).map_err(|_| t!("rs.main.request_over"))
 }
 
 /// NELCODE.md du dossier de travail : s'il existe, sa taille, et s'il est coupé dans le message système.
@@ -950,10 +963,10 @@ fn create_nelcode_md(dir: String, text: String) -> Result<()> {
     let sb = agent::Sandbox::new(&dir)?;
     let path = sb.resolve(agent::NELCODE_MD)?;
     let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists { "NELCODE.md existe déjà : il n'est pas remplacé".to_string() } else { format!("NELCODE.md : {e}") }
+        if e.kind() == std::io::ErrorKind::AlreadyExists { t!("rs.main.nelcode_exists") } else { format!("NELCODE.md : {e}") }
     })?;
     std::io::Write::write_all(&mut f, text.as_bytes()).map_err(|e| e.to_string())?;
-    log::info("NELCODE.md modèle créé");
+    log::info("template NELCODE.md created");
     Ok(())
 }
 
@@ -971,7 +984,7 @@ fn agent_undo_all(request: String) -> Result<Vec<String>> {
 #[tauri::command(async)]
 fn agent_restore(state: State<'_, AppState>, dir: String, id: String) -> Result<()> {
     if state.generating.load(Ordering::SeqCst) {
-        return Err("une réponse est en cours".into());
+        return Err(t!("rs.main.busy"));
     }
     checkpoint::restore(&dir, &id)
 }
@@ -1013,7 +1026,7 @@ fn open_claude_install() -> Result<()> {
 #[tauri::command]
 fn claude_agent_send(app: AppHandle, state: State<AppState>, session_id: Option<String>, message: String, dir: String) -> Result<()> {
     if state.generating.swap(true, Ordering::SeqCst) {
-        return Err("une réponse est déjà en cours".into());
+        return Err(t!("rs.main.busy_already"));
     }
     state.stop.store(false, Ordering::SeqCst);
     let cancel = Arc::new(tokio::sync::Notify::new());
@@ -1066,7 +1079,7 @@ fn mcp_set_secret(dir: Option<String>, key: String, kind: String, name: String, 
     let s = mcp::server(dir.as_deref(), &key)?;
     let listed = if kind == "env" { &s.secret_env } else { &s.secret_headers };
     if !listed.contains(&name) {
-        return Err(format!("« {name} » n'est pas une valeur secrète de ce serveur"));
+        return Err(t!("rs.mcp.not_a_secret", name = name));
     }
     mcp::set_secret(&key, &kind, &name, &value)
 }
@@ -1076,7 +1089,7 @@ fn mcp_set_secret(dir: Option<String>, key: String, kind: String, name: String, 
 fn mcp_approve(app: AppHandle, dir: String, key: String, hash: String, allow: bool) -> Result<()> {
     let p = mcp::prepared(Some(&dir), &key)?;
     if p.hash != hash {
-        return Err("la configuration de ce serveur a changé depuis : relis-la avant de décider".into());
+        return Err(t!("rs.mcp.config_changed"));
     }
     mcp::set_approval(&p, allow)?;
     if !allow {
@@ -1131,7 +1144,7 @@ fn mcp_claude_desktop() -> Option<String> {
 
 #[tauri::command]
 async fn pick_mcp_config(app: AppHandle) -> Option<String> {
-    let file = app.dialog().file().set_title("Importer des serveurs MCP").add_filter("Configuration MCP (.json)", &["json"]).blocking_pick_file()?;
+    let file = app.dialog().file().set_title(i18n::text("rs.dialog.import_mcp")).add_filter(i18n::text("rs.dialog.mcp_filter"), &["json"]).blocking_pick_file()?;
     Some(file.into_path().ok()?.to_string_lossy().into_owned())
 }
 
@@ -1165,11 +1178,11 @@ fn usage_csv() -> String {
 #[tauri::command]
 async fn save_usage_csv(app: AppHandle) -> Result<Option<String>> {
     let (_, date) = usage::local_now();
-    let Some(file) = app.dialog().file().set_title("Exporter le suivi").set_file_name(format!("nelcode-suivi-{}.csv", &date[..10])).add_filter("CSV", &["csv"]).blocking_save_file() else {
+    let Some(file) = app.dialog().file().set_title(i18n::text("rs.dialog.export_usage")).set_file_name(format!("{}-{}.csv", i18n::text("rs.dialog.usage_file"), &date[..10])).add_filter("CSV", &["csv"]).blocking_save_file() else {
         return Ok(None);
     };
     let path = file.into_path().map_err(|e| e.to_string())?;
-    std::fs::write(&path, usage::csv(&usage::load())).map_err(|e| format!("export impossible : {e}"))?;
+    std::fs::write(&path, usage::csv(&usage::load())).map_err(|e| t!("rs.main.export_failed", error = e.to_string()))?;
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
@@ -1203,7 +1216,7 @@ fn main() {
             usage::prune();
             images::clean_orphans();
             gpu::startup();
-            log::info(&format!("démarrage de Nel Code {}", env!("CARGO_PKG_VERSION")));
+            log::info(&format!("starting Nel Code {}", env!("CARGO_PKG_VERSION")));
             let config = app.config().app.windows[0].clone();
             // La fenêtre reste sur l'interface : aucun lien ne s'y ouvre, ni dans une nouvelle fenêtre.
             #[allow(unused_mut)]
@@ -1259,6 +1272,8 @@ fn main() {
             pick_folder,
             open_folder,
             open_link,
+            i18n_catalog,
+            set_language,
             get_settings,
             save_settings,
             settings_export_json,
@@ -1337,7 +1352,7 @@ fn main() {
             pick_mcp_config,
         ])
         .build(tauri::generate_context!())
-        .expect("impossible de lancer Nel Code")
+        .expect("cannot start Nel Code")
         .run(|app, event| {
             // Les serveurs MCP s'arrêtent avec l'application (leurs Job Objects tueraient de toute façon les processus).
             if let tauri::RunEvent::Exit = event {

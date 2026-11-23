@@ -10,46 +10,46 @@
 <div id="app">
   <aside id="sidebar">
     <div class="brand"><span class="logo"><span data-icon="asterisk"></span></span> Nel Code</div>
-    <button id="new-chat" class="new-chat" title="Nouvelle conversation (Ctrl+N)">
-      <span><span data-icon="plus"></span> Nouvelle conversation</span><kbd>Ctrl N</kbd>
+    <button id="new-chat" class="new-chat" data-i18n-title="html.newChat.title">
+      <span><span data-icon="plus"></span> <span data-i18n="html.newChat"></span></span><kbd>Ctrl N</kbd>
     </button>
-    <button id="claude-chat" class="new-chat claude" title="Nouvelle conversation Claude Agent (outil claude d'Anthropic, avec ta clé API)">
+    <button id="claude-chat" class="new-chat claude" data-i18n-title="html.claudeChat.title">
       <span><span data-icon="bot"></span> Claude Agent</span>
     </button>
     <button id="project-btn" class="project-btn" aria-haspopup="menu"></button>
-    <input id="search" class="search" type="search" placeholder="Rechercher…" spellcheck="false">
-    <div class="section-title">Conversations</div>
+    <input id="search" class="search" type="search" data-i18n-placeholder="html.search" spellcheck="false">
+    <div class="section-title" data-i18n="html.conversations"></div>
     <ul id="sessions" class="list sessions"></ul>
     <div class="section-title models-title">
-      <span>Modèles</span>
+      <span data-i18n="html.models"></span>
       <span class="title-btns">
-        <button id="catalog-btn" class="icon-btn" title="Catalogue de modèles ouverts" aria-label="Catalogue de modèles"><span data-icon="download"></span></button>
-        <button id="import-btn" class="icon-btn" title="Importer un .nelmodel ou un .gguf (ou glisse-le dans la fenêtre)" aria-label="Importer un modèle"><span data-icon="plus"></span></button>
+        <button id="catalog-btn" class="icon-btn" data-i18n-title="html.catalog.title" data-i18n-aria-label="html.catalog.label"><span data-icon="download"></span></button>
+        <button id="import-btn" class="icon-btn" data-i18n-title="html.import.title" data-i18n-aria-label="html.import.label"><span data-icon="plus"></span></button>
       </span>
     </div>
     <ul id="models" class="list models"></ul>
     <div class="sidebar-foot">
-      <button id="settings-btn" class="ghost" title="Réglages (Ctrl+,)"><span data-icon="settings"></span> Réglages</button>
-      <button id="usage-btn" class="ghost" title="Suivi : tokens, coûts estimés, temps de réponse" aria-label="Suivi"><span data-icon="chart-column"></span></button>
-      <button id="arena-btn" class="ghost" title="Classement du mode comparaison" aria-label="Classement"><span data-icon="trophy"></span></button>
-      <button id="palette-btn" class="ghost" title="Palette de commandes"><kbd>Ctrl K</kbd></button>
+      <button id="settings-btn" class="ghost" data-i18n-title="html.settings.title"><span data-icon="settings"></span> <span data-i18n="html.settings"></span></button>
+      <button id="usage-btn" class="ghost" data-i18n-title="html.usage.title" data-i18n-aria-label="html.usage.label"><span data-icon="chart-column"></span></button>
+      <button id="arena-btn" class="ghost" data-i18n-title="html.arena.title" data-i18n-aria-label="html.arena.label"><span data-icon="trophy"></span></button>
+      <button id="palette-btn" class="ghost" data-i18n-title="html.palette.title"><kbd>Ctrl K</kbd></button>
     </div>
   </aside>
 
   <section id="main">
     <header id="topbar">
-      <div id="title" class="title" title="Double-clic pour renommer (F2)">Nouvelle conversation</div>
+      <div id="title" class="title" data-i18n-title="html.title.title"></div>
       <div class="chips">
         <span id="claude-chip" class="chip claude" hidden></span>
         <button id="usage-chip" class="chip usage" hidden></button>
-        <span id="compare-chip" class="chip" hidden title="Conversation comparée : chaque message part aux deux modèles"></span>
+        <span id="compare-chip" class="chip" hidden data-i18n-title="html.compare.title"></span>
         <button id="nelcode-chip" class="chip" hidden></button>
         <button id="mcp-chip" class="chip" hidden></button>
-        <button id="agent-btn" class="chip" title="Mode Agent : le modèle lit et modifie les fichiers du dossier de travail (avec ton accord). Modèles distants qui gèrent les outils seulement."><span data-icon="bot"></span><span>Agent</span></button>
-        <button id="transp-btn" class="chip" title="Mode transparence : au survol d'un mot, les 5 choix du modèle"><span data-icon="eye"></span><span>Transparence</span></button>
-        <button id="files-btn" class="chip icon-only" title="Panneau Fichiers (Ctrl+Maj+E)" aria-label="Panneau Fichiers"><span data-icon="folder-tree"></span></button>
-        <button id="folder-chip" class="chip" title="Dossier de travail de la conversation"><span data-icon="folder"></span><span id="folder-name"></span></button>
-        <button id="folder-open" class="chip icon-only" title="Ouvrir le dossier dans l'Explorateur" aria-label="Ouvrir le dossier"><span data-icon="external-link"></span></button>
+        <button id="agent-btn" class="chip" data-i18n-title="html.agent.title"><span data-icon="bot"></span><span data-i18n="html.agent"></span></button>
+        <button id="transp-btn" class="chip" data-i18n-title="html.transparency.title"><span data-icon="eye"></span><span data-i18n="html.transparency"></span></button>
+        <button id="files-btn" class="chip icon-only" data-i18n-title="html.files.title" data-i18n-aria-label="html.files.label"><span data-icon="folder-tree"></span></button>
+        <button id="folder-chip" class="chip" data-i18n-title="html.folder.title"><span data-icon="folder"></span><span id="folder-name"></span></button>
+        <button id="folder-open" class="chip icon-only" data-i18n-aria-label="html.folderOpen.label"><span data-icon="external-link"></span></button>
       </div>
     </header>
 
@@ -59,24 +59,24 @@
       <div id="messages"></div>
       <div id="empty" class="empty">
         <div class="empty-logo"><span data-icon="asterisk"></span></div>
-        <h1>Bienvenue dans Nel Code</h1>
-        <p id="empty-hint">Écris un message pour commencer. <kbd>/</kbd> pour les commandes, <kbd>Ctrl K</kbd> pour la palette.</p>
+        <h1 data-i18n="html.welcome"></h1>
+        <p id="empty-hint"><span data-i18n="html.emptyHint.start"></span> <kbd>/</kbd> <span data-i18n="html.emptyHint.commands"></span> <kbd>Ctrl K</kbd> <span data-i18n="html.emptyHint.palette"></span></p>
       </div>
     </div>
 
     <div id="composer">
       <div id="suggest" class="suggest" hidden></div>
-      <div id="attachments" class="attachments" hidden aria-label="Images du message"></div>
+      <div id="attachments" class="attachments" hidden data-i18n-aria-label="html.attachments.label"></div>
       <div class="input-box">
         <span class="prompt-char"><span data-icon="chevron-right"></span></span>
-        <textarea id="input" rows="1" placeholder="Écris un message…  (/ pour les commandes, @ pour un fichier)" spellcheck="false"></textarea>
-        <button id="image-btn" class="attach" title="Ajouter une image" aria-label="Ajouter une image"><span data-icon="image"></span></button>
-        <button id="send" class="send" title="Envoyer (Entrée)" aria-label="Envoyer"><span data-icon="arrow-up"></span></button>
+        <textarea id="input" rows="1" data-i18n-placeholder="html.input" spellcheck="false"></textarea>
+        <button id="image-btn" class="attach" data-i18n-title="html.image.title" data-i18n-aria-label="html.image.title"><span data-icon="image"></span></button>
+        <button id="send" class="send" data-i18n-title="html.send.title" data-i18n-aria-label="html.send.label"><span data-icon="arrow-up"></span></button>
       </div>
       <div id="statusbar">
-        <div id="context" class="context" role="button" tabindex="0" title="Ce que le modèle verra au prochain message">
+        <div id="context" class="context" role="button" tabindex="0" data-i18n-title="html.context.title">
           <div class="bar"><div id="context-fill"></div></div>
-          <span id="context-text">— / — tokens</span>
+          <span id="context-text" data-i18n="conversation.tokens"></span>
         </div>
         <span id="status" class="status"></span>
       </div>
@@ -84,11 +84,11 @@
   </section>
 
   <aside id="plan" class="plan" hidden></aside>
-  <aside id="files" class="files" hidden aria-label="Fichiers du dossier de travail"></aside>
+  <aside id="files" class="files" hidden data-i18n-aria-label="html.files.panel"></aside>
 </div>
 
-<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer, ou des images pour le message</div></div>
-<div id="settings" class="settings-page" role="dialog" aria-modal="true" aria-label="Réglages" hidden></div>
+<div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div><span data-i18n="html.drop"></span></div></div>
+<div id="settings" class="settings-page" role="dialog" aria-modal="true" data-i18n-aria-label="html.settings" hidden></div>
 <div id="overlay" class="overlay" hidden></div>
 <div id="menu" class="menu" hidden></div>
 <div id="toasts" class="toasts"></div>
