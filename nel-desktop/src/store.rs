@@ -528,6 +528,13 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     // Interface : taille du texte (80 à 150 %, par pas de 10), panneau Fichiers ouvert, premier lancement fait.
     s["textSize"] = ((num(&s["textSize"], 100.0).clamp(80.0, 150.0) / 10.0).round() as u64 * 10).into();
     s["filesPanel"] = s["filesPanel"].as_bool().unwrap_or(false).into();
+    // Le thème (« dark » ou « light ») reste tel quel : il est partagé avec Nel Code C#. Langue (le français seulement pour l'instant), densité de l'interface, et le
+    // modèle chargé au démarrage (vide : le dernier utilisé ; sinon un nom de modèle ou « remote:fournisseur/modèle »).
+    s["language"] = "fr".into();
+    let density = s["density"].as_str().filter(|d| DENSITIES.contains(d)).unwrap_or("normal").to_string();
+    s["density"] = density.into();
+    let default_model = s["defaultModel"].as_str().map(str::trim).filter(|m| m.len() <= 300).unwrap_or_default().to_string();
+    s["defaultModel"] = default_model.into();
     s["onboarded"] = s["onboarded"].as_bool().unwrap_or(false).into();
     // Suivi : la table de prix modifiée (absente : celle par défaut, voir usage.rs), le budget mensuel en dollars
     // (0 : aucun) et la confirmation à 100 % (activée par défaut).
@@ -542,6 +549,63 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["markdown"] = s["markdown"].as_bool().unwrap_or(true).into();
     s["budgetConfirm"] = s["budgetConfirm"].as_bool().unwrap_or(true).into();
     s
+}
+
+pub const DENSITIES: [&str; 3] = ["compact", "normal", "comfortable"];
+
+/// Les réglages qu'on peut exporter et importer (Réglages → Avancé) : des préférences seulement. Jamais de clé ni de
+/// secret (ils sont dans le trousseau, pas dans settings.json), ni ce qui est propre à ce PC (fournisseurs et leurs
+/// adresses, projets récents, dernier modèle, fenêtre, accords…). Une liste fermée : une clé ajoutée plus tard à
+/// settings.json n'est jamais exportée sans être ajoutée ici.
+pub const PORTABLE_SETTINGS: [&str; 35] = [
+    "language", "theme", "accent", "textSize", "density", "markdown", "autoUpdate",
+    "defaultModel", "temperature", "topK", "topP", "maxReplyTokens", "repetitionPenalty", "contextLimit", "summaryThreshold",
+    "agentMaxTurns", "commandTimeout", "allowedCommands", "protectedFiles", "explorerConcurrency", "explorerMax", "explorerTurns",
+    "claudeModel", "claudePermissionMode", "claudeAllowedTools", "claudeProjectSettings",
+    "mcpStartTimeout", "mcpCallTimeout", "imageMaxSide", "device",
+    "budgetMonthly", "budgetConfirm", "prices", "serverEnabled", "serverPort",
+];
+
+/// Le fichier d'export : { "nelcode": "settings", "version": 1, "settings": { … } }, les réglages portables seulement.
+pub fn export_settings() -> serde_json::Value {
+    let s = load_settings();
+    let mut out = serde_json::Map::new();
+    for k in PORTABLE_SETTINGS {
+        if let Some(v) = s.get(k).filter(|v| !v.is_null()) {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    serde_json::json!({ "nelcode": "settings", "version": 1, "settings": out })
+}
+
+/// Un fichier exporté : les réglages portables qu'il contient (le reste est ignoré), pas encore enregistrés (l'interface
+/// montre d'abord ce qui change). Rend aussi les clés ignorées.
+pub fn parse_settings_export(text: &str) -> Result<serde_json::Value> {
+    if text.len() > 1 << 20 {
+        return Err("fichier trop gros pour des réglages (plus de 1 Mo)".into());
+    }
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("pas un fichier JSON valide ({e})"))?;
+    // Le fichier d'export, ou directement l'objet des réglages.
+    let src = if v["nelcode"] == "settings" { &v["settings"] } else { &v };
+    let Some(obj) = src.as_object() else {
+        return Err("ce fichier ne contient pas de réglages de Nel Code".into());
+    };
+    let mut changes = serde_json::Map::new();
+    let mut ignored = Vec::new();
+    for (k, val) in obj {
+        if PORTABLE_SETTINGS.contains(&k.as_str()) {
+            changes.insert(k.clone(), val.clone());
+        } else {
+            ignored.push(k.clone());
+        }
+    }
+    if changes.is_empty() {
+        return Err("aucun réglage de Nel Code dans ce fichier".into());
+    }
+    // Les valeurs comme elles seraient enregistrées (bornes, listes nettoyées) : ce que l'interface montre.
+    let mut norm = normalize(serde_json::Value::Object(changes.clone()));
+    let cleaned: serde_json::Map<String, serde_json::Value> = changes.keys().map(|k| (k.clone(), norm[k].take())).collect();
+    Ok(serde_json::json!({ "changes": cleaned, "ignored": ignored }))
 }
 
 pub fn save_settings(changes: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value> {
@@ -781,6 +845,46 @@ mod tests {
         c.insert("topK".into(), 5.into());
         assert_eq!(save_settings(&c).unwrap()["topK"], 5);
         assert_eq!(fs::read_to_string(home.join("settings.illisible.json")).unwrap(), "{ pas du json");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn reglages_exportes_sans_secret() {
+        let (home, _guard) = home("export");
+        fs::write(
+            home.join("settings.json"),
+            r#"{"theme":"light","topK":7,"serverKey":"cle-secrete","providers":[{"id":"p1","url":"http://10.0.0.1/v1","models":[]}],
+               "recentProjects":["C:/perso"],"lastModel":"m","window":{"x":1},"density":"bizarre","claudeModel":"sonnet"}"#,
+        )
+        .unwrap();
+        let e = export_settings();
+        assert_eq!(e["nelcode"], "settings");
+        let out = e["settings"].as_object().unwrap();
+        assert_eq!((out["theme"].as_str(), out["topK"].as_u64(), out["density"].as_str()), (Some("light"), Some(7), Some("normal")));
+        for k in out.keys() {
+            assert!(PORTABLE_SETTINGS.contains(&k.as_str()), "{k}");
+        }
+        let text = serde_json::to_string(&e).unwrap();
+        for secret in ["cle-secrete", "serverKey", "providers", "10.0.0.1", "recentProjects", "lastModel", "window"] {
+            assert!(!text.contains(secret), "{secret} exporté");
+        }
+        // Aucun nom de réglage portable ne ressemble à une clé ou à un secret (maxReplyTokens : une longueur).
+        for k in PORTABLE_SETTINGS {
+            let l = k.to_lowercase();
+            assert!(["key", "secret", "password", "credential", "auth", "bearer"].iter().all(|w| !l.contains(w)), "{k}");
+        }
+
+        // Import : les clés connues seulement, bornées, rien d'enregistré tant que l'interface n'a pas confirmé.
+        let r = parse_settings_export(r#"{"nelcode":"settings","version":1,"settings":{"topK":-3,"temperature":9,"serverKey":"x","providers":[],"allowedCommands":[" node  -p ","node -p"]}}"#).unwrap();
+        assert_eq!(r["changes"]["temperature"], 2.0);
+        assert_eq!(r["changes"]["topK"], 0);
+        assert_eq!(r["changes"]["allowedCommands"], serde_json::json!(["node -p"]));
+        assert!(r["changes"].get("serverKey").is_none() && r["changes"].get("providers").is_none());
+        assert_eq!(r["ignored"], serde_json::json!(["providers", "serverKey"]));
+        assert_eq!(load_settings()["topK"], 7, "rien n'est enregistré par la lecture du fichier");
+        assert!(parse_settings_export("pas du json").is_err());
+        assert!(parse_settings_export(r#"{"serverKey":"x"}"#).is_err());
+        assert!(parse_settings_export("[1]").is_err());
         let _ = fs::remove_dir_all(&home);
     }
 

@@ -2,6 +2,46 @@
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+
+- **Page Réglages** à la place de la fenêtre : les catégories à gauche (Général, Modèles, Fournisseurs, Agent, Claude
+  Agent, MCP, Images, Calcul, Suivi et budget, Serveur local, Avancé), leurs réglages à droite. Chaque réglage a son
+  libellé, une courte explication, un contrôle adapté (interrupteur, liste, curseur avec champ numérique), un point
+  quand il diffère de la valeur par défaut et un bouton « valeur par défaut » ; **Tout réinitialiser** remet une
+  catégorie entière, après confirmation.
+- **Enregistrement automatique**, avec « Enregistré » en haut de la page ; une valeur impossible (hors bornes, pas un
+  nombre, mauvais pas, nom de modèle invalide, ligne de prix illisible) est signalée sous son champ et n'est pas
+  enregistrée. Plus de bouton Enregistrer ni Annuler.
+- **Recherche** dans toutes les catégories (explications comprises, sans accents ni casse), texte trouvé surligné ; un
+  bloc (fournisseurs, carte graphique…) trouvé mène à sa catégorie.
+- **Liens directs** : dans la barre d'état, le modèle ouvre Modèles, CPU/GPU ouvre Calcul (un modèle distant :
+  Fournisseurs), le contexte ouvre Contexte et résumé ; la puce MCP ouvre MCP, avec les serveurs de la conversation
+  (cochés ou non, enregistré tout de suite) ; `/settings <catégorie>` (`/settings gpu`, `/settings fournisseurs`…) ; la
+  palette Ctrl+K propose chaque catégorie et chaque réglage. `/mcp` ouvre Réglages → MCP (l'ancienne page MCP).
+- **Clavier** : flèches, Début et Fin dans les catégories, Entrée ou flèche droite vers les réglages, Ctrl+F vers la
+  recherche, Échap pour fermer (la recherche d'abord, si elle est remplie). Le reste de la fenêtre est inerte tant que
+  la page est ouverte.
+- **Fournisseurs** : la liste à gauche, le fournisseur choisi à droite.
+- **Modèle par défaut** (Modèles) : celui chargé au démarrage ; par défaut, le dernier utilisé.
+- **Thème** (sombre ou clair), **langue** (le français, seule langue pour l'instant) et **densité** (compacte,
+  normale, confortable) dans Général.
+- **Exporter / Importer les réglages** (Avancé) en JSON : une liste fermée de préférences, jamais de clé ni de secret,
+  ni fournisseurs, projets, dernier modèle ou accords. À l'import, Nel Code montre ce qui change (les réglages de
+  sécurité en premier, marqués) et n'enregistre rien sans confirmation ; les autres clés du fichier sont ignorées.
+- **Avancé** : ouvrir le dossier du journal, copier un rapport de bug, à propos (version, dossier des données).
+
+### Modifié
+
+- **Interface plus grande** : texte de base de 15 px (14 px avant), toutes les autres tailles de texte en proportion,
+  icônes et colonne de gauche un peu plus grandes. Les utilisateurs qui n'avaient jamais changé la taille ont la
+  nouvelle taille par défaut ; un zoom choisi avant est gardé.
+- **Fenêtre au lancement** : environ 80 % de la zone utile de l'écran, centrée (1200 × 800 avant), jamais moins de
+  720 × 480.
+- **Zoom** (l'ancienne « taille du texte ») : Ctrl + / Ctrl − / Ctrl 0, de 80 à 150 % par pas de 10 %, enregistré ;
+  marche aussi page Réglages ouverte, et le pavé numérique compte.
+
 ## [1.0.1] - 2026-11-22
 
 ### Ajouté

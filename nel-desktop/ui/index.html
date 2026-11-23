@@ -74,7 +74,7 @@
         <button id="send" class="send" title="Envoyer (Entrée)" aria-label="Envoyer"><span data-icon="arrow-up"></span></button>
       </div>
       <div id="statusbar">
-        <div id="context" class="context" title="Ce que le modèle verra au prochain message">
+        <div id="context" class="context" role="button" tabindex="0" title="Ce que le modèle verra au prochain message">
           <div class="bar"><div id="context-fill"></div></div>
           <span id="context-text">— / — tokens</span>
         </div>
@@ -88,6 +88,7 @@
 </div>
 
 <div id="drop" class="drop" hidden><div class="drop-box"><div class="drop-icon"><span data-icon="download"></span></div>Dépose un fichier <b>.nelmodel</b> ou <b>.gguf</b> pour l'importer, ou des images pour le message</div></div>
+<div id="settings" class="settings-page" role="dialog" aria-modal="true" aria-label="Réglages" hidden></div>
 <div id="overlay" class="overlay" hidden></div>
 <div id="menu" class="menu" hidden></div>
 <div id="toasts" class="toasts"></div>

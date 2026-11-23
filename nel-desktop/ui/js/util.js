@@ -157,7 +157,9 @@ export function richText(text) {
 export function dialog(title, body, buttons, focus) {
   return new Promise((resolve) => {
     const ov = $('overlay');
-    const done = (v) => { ov.hidden = true; ov.replaceChildren(); UI.closeOverlay = null; resolve(v); $('input').focus(); };
+    const before = document.activeElement;
+    // Par-dessus la page Réglages : le focus y revient (sinon : la saisie).
+    const done = (v) => { ov.hidden = true; ov.replaceChildren(); UI.closeOverlay = null; resolve(v); (UI.page && before?.isConnected ? before : $('input')).focus(); };
     const btns = h('div', { class: 'buttons' });
     const refresh = () => btns.replaceChildren(...buttons.filter((b) => !b.show || b.show()).map((b) =>
       h('button', { class: 'btn' + (b.primary ? ' primary' : '') + (b.danger ? ' danger' : ''), onclick: () => done(b.value) }, b.label)));

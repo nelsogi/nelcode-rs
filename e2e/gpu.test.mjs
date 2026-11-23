@@ -23,12 +23,12 @@ const leftovers = () => ['gpu.partial', 'gpu.download'].filter((f) => fs.existsS
 
 /** Ouvre les réglages et clique sur un bouton de la section Calcul. */
 async function settingsButton(text) {
-  if (!(await A.ev(`!!T.dialog()?.querySelector('.calc')`))) {
-    await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-    await A.waitFor(`T.dialog()?.querySelector('.calc .gpu-info')?.textContent`);
+  if (!(await A.ev(`!!T.settings()?.querySelector('.cat-calc')`))) {
+    await A.ev(`openSettings('gpu')`);
+    await A.waitFor(`T.settings()?.querySelector('.cat-calc .gpu-info')?.textContent`);
   }
-  await A.waitFor(`[...T.dialog().querySelectorAll('.calc button')].some((b) => b.textContent.includes(${JSON.stringify(text)}))`, 10_000, `bouton ${text}`);
-  await A.ev(`T.button(${JSON.stringify(text)}, T.dialog().querySelector('.calc'))`);
+  await A.waitFor(`[...T.settings().querySelectorAll('.cat-calc button')].some((b) => b.textContent.includes(${JSON.stringify(text)}))`, 10_000, `bouton ${text}`);
+  await A.ev(`T.button(${JSON.stringify(text)}, T.settings().querySelector('.cat-calc'))`);
 }
 
 before(async () => {
@@ -60,8 +60,8 @@ test('section Calcul : carte et pilote détectés, pack proposé avec sa taille'
   await A.importAs('mini');
   await A.waitFor(`S.model.name === 'mini' && !S.model.loading`, 120_000);
   assert.equal(await A.ev(`S.model.device`), 'CPU');   // pas de pack : le CPU, sans erreur
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  const info = await A.waitFor(`T.dialog()?.querySelector('.calc .gpu-info')?.textContent`);
+  await A.ev(`openSettings('calc')`);
+  const info = await A.waitFor(`T.settings()?.querySelector('.cat-calc .gpu-info')?.textContent`);
   assert.match(info, /NVIDIA .* · pilote \d+\.\d+ \(CUDA \d+\.\d+\)/);
   assert.match(info, /Installer le pack GPU \(\d+ Mo\)/);
   await A.ev(`T.key('Escape', {}, document)`);
@@ -81,7 +81,7 @@ test('annulation pendant le téléchargement : rien ne reste', async (t) => {
   mode = 'slow';
   await settingsButton('Installer le pack GPU');
   await A.waitFor(`/Téléchargement… [1-9]/.test(document.getElementById('gpu-text')?.textContent)`, 60_000, 'progression');
-  await A.ev(`T.button('Annuler', T.dialog().querySelector('.calc'))`);
+  await A.ev(`T.button('Annuler', T.settings().querySelector('.cat-calc'))`);
   await A.waitFor(`T.toasts().includes('Installation du pack GPU annulée')`, 60_000);
   assert.ok(!fs.existsSync(path.join(A.home, 'gpu')));
   assert.deepEqual(leftovers(), []);
@@ -118,6 +118,7 @@ test('les DLL CUDA ne viennent que du pack (et nvcuda de System32)', async (t) =
 
 test('test de vitesse sur CPU et sur GPU', async (t) => {
   if (skip) return t.skip(skip);
+  if (await A.ev(`!!T.settings()`)) await A.ev(`T.key('Escape', {}, document)`);
   await A.ev(`runBenchmark()`);
   await A.waitFor(`!S.bench && T.dialog()?.textContent.includes('Test de vitesse')`, 300_000, 'fin du test de vitesse');
   const b = A.readJson('benchmarks.json').mini;
@@ -131,9 +132,9 @@ test('test de vitesse sur CPU et sur GPU', async (t) => {
 
 test('choix CPU dans les réglages : le modèle est rechargé sur le CPU', async (t) => {
   if (skip) return t.skip(skip);
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.calc select')`);
-  await A.ev(`T.setValue(T.dialog().querySelector('.calc select'), 'cpu'); T.button('Enregistrer', T.dialog())`);
+  await A.ev(`openSettings('calc', 'device')`);
+  await A.waitFor(`T.control('device')`);
+  await A.ev(`T.setValue(T.control('device'), 'cpu')`);
   await A.waitFor(`S.model.device === 'CPU' && !S.model.loading`, 120_000);
   assert.equal(A.readJson('settings.json').device, 'cpu');
 });
@@ -144,7 +145,7 @@ test('retirer le pack (DLL chargées : au prochain démarrage)', async (t) => {
   await A.waitFor(`T.toasts().includes('au prochain démarrage')`, 10_000);
   assert.ok(fs.existsSync(path.join(A.home, 'gpu.remove')));
   assert.equal((await A.ev(`window.__TAURI__.core.invoke('gpu_status')`)).installed, false);
-  await A.waitFor(`[...T.dialog().querySelectorAll('.calc button')].some((b) => b.textContent.includes('Installer le pack GPU'))`, 10_000);
+  await A.waitFor(`[...T.settings().querySelectorAll('.cat-calc button')].some((b) => b.textContent.includes('Installer le pack GPU'))`, 10_000);
   await A.ev(`T.key('Escape', {}, document)`);
 });
 

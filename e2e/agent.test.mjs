@@ -345,9 +345,10 @@ test('nombre maximal de tours (réglable)', async () => {
   await finish();
   await A.waitFor(`T.toasts().includes('nombre maximal de tours atteint (3)')`, 5_000);
   assert.equal((await lastMsg()).agent.steps.length, 3);
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.textContent.includes('Mode Agent : tours au plus')`, 10_000);
+  await A.ev(`openSettings('agent')`);
+  await A.waitFor(`T.control('agentMaxTurns')?.value === '3' && T.row('agentMaxTurns').textContent.includes('Tours au plus')`, 10_000);
   await A.ev(`T.key('Escape', {}, document)`);
+  await A.waitFor(`!T.settings()`, 5_000, 'réglages fermés');
 });
 
 test('modèle qui ne gère pas les outils : message clair', async () => {
@@ -373,12 +374,14 @@ const everything = () => JSON.stringify(chats);
 test('fichiers protégés : motif ajouté dans les réglages (« Fichiers protégés »)', async () => {
   for (const [f, c] of Object.entries(SECRETS)) { fs.mkdirSync(path.dirname(path.join(DIR, f)), { recursive: true }); fs.writeFileSync(path.join(DIR, f), c); }
   await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { agentMaxTurns: 10 } }).then((s) => (S.settings = s, true))`);
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('textarea.protected')`, 10_000);
-  assert.match(await A.ev(`T.dialog().textContent`), /Toujours protégés : \.env, \.env\.\*, \.git\/, \*\.pem/);
-  await A.ev(`T.setValue(T.dialog().querySelector('textarea.protected'), '*.secret\\n\\n  *.secret  \\nprivé/'); T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);   // pas celui du fournisseur
+  await A.ev(`openSettings('agent', 'protectedFiles')`);
+  await A.waitFor(`T.control('protectedFiles')?.matches('textarea.protected')`, 10_000);
+  assert.match(await A.ev(`T.row('protectedFiles').textContent`), /Toujours protégés : \.env, \.env\.\*, \.git\/, \*\.pem/);
+  // Enregistré au fil de la saisie, sans bouton.
+  await A.ev(`T.setValue(T.control('protectedFiles'), '*.secret\\n\\n  *.secret  \\nprivé/')`);
   await A.waitFor(`JSON.stringify(S.settings.protectedFiles) === '["*.secret","privé/"]'`, 5_000, 'motifs enregistrés (sans vide ni doublon)');
   assert.deepEqual(A.readJson('settings.json').protectedFiles, ['*.secret', 'privé/']);
+  await A.ev(`T.key('Escape', {}, document)`);
 });
 
 test('read_file d\'un fichier protégé : confirmation explicite, Refuser ou Autoriser', async () => {
@@ -650,11 +653,12 @@ test('run_command : délai maximal (réglable) et Stop tuent la commande et ses 
 });
 
 test('run_command : liste autorisée (réglages), et « Accepter tout » ne vaut pas pour une commande', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('textarea.commands')`, 10_000);
-  assert.equal(await A.ev(`T.dialog().querySelector('textarea.commands').value`), '', 'vide par défaut');
-  await A.ev(`T.setValue(T.dialog().querySelector('textarea.commands'), 'node   -p\\n\\nnode -p'); T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);
+  await A.ev(`openSettings('agent', 'allowedCommands')`);
+  await A.waitFor(`T.control('allowedCommands')?.matches('textarea.commands')`, 10_000);
+  assert.equal(await A.ev(`T.control('allowedCommands').value`), '', 'vide par défaut');
+  await A.ev(`T.setValue(T.control('allowedCommands'), 'node   -p\\n\\nnode -p')`);
   await A.waitFor(`JSON.stringify(S.settings.allowedCommands) === '["node -p"]'`, 5_000, 'liste enregistrée');
+  await A.ev(`T.key('Escape', {}, document)`);
   await start('cmd-auto', 'Calcule');
   await finish();
   const m = await lastMsg();
@@ -674,10 +678,10 @@ test('run_command : liste autorisée (réglages), et « Accepter tout » ne vaut
 // --- Fournisseur Claude ---------------------------------------------------------------------------------------
 
 test('fournisseur Claude : modèle prérempli, en-têtes Anthropic, sans temperature/top_p, mode Agent', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.providers-field')`, 10_000);
-  await A.ev(`T.button('Ajouter Claude (Anthropic)', T.dialog())`);
-  const form = `[...T.dialog().querySelectorAll('.provider')].pop()`;
+  await A.ev(`openSettings('providers')`);
+  await A.waitFor(`T.settings()?.querySelector('.providers-field')`, 10_000);
+  await A.ev(`T.button('Ajouter Claude (Anthropic)', T.settings())`);
+  const form = `[...T.settings().querySelectorAll('.provider')].pop()`;
   // Le modèle : l'adresse de l'API d'Anthropic, l'option cochée, le badge.
   assert.deepEqual(await A.ev(`[${form}.querySelector('.name').value, ${form}.querySelector('.url').value, ${form}.querySelector('.omit-sampling').checked, ${form}.querySelector('.badge')?.textContent]`),
     ['Claude', 'https://api.anthropic.com/v1/', true, 'Anthropic']);

@@ -300,10 +300,33 @@ fn os_release_name(text: &str) -> Option<String> {
     text.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=")).map(|v| v.trim().trim_matches('"').to_string()).filter(|v| !v.is_empty())
 }
 
+/// La taille de la fenêtre au lancement, en pixels logiques : environ 80 % de la zone utile de l'écran (sans la barre
+/// des tâches), jamais moins que la taille minimale (720 × 480) ni plus que l'écran. `work` : la zone utile en pixels
+/// physiques, `scale` : l'échelle de l'écran (1,5 pour 150 %).
+pub fn initial_window_size(work: (u32, u32), scale: f64) -> (f64, f64) {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let (w, h) = (work.0 as f64 / scale, work.1 as f64 / scale);
+    if w < 1.0 || h < 1.0 {
+        return (1200.0, 800.0);
+    }
+    ((w * 0.8).round().clamp(720f64.min(w), w), (h * 0.8).round().clamp(480f64.min(h), h))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn window_is_80_percent_of_the_screen() {
+        assert_eq!(initial_window_size((1920, 1040), 1.0), (1536.0, 832.0));
+        assert_eq!(initial_window_size((2560, 1390), 1.25), (1638.0, 890.0));
+        assert_eq!(initial_window_size((3840, 2100), 2.0), (1536.0, 840.0));
+        // Petit écran : au moins la taille minimale, sans dépasser l'écran.
+        assert_eq!(initial_window_size((800, 560), 1.0), (720.0, 480.0));
+        assert_eq!(initial_window_size((640, 400), 1.0), (640.0, 400.0));
+        assert_eq!(initial_window_size((0, 0), f64::NAN), (1200.0, 800.0));
+    }
 
     #[test]
     fn links_open_only_in_http_and_https() {

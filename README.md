@@ -174,7 +174,7 @@ en utilisera, et les échanges qu'il ne voit plus sont grisés.
 
 **Résumé automatique** (modèles distants, Claude compris, et GGUF ; pas les `.nelmodel`, dont le contexte est trop
 petit, ni Claude Agent, qui gère le sien) : quand la conversation dépasse **80 %** du contexte du modèle (réglable dans
-**Réglages → Résumé automatique**, 0 = jamais), les anciens échanges sont résumés par le modèle actif (décisions, fichiers
+**Réglages → Modèles → Résumé automatique**, 0 = jamais), les anciens échanges sont résumés par le modèle actif (décisions, fichiers
 modifiés, plan en cours, erreurs non résolues) et seul le résumé part au modèle, avec les **4 derniers échanges** tels
 quels. Les messages d'origine restent dans la conversation, grisés, avec un bloc repliable « Résumé des échanges
 précédents » à leur place ; la barre de contexte indique « · résumé ». En mode Agent, les contenus de fichiers et sorties
@@ -186,7 +186,7 @@ Les réponses sont mises en forme (**Markdown** : titres, gras, listes et listes
 code), aussi pendant qu'elles s'écrivent. Les blocs de code ```` ``` ```` sont coloriés (C#, Rust, Python, JavaScript,
 HTML, CSS, JSON) et ont un bouton **Copier**. Un clic sur un lien montre son adresse complète et demande avant d'ouvrir
 le navigateur ; les images des réponses ne sont pas chargées, leur lien s'affiche à la place. **Copier** sous une
-réponse copie le Markdown d'origine. **Réglages → Mettre en forme les réponses (Markdown)** revient au texte brut.
+réponse copie le Markdown d'origine. **Réglages → Général → Mettre en forme les réponses (Markdown)** revient au texte brut.
 
 **Images** (modèles distants qui voient les images, Claude compris, en chat et en mode Agent) : colle une image
 (**Ctrl+V**), glisse-la sur la fenêtre ou clique sur le bouton image de la saisie ; PNG, JPEG, WebP et GIF (sa première
@@ -315,7 +315,7 @@ léger). Leurs tokens apparaissent dans le Suivi (`subagent`) et comptent dans l
 **Commandes** : `run_command` lance un programme et ses arguments (`dotnet` avec `build`), **sans shell** : `cmd`,
 PowerShell, bash, les scripts `.bat` / `.cmd` / `.ps1` et les opérateurs `|`, `>`, `&&` sont refusés. La commande
 tourne dans le dossier de travail, sans fenêtre ; sa sortie s'affiche en direct dans l'étape (limitée : le milieu d'une
-très longue sortie est coupé). Chaque commande demande **Lancer** / **Refuser**, sauf celles de **Réglages → Commandes
+très longue sortie est coupé). Chaque commande demande **Lancer** / **Refuser**, sauf celles de **Réglages → Agent → Commandes
 autorisées sans confirmation** (vide par défaut ; par exemple `dotnet build` et `dotnet test`, qui autorisent aussi
 `dotnet build src/App.csproj`). La liste ne vaut que pour un programme donné par son nom (cherché dans le PATH) : un
 programme du projet (`outils/dotnet.exe`) demande toujours Lancer / Refuser. Au-delà de la durée maximale (2 min par défaut, réglable), ou sur **Stop**, la commande
@@ -346,7 +346,7 @@ dépôt configure (ni `core.fsmonitor`, ni hooks, ni filtres de `.git/config`) :
   des écritures ne compte pas pour eux ; pour une modification, le fichier n'est lu qu'après ton accord), et `search`
   ne les parcourt jamais sans elle. Par défaut : `.env`, `.env.*`,
   `.git/`, `*.pem`, `*.key`, `*.pfx`, `id_rsa`, `*.kdbx`, `appsettings.*.json`, `secrets.json` ; d'autres s'ajoutent
-  dans **Réglages → Fichiers protégés** (un motif par ligne : `*.secret`, `privé/` pour un dossier, `config/prod.yml`
+  dans **Réglages → Agent → Fichiers protégés** (un motif par ligne : `*.secret`, `privé/` pour un dossier, `config/prod.yml`
   pour un chemin) ;
 - ce qui est lu dans un fichier n'est **jamais une instruction pour Nel Code** : c'est renvoyé au modèle comme donnée
   (avec la consigne de ne pas y obéir), et seul le modèle peut demander un outil. Une écriture attend toujours ton accord,
@@ -359,7 +359,7 @@ En mode Agent, le modèle peut aussi utiliser les outils de **serveurs MCP** (Mo
 `npx -y @modelcontextprotocol/server-filesystem C:\docs`) et **Streamable HTTP** (une adresse).
 
 - **Serveurs globaux** : `%APPDATA%\NelCode\mcp.json`, au format `mcpServers` de Claude Desktop. Les ajouter par la
-  **page MCP** (Réglages → Ouvrir la page MCP, ou `/mcp`), ou **importer** ceux de Claude Desktop ou d'un `.mcp.json`
+  page **Réglages → MCP** (ou `/mcp`, ou un clic sur la puce MCP), ou **importer** ceux de Claude Desktop ou d'un `.mcp.json`
   (chaque serveur est vérifié).
 - **Serveurs de projet** : `.nelcode/mcp.json` dans le dossier de travail. Un serveur de projet ne démarre **jamais**
   sans ton accord : Nel Code montre la commande exacte, les arguments et le dossier, avec Autoriser / Refuser ; l'accord
@@ -426,7 +426,7 @@ Tape `/` dans la saisie : les commandes s'affichent, `↑` `↓` pour choisir, `
 | `/delete` | Supprimer la conversation |
 | `/compact [consigne]` | Résumer les anciens échanges (les 4 derniers restent tels quels) |
 | `/commands` | Commandes personnalisées : liste, et création d'une nouvelle |
-| `/settings` | Réglages de génération |
+| `/settings [catégorie]` | Réglages, ou directement une catégorie : `/settings gpu`, `/settings fournisseurs`… |
 | `/info` | Modèle, réglages, dossiers |
 | `/suivi` | Suivi : tokens, coûts estimés, temps de réponse, export CSV |
 | `/help` | Liste des commandes et des raccourcis |
@@ -442,7 +442,7 @@ remplace une globale du même nom, jamais une commande intégrée. Une commande 
 message ordinaire : elle ne lance rien elle-même, et en mode Agent chaque écriture ou commande demande toujours son accord.
 `/commands` les liste et crée un modèle de fichier (jamais par-dessus un fichier existant).
 
-Dans les **Réglages** (Ctrl+,), la **pénalité de répétition** (1 à 2, 1,15 par défaut) rend moins probables les tokens
+Dans **Réglages → Modèles** (Ctrl+,), la **pénalité de répétition** (1 à 2, 1,15 par défaut) rend moins probables les tokens
 des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haute, il évite même les mots utiles.
 
 ### Raccourcis
@@ -451,14 +451,14 @@ des 64 derniers : le modèle tourne moins en boucle. 1 la désactive ; trop haut
 |---|---|
 | `Entrée` / `Maj+Entrée` | Envoyer / nouvelle ligne |
 | `@` | Joindre un fichier du dossier de travail |
-| `Échap` | Arrêter la réponse, fermer une fenêtre |
+| `Échap` | Arrêter la réponse, fermer une fenêtre ou les Réglages |
 | `Ctrl+K` | Palette : actions, conversations, modèles |
 | `Ctrl+N` | Nouvelle conversation |
 | `Ctrl+I` | Importer un modèle |
 | `Ctrl+,` | Réglages |
 | `F2` | Renommer la conversation |
 | `Ctrl+Maj+E` | Panneau Fichiers |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Taille du texte (80 à 150 %, aussi dans les Réglages) |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom (80 à 150 % par pas de 10 %, 100 %), aussi dans Réglages → Général |
 | `?` | Aide des raccourcis (hors d'un champ, ou dans la saisie vide) |
 
 Les notifications sont discrètes : en bas à droite, quatre au plus, fermées toutes seules (un succès après 3 s, une
@@ -466,12 +466,35 @@ erreur après 9 s) ou par leur croix.
 
 ![La palette Ctrl+K](docs/palette.png)
 
+### Réglages
+
+**Ctrl+,** ouvre la page des réglages : les catégories à gauche (Général, Modèles, Fournisseurs, Agent, Claude Agent,
+MCP, Images, Calcul, Suivi et budget, Serveur local, Avancé), leurs réglages à droite. Chaque réglage a son explication,
+un point quand il diffère de la valeur par défaut et un bouton pour y revenir ; **Tout réinitialiser** remet une
+catégorie entière (après confirmation). Tout s'**enregistre tout seul** (« Enregistré » s'affiche en haut) ; une
+valeur impossible est signalée sous son champ et n'est pas enregistrée.
+
+- **Rechercher** (en haut, ou Ctrl+F) cherche dans toutes les catégories, explications comprises, et surligne le texte
+  trouvé.
+- **Liens directs** : dans la barre d'état, le nom du modèle ouvre **Modèles**, CPU/GPU ouvre **Calcul**, la barre de
+  contexte ouvre **Contexte et résumé** ; la puce MCP ouvre **MCP** (les serveurs de la conversation) ;
+  `/settings <catégorie>` et la palette Ctrl+K (« Réglages : … » ou le nom d'un réglage) aussi.
+- **Clavier** : flèches haut et bas dans les catégories, Entrée pour passer aux réglages, Tab entre les champs, Échap
+  pour fermer.
+- **Général** : thème, couleur d'accent, **zoom** (80 à 150 %, aussi Ctrl + / Ctrl − / Ctrl 0) et **densité**
+  (compacte, normale, confortable). Le texte de base fait 15 px ; la fenêtre s'ouvre à environ 80 % de l'écran, centrée.
+- **Avancé → Exporter / Importer** : tes préférences dans un fichier JSON, **jamais de clé ni de secret** (ni
+  fournisseurs, ni projets, ni accords). À l'import, Nel Code montre ce qui change, les réglages de sécurité en premier
+  (commandes autorisées, fichiers protégés, claude, serveur local), avant de rien enregistrer.
+
+![La page Réglages](docs/reglages.png)
+
 ### Serveur local (API OpenAI) et Continue
 
 Nel Code peut servir ses modèles à d'autres programmes, comme [Continue](https://continue.dev) dans VS Code, par un
 serveur compatible avec l'API OpenAI. Il est **désactivé par défaut**.
 
-1. **Réglages → Serveur local** : coche « Activer le serveur », choisis le port (8765 par défaut), **Enregistrer**.
+1. **Réglages → Serveur local** : active le serveur et choisis le port (8765 par défaut), enregistrés tout de suite.
    La barre d'état affiche `API :8765` tant qu'il tourne (`API · répond…` pendant une réponse).
 2. Copie la **clé d'accès** (bouton Copier ; elle est rangée dans le trousseau du système). **Nouvelle clé** la
    remplace : l'ancienne est refusée tout de suite.
@@ -569,7 +592,7 @@ tokens_per_s;estimated_cost_usd;responses`).
 
 ![La page Suivi](docs/suivi.png)
 
-Les coûts sont des **estimations** : **Réglages → Suivi** contient la table de prix (un modèle par ligne : nom, prix
+Les coûts sont des **estimations** : **Réglages → Suivi et budget** contient la table de prix (un modèle par ligne : nom, prix
 d'entrée et de sortie en dollars par million de tokens), préremplie avec les modèles Claude de la page officielle des
 tarifs d'Anthropic (date de vérification affichée) ; « Prix par défaut » la remet. Les modèles de ce PC et ceux sans prix
 comptent 0 ; Claude Agent donne son propre coût. Un **budget mensuel** facultatif (fournisseurs payants) affiche un
@@ -746,7 +769,10 @@ et contexte, en-têtes et variables secrets, page MCP, arrêt des processus, ser
 `e2e/markdown.test.mjs` couvre le rendu Markdown : tests unitaires de `markdown.js` sur un faux DOM (réponses piégées,
 textes coupés à chaque caractère), puis l'application (réponse en morceaux, liens, images, réglage, Copier).
 `e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
-petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et la taille du texte.
+petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et le zoom. `e2e/settings.test.mjs` couvre la page
+Réglages : catégories, enregistrement automatique, erreurs de saisie, valeur par défaut et « Tout réinitialiser »,
+recherche, clavier, liens directs (barre d'état, `/settings`, palette), zoom, thème et densité, export et import sans
+secret, modèle par défaut, taille du texte et de la fenêtre.
 `e2e/usage.test.mjs` couvre le suivi (ligne sans texte, coût, en-tête, mode Agent, budget à 80 et 100 %, page Suivi,
 CSV, table de prix, regroupement des lignes de plus de 90 jours) avec un faux serveur qui renvoie `usage`.
 `e2e/images.test.mjs` couvre les images (coller, glisser-déposer, 5 au plus, métadonnées retirées, taille réglée, envoi
@@ -811,8 +837,9 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `conversation.js` | Conversations, modèles, fichiers `@`, génération, réflexion, transparence, comparaison, affichage, saisie |
 | `markdown.js` | Rendu Markdown des réponses : jetons de markdown-it → éléments du DOM, réponse en cours, liens |
 | `agent.js` | Mode Agent et Claude Agent : étapes, plan, NELCODE.md |
-| `mcp.js` | Serveurs MCP : page MCP, accord des serveurs de projet, puce et contexte de la conversation |
-| `settings.js` | Réglages, mises à jour, serveur local, calcul (GPU, test de vitesse), taille du texte |
+| `mcp.js` | Serveurs MCP : Réglages → MCP, accord des serveurs de projet, puce et contexte de la conversation |
+| `settings-page.js` | Page Réglages : catégories, liste des réglages, recherche, enregistrement automatique, valeurs par défaut, liens directs, export et import |
+| `settings.js` | Thème, zoom et densité, mises à jour, blocs Serveur local et Calcul (GPU, test de vitesse) |
 | `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |
 | `palette.js` | Commandes `/`, palette Ctrl+K, aide et raccourcis |
 | `usage.js` | Page Suivi (totaux, graphiques SVG, CSV), tokens et coût de la conversation, budget, table de prix |

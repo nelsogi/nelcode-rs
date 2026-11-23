@@ -206,11 +206,13 @@ test('serveurs désactivés pour une conversation : moins de contexte, et leurs 
   assert.equal(ctx.total, ctx.builtin + ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tokens, 0));
   assert.match(await A.ev(`document.getElementById('context-text').textContent`), /outils ≈ \d+/);
   assert.equal(await A.ev(`document.getElementById('mcp-chip').textContent`), 'MCP 2/2');
-  // La puce : décocher « fake ».
+  // La puce : Réglages → MCP, les serveurs de la conversation ; décocher « fake » (enregistré tout de suite).
   await A.ev(`document.getElementById('mcp-chip').click()`);
-  await A.waitFor(`T.dialog()?.querySelector('input[data-key="g:fake"]')`, 5_000);
-  await A.ev(`T.dialog().querySelector('input[data-key="g:fake"]').click(); T.button('OK', T.dialog())`);
+  await A.waitFor(`T.settings()?.querySelector('input[data-key="g:fake"]')`, 5_000);
+  assert.equal(await A.ev(`document.querySelector('#settings-nav .cat.sel').dataset.cat`), 'mcp');
+  await A.ev(`T.settings().querySelector('input[data-key="g:fake"]').click()`);
   await A.waitFor(`S.mcpCtx?.servers.find((x) => x.key === 'g:fake').on === false`, 5_000);
+  await A.ev(`T.key('Escape', {}, document)`);
   assert.deepEqual(await A.ev(`S.current.mcpOff`), ['g:fake']);
   assert.equal(await A.ev(`S.mcpCtx.total`), ctx.total - fake.tokens);
   assert.equal(await A.ev(`document.getElementById('mcp-chip').textContent`), 'MCP 1/2');
@@ -246,21 +248,22 @@ test('variables secrètes : celles de Nel Code ne passent pas, celles du serveur
 });
 
 test('page MCP : état, outils, journal (stderr), Tester, Redémarrer', async () => {
-  await A.ev(`MCP.openMcp(); true`);
-  const card = `T.dialog()?.querySelector('.mcp-server[data-key="g:fake"]')`;
+  await A.ev(`T.submit('/mcp')`);
+  const card = `T.settings()?.querySelector('.mcp-server[data-key="g:fake"]')`;
   await A.waitFor(card, 5_000, 'page MCP');
   assert.equal(await A.ev(`${card}.dataset.state`), 'running');
   assert.match(await A.ev(`${card}.querySelector('.mcp-tools summary').textContent`), /^Outils \(7\)$/);
   await A.ev(`T.button('Journal', ${card})`);
   await A.waitFor(`${card}.querySelector('.mcp-log')?.textContent.includes('fake-mcp: prêt')`, 5_000, 'journal du serveur');
-  await A.ev(`T.button('Tester', T.dialog().querySelector('.mcp-server[data-key="g:web"]'))`);
+  await A.ev(`T.button('Tester', T.settings().querySelector('.mcp-server[data-key="g:web"]'))`);
   await A.waitFor(`T.toasts().includes('« web » répond : 7 outils')`, 10_000, 'test du serveur HTTP');
   const starts = events('fake').filter((e) => e.event === 'start').length;
   await A.ev(`T.button('Redémarrer', ${card})`);
   await A.waitFor(`T.toasts().includes('« fake » redémarré')`, 10_000);
   assert.equal(events('fake').filter((e) => e.event === 'start').length, starts + 1);
   await A.waitFor(`${card}?.dataset.state === 'running'`, 5_000);
-  await A.ev(`T.button('Fermer', T.dialog())`);
+  await A.ev(`T.key('Escape', {}, document)`);
+  await A.waitFor(`!T.settings()`, 5_000);
 });
 
 test('conversation fermée : le serveur et ses processus enfants sont arrêtés', async () => {

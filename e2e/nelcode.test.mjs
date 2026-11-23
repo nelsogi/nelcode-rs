@@ -132,16 +132,19 @@ test('supprimer une conversation', async () => {
 });
 
 test('réglages (dont la pénalité de répétition et la section Calcul)', async () => {
-  await ev(`T.key(',', { ctrlKey: true }, document)`);
-  await waitFor(`T.dialog()?.querySelector('input[type=range]')`);
-  assert.ok(await ev(`T.dialog().textContent.includes('Pénalité de répétition') && T.dialog().textContent.includes('Calcul') && T.dialog().textContent.includes('Tester la vitesse')`));
-  await ev(`(() => { const r = T.dialog().querySelectorAll('input[type=range]'); T.setValue(r[0], '1.2'); T.setValue(r[4], '1.3'); return true; })()`);
-  await ev(`T.button('Enregistrer', T.dialog())`);
-  await waitFor(`S.settings.temperature === 1.2`);
+  await ev(`openSettings('models')`);
+  await waitFor(`T.settings()?.querySelector('input[type=range]')`);
+  assert.ok(await ev(`T.settings().textContent.includes('Pénalité de répétition')`));
+  await ev(`T.setValue(T.control('temperature'), '1,2'); T.setValue(T.control('repetitionPenalty'), '1,3')`);
+  await waitFor(`S.settings.temperature === 1.2 && S.settings.repetitionPenalty === 1.3`);
+  await ev(`openSettings('calc')`);
+  await waitFor(`T.settings()?.querySelector('.cat-calc')?.textContent.includes('Tester la vitesse')`);
+  await ev(`T.key('Escape', {}, document)`);
+  await waitFor(`!T.settings()`);
   const s = readJson('settings.json');
   assert.equal(s.temperature, 1.2);
   assert.equal(s.repetitionPenalty, 1.3);
-  assert.equal(s.device, 'auto');
+  assert.equal(s.device ?? 'auto', 'auto');
   await ev(`T.submit('/temp 0.1')`);
   await waitFor(`S.settings.temperature === 0.1`);
 });

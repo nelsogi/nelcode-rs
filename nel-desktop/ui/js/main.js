@@ -5,7 +5,8 @@ import { $, errText, h, invoke, listen, toast } from './util.js';
 import { S, UI } from './state.js';
 import { F, autoGrow, chooseFolder, closeEdit, followEnd, importFlow, loadModel, newSession, onDone, onDrop, onToken, openCompare, openFolder, openLeaderboard, openSession, refreshContext, refreshModels, renameSession, renderAll, renderHeader, renderMessages, renderModels, renderSessions, renderStatus, selectRemote, showReasoning, startNew, stop, submitInput, toggleTransparency, visible, waiting } from './conversation.js';
 import { nelcodeChip, renderPlan, startClaudeAgent, stepsEl, toggleAgent } from './agent.js';
-import { G, U, UPDATE_EVERY, applyTextSize, applyTheme, checkUpdate, gpuProgress, openSettings, runBenchmark, showBenchmarks, stepTextSize } from './settings.js';
+import { G, U, UPDATE_EVERY, applyDensity, applyTextSize, applyTheme, checkUpdate, gpuProgress, openSettings, runBenchmark, showBenchmarks, stepTextSize } from './settings.js';
+import * as SETTINGS from './settings-page.js';
 import { C, catalogProgress, openCatalog } from './catalog.js';
 import { refreshProviders } from './providers.js';
 import { openPalette, pickSuggest, showShortcuts, updateSuggest } from './palette.js';
@@ -86,7 +87,7 @@ listen('bench-done', (e) => {
   if (e.payload.error) toast('Test de vitesse : ' + e.payload.error, 'error', 8000);
   // Une fenêtre déjà ouverte (les réglages) : un résumé, les détails restent dans « Résultats des tests de vitesse ».
   const mine = e.payload.results[e.payload.name] ?? {};
-  if (UI.closeOverlay) toast(['cpu', 'gpu'].filter((d) => mine[d]).map((d) => `${mine[d].device} : ${mine[d].tokensPerSecond.toFixed(1)} tokens/s`).join(' · ') || 'Test de vitesse terminé.', 'success', 8000);
+  if (UI.closeOverlay || UI.page) toast(['cpu', 'gpu'].filter((d) => mine[d]).map((d) => `${mine[d].device} : ${mine[d].tokensPerSecond.toFixed(1)} tokens/s`).join(' · ') || 'Test de vitesse terminé.', 'success', 8000);
   else showBenchmarks(e.payload.results);
 });
 
@@ -132,7 +133,7 @@ $('import-btn').onclick = () => importFlow();
 
 $('catalog-btn').onclick = () => openCatalog();
 
-$('settings-btn').onclick = openSettings;
+$('settings-btn').onclick = () => openSettings();
 
 $('arena-btn').onclick = openLeaderboard;
 
@@ -144,7 +145,7 @@ $('transp-btn').onclick = toggleTransparency;
 
 $('agent-btn').onclick = toggleAgent;
 
-$('mcp-chip').onclick = MCP.chooseServers;
+$('mcp-chip').onclick = () => openSettings('mcp', 'mcp-conversation');
 
 $('nelcode-chip').onclick = nelcodeChip;
 
@@ -158,6 +159,11 @@ $('folder-chip').onclick = () => chooseFolder();
 
 $('folder-open').onclick = openFolder;
 
+// La barre d'état : le modèle → Réglages → Modèles, le calcul (CPU/GPU) → Calcul, le contexte → Contexte et résumé.
+$('status').addEventListener('click', (e) => { const b = e.target.closest('[data-settings]'); if (b) openSettings(b.dataset.settings, b.dataset.setting); });
+$('context').onclick = () => openSettings('models', 'contextLimit');
+$('context').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSettings('models', 'contextLimit'); } };
+
 document.addEventListener('mousedown', (e) => { if (!$('menu').contains(e.target)) $('menu').hidden = true; });
 
 document.addEventListener('keydown', (e) => {
@@ -165,18 +171,20 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!$('menu').hidden) { $('menu').hidden = true; return; }
     if (UI.closeOverlay) { e.preventDefault(); return UI.closeOverlay(); }
+    if (UI.page) { e.preventDefault(); return UI.page.close(); }
     if (!$('suggest').hidden) { $('suggest').hidden = true; return; }
     if (S.gen) { e.preventDefault(); return stop(); }
     if (UI.editing !== null) { closeEdit(); return renderMessages(); }
     return;
   }
-  if (UI.closeOverlay) return;
+  // Le zoom marche partout (page Réglages comprise) ; Ctrl + et Ctrl − aussi sur le pavé numérique.
+  if (ctrl && !e.altKey && (e.key === '=' || e.key === '+')) { e.preventDefault(); return stepTextSize(10); }
+  if (ctrl && !e.altKey && e.key === '-') { e.preventDefault(); return stepTextSize(-10); }
+  if (ctrl && !e.altKey && e.key === '0') { e.preventDefault(); return stepTextSize(0); }
+  if (UI.closeOverlay || UI.page) return;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
   // « ? » : l'aide des raccourcis, hors d'un champ (ou dans la saisie encore vide).
   if (e.key === '?' && !ctrl && (!typing || (document.activeElement === $('input') && !$('input').value))) { e.preventDefault(); return showShortcuts(); }
-  if (ctrl && (e.key === '=' || e.key === '+')) { e.preventDefault(); return stepTextSize(10); }
-  if (ctrl && e.key === '-') { e.preventDefault(); return stepTextSize(-10); }
-  if (ctrl && e.key === '0') { e.preventDefault(); return stepTextSize(0); }
   if (ctrl && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); return toggleFiles(); }
   if (ctrl && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
   else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openCompare(); }
@@ -244,6 +252,7 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
   [S.info, S.settings, S.sessions] = await Promise.all([invoke('app_info'), invoke('get_settings'), invoke('list_sessions')]);
   $('folder-open').title = `Ouvrir le dossier dans ${S.info.fileManager}`;
   applyTheme();
+  applyDensity();
   applyTextSize();
   await refreshModels();
   const st = await invoke('model_status');
@@ -256,13 +265,12 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
   $('input').focus();
   // Premier lancement : l'assistant (s'il n'y a encore ni modèle, ni fournisseur, ni conversation).
   if (await maybeOnboard()) return;
-  const [, rp, rm] = String(S.settings.lastModel ?? '').match(/^remote:([^/]+)\/(.+)$/) ?? [];
-  const lastRemote = S.providers.find((p) => p.id === rp)?.models?.find((m) => m.id === rm);
-  if (lastRemote && !S.model.name) selectRemote(S.providers.find((p) => p.id === rp), lastRemote);
-  else if (!S.model.name && !S.model.loading && S.models.length) {
-    const last = S.models.find((m) => m.name === S.settings.lastModel) ?? S.models[0];
-    loadModel(last.name);
-  }
+  // Le modèle par défaut (Réglages → Modèles), sinon le dernier utilisé.
+  const remoteOf = (v) => { const [, rp, rm] = String(v ?? '').match(/^remote:([^/]+)\/(.+)$/) ?? []; const p = S.providers.find((x) => x.id === rp); const m = p?.models?.find((x) => x.id === rm); return m ? [p, m] : null; };
+  const localOf = (v) => S.models.find((m) => m.name === v);
+  const want = [S.settings.defaultModel, S.settings.lastModel].find((v) => v && (remoteOf(v) || localOf(v)));
+  if (!S.model.name && want && remoteOf(want)) selectRemote(...remoteOf(want));
+  else if (!S.model.name && !S.model.loading && S.models.length) loadModel((localOf(want) ?? S.models[0]).name);
   if (S.info.startupFile) importFlow(S.info.startupFile);
   // Noté avant de vérifier : hors ligne, on ne réessaie que le lendemain.
   if (S.settings.autoUpdate !== false && !(Date.now() - S.settings.lastUpdateCheck < UPDATE_EVERY)) {
@@ -272,4 +280,4 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 })().catch((e) => toast('Démarrage : ' + errText(e), 'error', 0));
 
 // Les tests de l'interface (e2e/) lisent l'état et appellent ces fonctions depuis la page.
-Object.assign(window, { S, F, C, USAGE, IMG, MCP, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });
+Object.assign(window, { S, F, C, USAGE, IMG, MCP, SETTINGS, openSettings, renderStatus, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });

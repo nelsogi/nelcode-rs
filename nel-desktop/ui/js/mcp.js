@@ -51,26 +51,28 @@ export async function refreshMcp() {
   checkApprovals();
 }
 
-/** La puce : activer ou désactiver chaque serveur pour cette conversation (moins d'outils envoyés au modèle). */
-export async function chooseServers() {
+/** Réglages → MCP : les serveurs de la conversation, cochés ou non (enregistré tout de suite ; moins d'outils envoyés
+ *  au modèle). null hors du mode Agent. */
+export function conversationServers() {
   const s = S.current, ctx = S.mcpCtx;
-  if (!ctx) return;
+  if (!s?.agent || s.claudeAgent || !ctx?.servers.length) return null;
   const boxes = ctx.servers.map((x) => {
     const c = h('input', { type: 'checkbox', checked: x.on, disabled: !x.available, 'data-key': x.key });
+    c.addEventListener('change', save);
     return h('label', { class: 'check mcp-choice' }, c, h('span', {}, x.name), h('span', { class: 'meta' },
       x.available ? `${SCOPE[x.scope]} · ${x.tools} outil${x.tools > 1 ? 's' : ''} · ≈ ${x.tokens.toLocaleString('fr-CH')} tokens` : `${SCOPE[x.scope]} · ${x.scope === 'project' ? 'non autorisé' : 'désactivé'}`));
   });
-  const v = await dialog('Serveurs MCP de la conversation', [h('p', { class: 'hint' }, 'Les outils des serveurs cochés sont envoyés au modèle à chaque tour (ils prennent de la place dans le contexte).'), ...boxes,
-    h('button', { class: 'btn', onclick: () => { UI.closeOverlay?.(); openMcp(); } }, icon('settings'), 'Page MCP…')],
-  [{ label: 'Annuler', value: null }, { label: 'OK', value: 'ok', primary: true }]);
-  if (v !== 'ok') return;
-  const off = boxes.map((b) => b.querySelector('input')).filter((c) => !c.checked && !c.disabled).map((c) => c.dataset.key);
-  // Les serveurs indisponibles gardent leur choix.
-  const kept = mcpOff(s).filter((k) => ctx.servers.some((x) => x.key === k && !x.available));
-  s.mcpOff = [...new Set([...off, ...kept])];
-  if (!s.mcpOff.length) delete s.mcpOff;
-  if (s.messages.length) await saveSession(s);
-  refreshMcp();
+  async function save() {
+    const off = boxes.map((b) => b.querySelector('input')).filter((c) => !c.checked && !c.disabled).map((c) => c.dataset.key);
+    // Les serveurs indisponibles gardent leur choix.
+    const kept = mcpOff(s).filter((k) => ctx.servers.some((x) => x.key === k && !x.available));
+    s.mcpOff = [...new Set([...off, ...kept])];
+    if (!s.mcpOff.length) delete s.mcpOff;
+    if (s.messages.length) await saveSession(s);
+    UI.settingsSaved?.();
+    refreshMcp();
+  }
+  return h('div', { class: 'mcp-conversation' }, ...boxes);
 }
 
 // --- Accord pour un serveur de projet ---------------------------------------------------------------------
@@ -115,8 +117,8 @@ export async function checkApprovals() {
 
 // --- La page MCP ------------------------------------------------------------------------------------------
 
-/** La page MCP (aussi depuis les réglages). */
-export async function openMcp() {
+/** Réglages → MCP : les serveurs (état, outils, journal, Redémarrer, Tester, ajout, import, accords). */
+export async function mcpPanel() {
   const box = h('div', { class: 'mcp-page' });
   const logs = new Set(), shown = new Set();   // journaux et listes d'outils dépliés (gardés au rafraîchissement)
   let form = null;
@@ -153,12 +155,11 @@ export async function openMcp() {
       h('button', { class: 'btn', onclick: () => run('Redémarrage', async () => { await invoke('mcp_restart', { dir: dirOf(), key: v.key, session: S.current?.id ?? null }); toast(`« ${v.name} » redémarré.`, 'success', 2500); }) }, icon('refresh-cw'), 'Redémarrer'),
       h('button', { class: 'btn', onclick: () => { logs.has(v.key) ? logs.delete(v.key) : logs.add(v.key); draw(); } }, icon('file-text'), 'Journal'),
       v.scope === 'global' ? h('button', { class: 'btn', onclick: () => run('Réglage', () => invoke('mcp_set_disabled', { name: v.name, disabled: !v.disabled })) }, v.disabled ? 'Activer' : 'Désactiver') : null,
-      // La confirmation remplace la page : elle est rouverte ensuite.
       v.scope === 'global' ? h('button', { class: 'btn danger', onclick: async () => {
         if (await confirmDialog('Supprimer le serveur MCP ?', `« ${v.name} » sera retiré de mcp.json, avec ses valeurs secrètes.`, 'Supprimer', true)) {
           try { await invoke('mcp_delete_server', { name: v.name }); } catch (e) { toast(errText(e), 'error'); }
         }
-        openMcp();
+        draw();
       } }, 'Supprimer') : null);
     const approval = v.scope === 'project' ? h('div', { class: 'mcp-approval', 'data-approval': v.approval },
       h('span', {}, { allow: 'Autorisé pour ce projet et cette configuration.', deny: 'Refusé : il ne démarre pas.', pending: 'En attente de ton accord : il ne démarre pas.' }[v.approval]),
@@ -220,9 +221,7 @@ export async function openMcp() {
     if (path) report(await invoke('mcp_import', { path }));
   });
 
-  UI.mcpRedraw = draw;
+  UI.mcpRedraw = draw;   // retiré à la fermeture des réglages
   await draw();
-  await dialog('Serveurs MCP', box, [{ label: 'Fermer', value: null, primary: true }]);
-  if (UI.mcpRedraw === draw) UI.mcpRedraw = null;
-  refreshMcp();
+  return box;
 }

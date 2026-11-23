@@ -1,15 +1,15 @@
-// Nel Code Desktop — settings.js : Les réglages : fenêtre des réglages, mises à jour, serveur local, calcul (GPU, test de vitesse).
+// Nel Code Desktop — settings.js : Thème, zoom et densité, mises à jour, blocs Serveur local et Calcul (GPU, test de
+// vitesse) de la page Réglages (settings-page.js), infos.
 // Les textes (messages, noms) passent toujours par textContent, jamais par innerHTML.
 
 // Thème (settings.json, partagé avec Nel Code C#) et couleur d'accent : des attributs sur <html>, lus par style.css.
 
 import { $, dialog, errText, h, invoke, logEvent, sizeText, toast } from './util.js';
 import { S, UI } from './state.js';
-import { loadModel, renderMessages, renderStatus, turnsOf } from './conversation.js';
-import { claudeSection } from './agent.js';
-import { providersSection } from './providers.js';
-import { usageSection } from './usage.js';
-import { openMcp } from './mcp.js';
+import { loadModel, renderStatus, turnsOf } from './conversation.js';
+import { refreshRow } from './settings-page.js';
+
+export { openSettings } from './settings-page.js';
 
 export function applyTheme() {
   const d = document.documentElement.dataset;
@@ -17,19 +17,25 @@ export function applyTheme() {
   d.accent = S.settings.accent === 'orange' ? 'orange' : 'red';
 }
 
-/** La taille du texte (80 à 150 %) : le zoom de la page entière (icônes, marges et textes ensemble). */
+/** La densité de l'interface (compacte, normale, confortable) : un attribut sur <html>, lu par style.css. */
+export function applyDensity() {
+  document.documentElement.dataset.density = ['compact', 'comfortable'].includes(S.settings.density) ? S.settings.density : 'normal';
+}
+
+/** Le zoom (80 à 150 %, réglage textSize) : celui de la page entière (icônes, marges et textes ensemble). */
 export function applyTextSize() {
   return invoke('set_zoom', { scale: (S.settings.textSize ?? 100) / 100 }).catch(() => {});
 }
 
-/** Ctrl + = / - / 0 : la taille du texte, par pas de 10 %, enregistrée. */
+/** Ctrl + / − / 0 : le zoom, par pas de 10 %, enregistré. */
 export async function stepTextSize(delta) {
   const size = delta === 0 ? 100 : Math.min(150, Math.max(80, (S.settings.textSize ?? 100) + delta));
   // Tout de suite : deux appuis rapides comptent deux fois (sans attendre l'enregistrement du premier).
   S.settings.textSize = size;
   applyTextSize();
   S.settings = { ...S.settings, ...(await invoke('save_settings', { changes: { textSize: size } })), textSize: S.settings.textSize };
-  toast(`Taille du texte : ${S.settings.textSize} %`, '', 1500);
+  refreshRow('textSize');
+  toast(`Zoom : ${S.settings.textSize} %`, '', 1500);
 }
 
 // --- Mises à jour (tauri-plugin-updater) -----------------------------------------------------------------
@@ -107,112 +113,27 @@ export function renderUpdate() {
         h('button', { class: 'btn primary', onclick: installUpdate }, icon('download'), 'Installer')));
 }
 
-export async function openSettings() {
-  const s = S.settings;
-  const fields = [
-    { key: 'temperature', label: 'Température', min: 0.1, max: 2, step: 0.05, hint: 'Bas : réponses sages et répétitives. Haut : plus créatives, plus de fautes.' },
-    { key: 'topK', label: 'Top-k', min: 0, max: 100, step: 1, hint: 'Tirage parmi les K tokens les plus probables (0 = pas de limite).' },
-    { key: 'topP', label: 'Top-p', min: 0.05, max: 1, step: 0.01, hint: 'Tirage parmi les tokens qui font cette part des chances (1 = pas de limite).' },
-    { key: 'maxReplyTokens', label: 'Longueur max', min: 16, max: 128, step: 1, hint: 'Longueur maximale d\'une réponse d\'un .nelmodel, en tokens (environ 3 caractères chacun). Un modèle GGUF écrit jusqu\'à 1024 tokens et s\'arrête de lui-même.' },
-    { key: 'repetitionPenalty', label: 'Pénalité de répétition', min: 1, max: 2, step: 0.01, hint: 'Rend moins probables les tokens des 64 derniers (prompt compris), pour éviter que le modèle tourne en boucle. 1 = désactivée ; trop haut, il évite même les mots utiles.' },
-    { key: 'agentMaxTurns', label: 'Mode Agent : tours au plus', min: 1, max: 50, step: 1, hint: 'Combien de fois le modèle peut demander des outils (lire, chercher, écrire) avant de devoir répondre.' },
-    { key: 'commandTimeout', label: 'Mode Agent : durée max d\'une commande (s)', min: 5, max: 600, step: 5, hint: 'Au-delà, la commande et tous ses processus sont arrêtés (120 s par défaut).' },
-    { key: 'explorerConcurrency', label: 'Explorateurs en même temps', min: 1, max: 8, step: 1, hint: 'L\'agent peut lancer des explorateurs qui lisent le projet pour lui (2 par défaut : beaucoup de serveurs, comme Ollama, traitent les requêtes l\'une après l\'autre).' },
-    { key: 'explorerMax', label: 'Explorateurs par demande', min: 0, max: 20, step: 1, hint: 'Au plus ce nombre d\'explorateurs par demande (5 par défaut ; 0 : pas d\'explorateurs).' },
-    { key: 'explorerTurns', label: 'Tours par explorateur', min: 1, max: 20, step: 1, hint: 'Combien de fois un explorateur peut lire ou chercher avant de rendre son résumé (6 par défaut).' },
-    { key: 'mcpStartTimeout', label: 'MCP : démarrage d\'un serveur au plus (s)', min: 5, max: 300, step: 5, hint: 'Lancement, poignée de main et liste des outils (30 s par défaut).' },
-    { key: 'mcpCallTimeout', label: 'MCP : durée max d\'un appel d\'outil (s)', min: 5, max: 600, step: 5, hint: 'Au-delà, l\'appel est annulé et l\'agent reçoit une erreur (60 s par défaut).' },
-    { key: 'textSize', label: 'Taille du texte (%)', min: 80, max: 150, step: 10, hint: 'Toute l\'interface grandit ou rapetisse (Ctrl + = / Ctrl + - ; Ctrl + 0 : 100 %).' },
-    { key: 'summaryThreshold', label: 'Résumé automatique à (% du contexte)', min: 0, max: 95, step: 5, hint: 'Quand la conversation dépasse cette part du contexte du modèle (distant ou GGUF), les anciens échanges sont résumés par le modèle actif ; les 4 derniers restent tels quels. 0 : jamais (/compact résume à la main).' },
-    { key: 'imageMaxSide', label: 'Images : plus grand côté (px)', min: 512, max: 4096, step: 32, hint: 'Avant l\'envoi, chaque image est réduite à cette taille (1568 par défaut, ce que les modèles Claude lisent sans la réduire encore) et réencodée sans ses métadonnées (EXIF, position GPS…).' },
-    { key: 'contextLimit', label: 'Contexte des modèles GGUF', min: 512, max: 32768, step: 512, hint: 'Au plus ce nombre de tokens de conversation (le modèle peut en gérer plus, mais la mémoire et le temps de réponse montent vite). Les .nelmodel gardent leur taille.' },
-  ];
-  const inputs = {};
-  const body = fields.map((f) => {
-    const out = h('output', {}, s[f.key]);
-    const r = inputs[f.key] = h('input', { type: 'range', min: f.min, max: f.max, step: f.step, value: s[f.key] });
-    r.addEventListener('input', () => (out.textContent = r.value));
-    return h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, f.label), out), r, h('div', { class: 'hint' }, f.hint));
-  });
-  const accent = h('select', { class: 'text-input' }, h('option', { value: 'red' }, 'Rouge (par défaut)'), h('option', { value: 'orange' }, 'Terre cuite (ancienne couleur)'));
-  accent.value = s.accent === 'orange' ? 'orange' : 'red';
-  accent.addEventListener('change', () => (document.documentElement.dataset.accent = accent.value));
-  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Couleur d\'accent')), accent));
-  const markdown = h('input', { type: 'checkbox', class: 'markdown', checked: s.markdown !== false });
-  body.push(h('div', { class: 'field' }, h('label', { class: 'check' }, markdown, 'Mettre en forme les réponses (Markdown)'),
-    h('div', { class: 'hint' }, 'Titres, listes, tableaux, code… Désactivé : le texte brut, tel que le modèle l\'a écrit. « Copier » copie toujours le Markdown d\'origine.')));
-  // Le modèle des explorateurs : celui de l'agent, ou un modèle distant plus léger.
-  const explorerModel = h('select', { class: 'text-input explorer-model' }, h('option', { value: '' }, 'Le même que l\'agent (par défaut)'),
-    ...S.providers.flatMap((p) => (p.models ?? []).map((m) => h('option', { value: JSON.stringify({ provider: p.id, model: m.id }) }, `${m.id} — ${p.name}`))));
-  const em = s.explorerModel && JSON.stringify({ provider: s.explorerModel.provider, model: s.explorerModel.model });
-  explorerModel.value = em && [...explorerModel.options].some((o) => o.value === em) ? em : '';
-  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Modèle des explorateurs')), explorerModel,
-    h('div', { class: 'hint' }, 'Un modèle plus léger lit plus vite et coûte moins ; il doit gérer les outils. S\'il n\'existe plus, celui de l\'agent est pris.')));
-  const calc = await calcSection(s);
-  body.push(calc.el);
-  const srv = await serverSection(s);
-  const claude = await claudeSection();
-  const usage = await usageSection(s);
-  body.push(srv.el, await providersSection(), claude.el, usage.el);
-  body.push(h('div', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Serveurs MCP')),
-    h('button', { class: 'btn', onclick: () => { UI.closeOverlay?.(); openMcp(); } }, icon('plug'), 'Ouvrir la page MCP'),
-    h('div', { class: 'hint' }, 'Les outils de serveurs MCP (stdio ou Streamable HTTP) pour le mode Agent : état, outils, journal, Redémarrer, Tester, import depuis Claude Desktop.')));
-  const allowedCommands = h('textarea', { class: 'text-input commands', rows: 2, spellcheck: 'false', placeholder: 'dotnet build\ndotnet test' });
-  allowedCommands.value = (s.allowedCommands ?? []).join('\n');
-  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Commandes autorisées sans confirmation')), allowedCommands,
-    h('div', { class: 'hint' }, 'Une par ligne, par exemple « dotnet build » (autorise aussi « dotnet build src/App.csproj »). Vide par défaut : chaque commande de l\'agent demande Lancer / Refuser. Jamais de shell (cmd, PowerShell…).')));
-  const protectedFiles = h('textarea', { class: 'text-input protected', rows: 3, spellcheck: 'false', placeholder: '*.secret\nprivé/\nconfig/prod.yml' });
-  protectedFiles.value = (s.protectedFiles ?? []).join('\n');
-  body.push(h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Fichiers protégés')), protectedFiles,
-    h('div', { class: 'hint' }, 'Un motif par ligne (* et ?, « dossier/ » pour un dossier). Le mode Agent et les fichiers @ ne les lisent ou ne les parcourent qu\'après ta confirmation. Toujours protégés : .env, .env.*, .git/, *.pem, *.key, *.pfx, id_rsa, *.kdbx, appsettings.*.json, secrets.json.')));
-  const auto = h('input', { type: 'checkbox', checked: s.autoUpdate !== false });
-  body.push(h('div', { class: 'field updates' }, h('label', { class: 'check' }, auto, 'Rechercher les mises à jour au démarrage (une fois par jour)'),
-    h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), 'Rechercher des mises à jour')));
-  body.push(h('div', { class: 'field updates' }, h('div', { class: 'row' }, h('span', {}, 'Problème ?')),
-    h('button', { class: 'btn', onclick: copyBugReport }, icon('copy'), 'Copier un rapport de bug'),
-    h('div', { class: 'hint' }, 'Version, système, modèle actif et les 50 dernières lignes du journal (jamais tes conversations).')));
-  const choice = await dialog('Réglages', body, [{ label: 'Par défaut', value: 'reset' }, { label: 'Annuler', value: null }, { label: 'Enregistrer', value: 'save', primary: true }]);
-  if (choice) {
-    const changes = choice === 'reset'
-      ? { temperature: 0.8, topK: 20, topP: 0.9, maxReplyTokens: 80, repetitionPenalty: 1.15, contextLimit: 8192, summaryThreshold: 80, imageMaxSide: 1568, agentMaxTurns: 10, commandTimeout: 120, mcpStartTimeout: 30, mcpCallTimeout: 60, explorerConcurrency: 2, explorerMax: 5, explorerTurns: 6, explorerModel: null, textSize: 100, markdown: true, claudePermissionMode: 'default', claudeModel: '', claudeProjectSettings: false, accent: 'red', autoUpdate: true, device: 'auto', serverEnabled: false, serverPort: 8765, budgetMonthly: 0, budgetConfirm: true, prices: null }
-      : { ...Object.fromEntries(fields.map((f) => [f.key, Number(inputs[f.key].value)])), accent: accent.value, markdown: markdown.checked, autoUpdate: auto.checked, device: calc.device.value, explorerModel: explorerModel.value ? JSON.parse(explorerModel.value) : null,
-        serverEnabled: srv.enabled.checked, serverPort: Number(srv.port.value), protectedFiles: protectedFiles.value.split('\n').map((l) => l.trim()).filter(Boolean),
-        allowedCommands: allowedCommands.value.split('\n').map((l) => l.trim()).filter(Boolean),
-        claudePermissionMode: claude.mode.value, claudeModel: claude.model.value.trim(), claudeAllowedTools: claude.tools.value.split('\n').map((l) => l.trim()).filter(Boolean), claudeProjectSettings: claude.project.checked, ...usage.changes() };
-    const before = s.device ?? 'auto', limit = s.contextLimit;
-    try { S.settings = await invoke('save_settings', { changes }); toast('Réglages enregistrés.', 'success'); } catch (e) { toast(errText(e), 'error'); }
-    applyTextSize();
-    try { S.server.port = await invoke('server_apply'); } catch (e) { S.server.port = null; toast('Serveur local : ' + errText(e), 'error', 8000); }
-    renderStatus();
-    if (UI.editing === null) renderMessages();   // Markdown ou texte brut
-    // Un autre périphérique, ou un autre contexte pour un modèle GGUF : le modèle est rechargé.
-    const gguf = S.models.find((m) => m.name === S.model.name)?.weights === 'gguf';
-    if (S.model.name && ((S.settings.device ?? 'auto') !== before || (gguf && S.settings.contextLimit !== limit))) loadModel(S.model.name);
-  }
-  applyTheme();
-}
-
 // --- Serveur local (API OpenAI) ------------------------------------------------------------------------
 
-// La section Serveur local des réglages : rend { el, enabled, port } (enregistrés avec les autres réglages).
-export async function serverSection(s) {
+/** Réglages → Serveur local : état, adresse, clé d'accès (Copier, Nouvelle clé). L'activation et le port sont des
+ *  réglages ordinaires. */
+export async function serverBlock() {
   let st = await invoke('server_status');
   if (!st.key) { await invoke('regenerate_server_key'); st = await invoke('server_status'); }   // une clé dès la première ouverture
-  const enabled = h('input', { type: 'checkbox', checked: !!s.serverEnabled });
-  const port = h('input', { class: 'text-input port', type: 'number', min: 1024, max: 65535, step: 1, value: s.serverPort });
   const key = h('input', { class: 'text-input key', readonly: true, spellcheck: 'false', value: st.key, 'aria-label': 'Clé d\'accès' });
-  const url = h('span', { class: 'url' });
-  const showUrl = () => (url.textContent = `http://127.0.0.1:${port.value}/v1`);
-  port.addEventListener('input', showUrl);
-  showUrl();
-  const el = h('div', { class: 'field server' }, h('div', { class: 'row' }, h('span', {}, 'Serveur local (API OpenAI)'), h('span', { class: 'state' + (st.port ? ' on' : '') }, st.port ? `actif sur le port ${st.port}` : 'arrêté')),
-    h('label', { class: 'check' }, enabled, 'Activer le serveur (pour Continue dans VS Code, ou tout client de l\'API OpenAI)'),
-    h('label', { class: 'inline' }, 'Port', port, h('span', { class: 'hint' }, 'Adresse : '), url),
+  const state = h('span', { class: 'state' }), url = h('span', { class: 'url' });
+  const redraw = async () => {
+    const now = await invoke('server_status').catch(() => st);
+    state.className = 'state' + (now.port ? ' on' : '');
+    state.textContent = now.port ? `actif sur le port ${now.port}` : 'arrêté';
+    url.textContent = `http://127.0.0.1:${S.settings.serverPort}/v1`;
+  };
+  UI.serverRedraw = redraw;
+  await redraw();
+  return h('div', { class: 'server-block' }, h('div', { class: 'row-btns' }, state, h('span', { class: 'hint' }, 'Adresse :'), url),
     h('div', { class: 'row-btns' }, key,
       h('button', { class: 'btn', title: 'Copier la clé', onclick: async () => { await navigator.clipboard.writeText(key.value); toast('Clé copiée.', 'success', 2000); } }, icon('copy'), 'Copier'),
-      h('button', { class: 'btn', title: 'Nouvelle clé : l\'ancienne ne marche plus', onclick: async () => { key.value = await invoke('regenerate_server_key'); toast('Nouvelle clé : l\'ancienne ne marche plus.', 'success'); } }, icon('refresh-cw'), 'Nouvelle clé')),
-    h('div', { class: 'hint' }, 'Seulement sur ce PC (127.0.0.1), et seulement avec cette clé (Authorization: Bearer). Une seule réponse à la fois, avec Nel Code. Brancher Continue : voir le README.'));
-  return { el, enabled, port };
+      h('button', { class: 'btn', title: 'Nouvelle clé : l\'ancienne ne marche plus', onclick: async () => { key.value = await invoke('regenerate_server_key'); toast('Nouvelle clé : l\'ancienne ne marche plus.', 'success'); } }, icon('refresh-cw'), 'Nouvelle clé')));
 }
 
 // --- Calcul : GPU, pack GPU, test de vitesse ------------------------------------------------------------
@@ -226,14 +147,13 @@ export async function copyBugReport() {
   } catch (e) { toast('Rapport impossible : ' + errText(e), 'error'); }
 }
 
-// La section Calcul des réglages : rend { el, device } (le choix est enregistré avec les autres réglages).
-export async function calcSection(s) {
+/** Réglages → Calcul : la carte NVIDIA, le pack GPU et le test de vitesse (le choix CPU/GPU est un réglage ordinaire). */
+export async function calcBlock() {
   const st = await invoke('gpu_status');
-  const device = h('select', { class: 'text-input' }, h('option', { value: 'auto' }, 'Automatique (GPU si disponible)'), h('option', { value: 'cpu' }, 'CPU'), h('option', { value: 'gpu' }, 'GPU'));
-  device.value = ['cpu', 'gpu'].includes(s.device) ? s.device : 'auto';
   const info = h('div', { class: 'gpu-info' });
-  const el = h('div', { class: 'field calc' }, h('div', { class: 'row' }, h('span', {}, 'Calcul')), device, info,
-    h('button', { class: 'btn', onclick: () => runBenchmark() }, icon('gauge'), 'Tester la vitesse'));
+  const el = h('div', { class: 'calc-block' }, info,
+    h('div', { class: 'row-btns' }, h('button', { class: 'btn', onclick: () => runBenchmark() }, icon('gauge'), 'Tester la vitesse'),
+      h('button', { class: 'btn', onclick: () => showBenchmarks() }, 'Résultats des tests')));
   const draw = (st) => {
     const lines = [];
     if (!st.compiled) lines.push(h('div', { class: 'hint' }, 'Cette version de Nel Code est compilée sans CUDA : CPU seulement.'));
@@ -255,7 +175,7 @@ export async function calcSection(s) {
   };
   const redraw = async () => { if (info.isConnected) draw(await invoke('gpu_status')); };
   draw(st);
-  return { el, device };
+  return el;
 }
 
 export function gpuProgress() {

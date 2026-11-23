@@ -106,6 +106,7 @@ fn app_info() -> Value {
     let startup_file = std::env::args().nth(1).filter(|a| a.to_lowercase().ends_with(".nelmodel") || a.to_lowercase().ends_with(".gguf"));
     json!({
         "root": store::root(),
+        "logs": store::root().join("logs"),
         "home": os::home().unwrap_or_else(store::root),
         "os": os::CURRENT.id(),
         "keystore": os::CURRENT.keystore(),
@@ -309,6 +310,41 @@ fn get_settings() -> Value {
 #[tauri::command]
 fn save_settings(changes: serde_json::Map<String, Value>) -> Result<Value> {
     store::save_settings(&changes)
+}
+
+/// Réglages → Exporter : les réglages portables (jamais de clé ni de secret, voir store::PORTABLE_SETTINGS).
+#[tauri::command]
+fn settings_export_json() -> String {
+    serde_json::to_string_pretty(&store::export_settings()).unwrap()
+}
+
+#[tauri::command]
+async fn export_settings(app: AppHandle) -> Result<Option<String>> {
+    let Some(file) = app.dialog().file().set_title("Exporter les réglages").set_file_name("nelcode-reglages.json").add_filter("JSON", &["json"]).blocking_save_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, settings_export_json()).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// Réglages → Importer : le fichier choisi, lu et filtré, sans rien enregistrer (l'interface montre ce qui change).
+#[tauri::command]
+async fn import_settings(app: AppHandle) -> Result<Option<Value>> {
+    let Some(file) = app.dialog().file().set_title("Importer des réglages").add_filter("JSON", &["json"]).blocking_pick_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    if std::fs::metadata(&path).map_err(|e| e.to_string())?.len() > 1 << 20 {
+        return Err("fichier trop gros pour des réglages (plus de 1 Mo)".into());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    store::parse_settings_export(&text).map(Some)
+}
+
+#[tauri::command]
+fn parse_settings_import(text: String) -> Result<Value> {
+    store::parse_settings_export(&text)
 }
 
 // --- Génération --------------------------------------------------------------------------------------------
@@ -1173,6 +1209,12 @@ fn main() {
             let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
                 .on_navigation(os::is_app_url)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+            // Environ 80 % de l'écran, centrée (sinon les 1200 × 800 de tauri.conf.json).
+            if let Ok(Some(m)) = app.primary_monitor() {
+                let work = m.work_area().size;
+                let (w, h) = os::initial_window_size((work.width, work.height), m.scale_factor());
+                window = window.inner_size(w, h).center();
+            }
             // En debug, NELCODE_DEBUG_PORT ouvre le port de débogage de WebView2 (tests de l'interface).
             #[cfg(debug_assertions)]
             if let Ok(port) = std::env::var("NELCODE_DEBUG_PORT") {
@@ -1201,6 +1243,10 @@ fn main() {
             open_link,
             get_settings,
             save_settings,
+            settings_export_json,
+            export_settings,
+            import_settings,
+            parse_settings_import,
             context_info,
             generate,
             compare_generate,

@@ -100,10 +100,10 @@ async function pick(model, provider) {
 }
 
 test('fournisseur dans les réglages : avertissement http, clé rangée hors de settings.json, Tester liste les modèles', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.providers-field')`, 10_000);
-  await A.ev(`T.button('Ajouter un fournisseur', T.dialog())`);
-  const form = `T.dialog().querySelector('.provider')`;
+  await A.ev(`T.submit('/settings fournisseurs')`);
+  await A.waitFor(`T.settings()?.querySelector('.providers-field')`, 10_000);
+  await A.ev(`T.button('Ajouter un fournisseur', T.settings())`);
+  const form = `T.settings().querySelector('.provider')`;
   const setUrl = (u) => A.ev(`T.setValue(${form}.querySelector('.url'), ${JSON.stringify(u)}); !${form}.querySelector('.http').hidden`);
   assert.equal(await setUrl('http://10.5.33.228:11434/v1'), true, 'http vers une autre machine : avertissement');
   assert.equal(await setUrl('https://exemple.ch/v1'), false, 'https : pas d\'avertissement');
@@ -118,6 +118,8 @@ test('fournisseur dans les réglages : avertissement http, clé rangée hors de 
   const p = A.readJson('settings.json').providers;
   assert.deepEqual([p.length, p[0].name, p[0].url, p[0].models.length], [1, 'Faux', `http://127.0.0.1:${PORT}/v1`, 7]);
   assert.equal(await A.ev(`S.providers[0].hasKey`), true);
+  // La liste à gauche : le fournisseur enregistré.
+  assert.match(await A.ev(`T.settings().querySelector('.provider-list .item.sel').textContent`), /^Faux7 modèle\(s\) · clé$/);
   await A.ev(`T.key('Escape', {}, document)`);
 });
 
@@ -184,10 +186,10 @@ test('messages clairs : modèle arrêté, délai dépassé, serveur injoignable'
   assert.ok(Date.now() - t < 5000);
   assert.equal(await A.ev(`S.current.messages.length`), n, 'pas de réponse vide gardée');
   // Rien n'écoute sur ce port : « ne répond pas », dans la section Fournisseurs.
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.providers-field')`, 10_000);
-  await A.ev(`T.button('Ajouter un fournisseur', T.dialog())`);
-  const form = `[...T.dialog().querySelectorAll('.provider')].pop()`;
+  await A.ev(`openSettings('providers')`);
+  await A.waitFor(`T.settings()?.querySelector('.providers-field')`, 10_000);
+  await A.ev(`T.button('Ajouter un fournisseur', T.settings())`);
+  const form = `[...T.settings().querySelectorAll('.provider')].pop()`;
   await A.ev(`T.setValue(${form}.querySelector('.name'), 'Éteint'); T.setValue(${form}.querySelector('.url'), 'http://127.0.0.1:1/v1'); T.button('Tester', ${form})`);
   await A.waitFor(`${form}.querySelector('.status').textContent.includes('ne répond pas')`, 15_000, 'serveur injoignable');
   await A.ev(`T.button('Supprimer', ${form})`);
@@ -205,11 +207,11 @@ test('import depuis Qwen Code : fournisseurs, réglages de chaque modèle, clé'
     ] },
     security: { auth: { selectedType: 'openai' } },
   }));
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.providers-field')`, 10_000);
-  await A.ev(`T.button('Importer depuis Qwen Code', T.dialog())`);
+  await A.ev(`openSettings('providers')`);
+  await A.waitFor(`T.settings()?.querySelector('.providers-field')`, 10_000);
+  await A.ev(`T.button('Importer depuis Qwen Code', T.settings())`);
   await A.waitFor(`T.toasts().includes('1 fournisseur(s) créé(s), 2 modèle(s) importé(s)')`, 10_000, 'import');
-  await A.waitFor(`T.dialog().querySelectorAll('.provider').length === 2`, 5_000);
+  await A.waitFor(`T.settings().querySelectorAll('.provider-list .item').length === 2`, 5_000);
   await A.ev(`T.key('Escape', {}, document)`);
   const p = A.readJson('settings.json').providers.find((x) => x.url === base);
   assert.equal(p.name, `localhost:${PORT}`);

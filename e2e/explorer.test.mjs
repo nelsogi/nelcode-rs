@@ -180,10 +180,10 @@ test('limites : explorateurs par demande et tours par explorateur (réglables) ;
   assert.ok(!chats.at(-1).messages[0].content.includes('spawn_explorer'));
   await settings({ explorerMax: 5, explorerTurns: 6 });
   // Les réglages : trois curseurs et le choix du modèle.
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.textContent.includes('Explorateurs en même temps')`, 10_000);
-  assert.ok(await A.ev(`T.dialog().textContent.includes('Explorateurs par demande') && T.dialog().textContent.includes('Tours par explorateur')`));
-  assert.equal(await A.ev(`T.dialog().querySelector('select.explorer-model').value`), '');
+  await A.ev(`openSettings('agent')`);
+  await A.waitFor(`T.settings()?.textContent.includes('Explorateurs en même temps')`, 10_000);
+  assert.ok(await A.ev(`T.settings().textContent.includes('Explorateurs par demande') && T.settings().textContent.includes('Tours par explorateur')`));
+  assert.equal(await A.ev(`T.settings().querySelector('select.explorer-model').value`), '');
   await A.ev(`T.key('Escape', {}, document)`);
 });
 
@@ -241,9 +241,9 @@ test('modèle des explorateurs (réglage) ; leurs tokens « subagent » comptent
   // L'en-tête de la conversation compte aussi les explorateurs.
   assert.ok(Math.abs((await A.ev(`S.current.usage.cost`)) - cost - sub[0].cost) < 1e-9);
   // Le réglage s'affiche ; un modèle qui n'existe plus : celui de l'agent.
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('select.explorer-model')`, 10_000);
-  assert.equal(await A.ev(`JSON.parse(T.dialog().querySelector('select.explorer-model').value).model`), 'eclaireur');
+  await A.ev(`openSettings('agent', 'explorerModel')`);
+  await A.waitFor(`T.settings()?.querySelector('select.explorer-model')`, 10_000);
+  assert.equal(await A.ev(`JSON.parse(T.settings().querySelector('select.explorer-model').value).model`), 'eclaireur');
   await A.ev(`T.key('Escape', {}, document)`);
   await settings({ explorerModel: { provider: PROVIDER, model: 'disparu' } });
   await start('chef-leger', 'Encore');

@@ -50,13 +50,14 @@ async function newClaude() {
 test('sans clé API : Claude Agent la demande (Réglages), jamais de connexion à un compte', async () => {
   await A.ev(`document.getElementById('claude-chat').click()`);
   await A.waitFor(`T.toasts().includes('ajoute d\\'abord ta clé API Anthropic')`, 10_000);
-  await A.waitFor(`T.dialog()?.querySelector('.claude-field')`, 10_000, 'réglages ouverts');
-  const text = await A.ev(`T.dialog().querySelector('.claude-field').textContent`);
+  await A.waitFor(`T.settings()?.querySelector('.claude-field')`, 10_000, 'réglages ouverts (Claude Agent)');
+  assert.equal(await A.ev(`document.querySelector('#settings-nav .cat.sel').dataset.cat`), 'claude');
+  const text = await A.ev(`T.settings().querySelector('.claude-field').textContent`);
   assert.match(text, /Outil « claude » : .*claude\.exe/);
   assert.match(text, /Pas de connexion à un compte Claude\.ai/);
   assert.ok(!/se connecter|connexion avec|login/i.test(text.replace('Pas de connexion à un compte Claude.ai', '')), 'aucun bouton de connexion');
   // La clé va dans le Gestionnaire d'identification, pas dans settings.json.
-  await A.ev(`T.setValue(T.dialog().querySelector('.claude-field .key'), ${JSON.stringify(KEY)}); T.button('Ranger la clé', T.dialog().querySelector('.claude-field'))`);
+  await A.ev(`T.setValue(T.settings().querySelector('.claude-field .key'), ${JSON.stringify(KEY)}); T.button('Ranger la clé', T.settings().querySelector('.claude-field'))`);
   await A.waitFor(`S.claudeStatus?.hasKey === true`, 5_000, 'clé enregistrée');
   assert.ok(!fs.readFileSync(path.join(A.home, 'settings.json'), 'utf8').includes(KEY));
   await A.ev(`T.key('Escape', {}, document)`);
@@ -109,16 +110,19 @@ test('conversation : texte au fil de l\'eau, outil Lecture en étape, coût et d
 });
 
 test('écriture avec diff, commande et plan ; réglages acceptEdits, outils autorisés et modèle', async () => {
-  const save = async (js) => {
-    await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-    await A.waitFor(`T.dialog()?.querySelector('.claude-field input.model')`, 10_000);
-    await A.ev(`${js}; window.__saved = S.settings; T.button('Enregistrer', T.dialog().querySelector('.buttons'))`);
-    await A.waitFor(`S.settings !== window.__saved`, 5_000, 'réglages enregistrés');
-  };
-  // Un nom de modèle invalide n'est pas gardé (jamais passé à claude).
-  await save(`T.setValue(T.dialog().querySelector('.claude-field input.model'), 'opus & calc')`);
-  assert.equal(A.readJson('settings.json').claudeModel, '');
-  await save(`T.setValue(T.dialog().querySelector('.claude-field select.mode'), 'acceptEdits'); T.setValue(T.dialog().querySelector('.claude-field textarea.claude-tools'), 'Read\\n Bash(dotnet build *) \\n\\nRead'); T.setValue(T.dialog().querySelector('.claude-field input.model'), ' sonnet '); T.dialog().querySelector('.claude-field input.project-settings').click()`);
+  await A.ev(`openSettings('claude')`);
+  await A.waitFor(`T.control('claudeModel')?.matches('input.model')`, 10_000);
+  // Un nom de modèle invalide : l'erreur sous le champ, rien d'enregistré (jamais passé à claude).
+  await A.ev(`T.setValue(T.control('claudeModel'), 'opus & calc')`);
+  await A.waitFor(`!T.row('claudeModel').querySelector('.setting-error').hidden`, 5_000, 'erreur sous le champ');
+  assert.match(await A.ev(`T.row('claudeModel').querySelector('.setting-error').textContent`), /Lettres, chiffres/);
+  assert.equal(await A.ev(`T.control('claudeModel').getAttribute('aria-invalid')`), 'true');
+  await sleep(1000);
+  assert.equal(A.readJson('settings.json').claudeModel ?? '', '');
+  await A.ev(`T.setValue(T.control('claudePermissionMode'), 'acceptEdits'); T.setValue(T.control('claudeAllowedTools'), 'Read\\n Bash(dotnet build *) \\n\\nRead'); T.setValue(T.control('claudeModel'), ' sonnet '); T.control('claudeProjectSettings').click()`);
+  await A.waitFor(`S.settings.claudeModel === 'sonnet' && S.settings.claudeProjectSettings === true && S.settings.claudeAllowedTools.length === 2 && S.settings.claudePermissionMode === 'acceptEdits'`, 5_000, 'réglages enregistrés');
+  assert.equal(await A.ev(`T.row('claudeModel').querySelector('.setting-error').hidden`), true, 'erreur effacée');
+  await A.ev(`T.key('Escape', {}, document)`);
   assert.equal(A.readJson('settings.json').claudeProjectSettings, true, 'réglages du projet : choisis explicitement');
   assert.equal(await A.ev(`S.settings.claudePermissionMode`), 'acceptEdits');
   assert.deepEqual(A.readJson('settings.json').claudeAllowedTools, ['Read', 'Bash(dotnet build *)']);

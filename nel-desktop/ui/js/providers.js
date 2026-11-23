@@ -17,30 +17,54 @@ export async function refreshProviders() {
   renderModels();
 }
 
-// La section Fournisseurs des réglages : chaque fournisseur s'enregistre tout de suite (pas avec « Enregistrer »).
+// Réglages → Fournisseurs : la liste à gauche, le fournisseur choisi à droite. Chaque fournisseur s'enregistre avec son
+// bouton (une clé ou une adresse à moitié tapée n'est jamais envoyée).
 export async function providersSection() {
   await refreshProviders();
-  const box = h('div', { class: 'providers' });
-  const draw = () => box.replaceChildren(...S.providers.map((p) => providerForm(p, draw)));
+  let sel = S.providers[0] ?? null;   // le fournisseur affiché (ou un nouveau, pas encore enregistré)
+  const list = h('div', { class: 'provider-list', role: 'listbox', 'aria-label': 'Fournisseurs' });
+  const detail = h('div', { class: 'provider-detail' });
+  const isSel = (p) => !!sel && (p.id ? p.id === sel.id : p === sel);
+  // La liste seule (après un enregistrement : le formulaire ouvert reste, avec son état et ses messages).
+  const drawList = () => {
+    const items = [...S.providers, ...(sel && !sel.id ? [sel] : [])];
+    list.replaceChildren(...(items.length ? items.map((p) => h('button', { class: 'item' + (isSel(p) ? ' sel' : ''), role: 'option', 'aria-selected': isSel(p) ? 'true' : 'false', 'data-id': p.id ?? '',
+      onclick: () => { sel = p; draw(); detail.querySelector('input')?.focus(); },
+      onkeydown: (e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        e.preventDefault();
+        const b = e.key === 'ArrowDown' ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling;
+        if (b) { b.click(); list.querySelector('.sel')?.focus(); }
+      } },
+      h('span', { class: 'name' }, p.name || 'Nouveau fournisseur'), h('span', { class: 'meta' }, p.id ? `${p.models?.length ?? 0} modèle(s)${p.hasKey ? ' · clé' : ''}` : 'pas encore enregistré'))) : [h('div', { class: 'hint' }, 'Aucun fournisseur.')]));
+  };
+  const draw = () => {
+    if (sel?.id) sel = S.providers.find((p) => p.id === sel.id) ?? S.providers[0] ?? null;   // à jour, ou supprimé
+    drawList();
+    detail.replaceChildren(sel ? providerForm(sel, () => { sel = S.providers[0] ?? null; draw(); }, drawList) : h('p', { class: 'hint' }, 'Ajoute un fournisseur pour utiliser les modèles d\'un serveur (Ollama, llama.cpp, LM Studio…) ou l\'API Claude.'));
+  };
+  const add = (p) => { sel = p; draw(); (detail.querySelector(p.kind === 'anthropic' ? '.key' : 'input'))?.focus(); };
   draw();
-  const add = h('button', { class: 'btn', onclick: () => { box.append(providerForm({ models: [] }, draw)); box.lastChild.querySelector('input').focus(); } }, icon('plus'), 'Ajouter un fournisseur');
   // Le modèle « Claude » : l'API d'Anthropic (couche compatible OpenAI), sans temperature/top_p.
-  const claudeTemplate = h('button', { class: 'btn', title: 'API d\'Anthropic, clé API de la Console Anthropic', onclick: () => {
-    box.append(providerForm({ name: 'Claude', url: 'https://api.anthropic.com/v1/', kind: 'anthropic', omitSampling: true, models: [] }, draw));
-    box.lastChild.querySelector('.key').focus();
-  } }, icon('plus'), 'Ajouter Claude (Anthropic)');
   const qwen = h('button', { class: 'btn', onclick: async () => {
     try {
       const r = await invoke('import_qwen');
-      toast(`Qwen Code : ${r.providers} fournisseur(s) créé(s), ${r.models} modèle(s) importé(s)${r.keys ? ', clé rangée dans le Gestionnaire d\'identification' : ''}.`, 'success', 6000);
+      toast(`Qwen Code : ${r.providers} fournisseur(s) créé(s), ${r.models} modèle(s) importé(s)${r.keys ? `, clé rangée dans le ${S.info.keystore}` : ''}.`, 'success', 6000);
       await refreshProviders(); draw();
     } catch (e) { toast('Import depuis Qwen Code : ' + errText(e), 'error', 8000); }
   } }, icon('download'), 'Importer depuis Qwen Code');
-  return h('div', { class: 'field providers-field' }, h('div', { class: 'row' }, h('span', {}, 'Fournisseurs (modèles distants)')), box, h('div', { class: 'row-btns' }, add, claudeTemplate, qwen),
-    h('div', { class: 'hint' }, 'Un serveur compatible avec l\'API OpenAI : llama.cpp, Ollama (http://hôte:11434/v1), LM Studio… Ses modèles apparaissent dans la liste avec le badge « réseau ». La clé va dans le Gestionnaire d\'identification de Windows, jamais dans settings.json.'));
+  return h('div', { class: 'providers-field' },
+    h('div', { class: 'providers-split' },
+      h('div', { class: 'providers-side' }, list,
+        h('div', { class: 'col-btns' },
+          h('button', { class: 'btn', onclick: () => add({ models: [] }) }, icon('plus'), 'Ajouter un fournisseur'),
+          h('button', { class: 'btn', title: 'API d\'Anthropic, clé API de la Console Anthropic', onclick: () => add({ name: 'Claude', url: 'https://api.anthropic.com/v1/', kind: 'anthropic', omitSampling: true, models: [] }) }, icon('plus'), 'Ajouter Claude (Anthropic)'),
+          qwen)),
+      detail),
+    h('div', { class: 'hint' }, `Un serveur compatible avec l'API OpenAI : llama.cpp, Ollama (http://hôte:11434/v1), LM Studio… Ses modèles apparaissent dans la liste avec le badge « réseau ». La clé va dans le ${S.info.keystore}, jamais dans settings.json.`));
 }
 
-export function providerForm(p, redraw) {
+export function providerForm(p, redraw, onSaved = () => {}) {
   const name = h('input', { class: 'text-input name', placeholder: 'Nom (ex. Ollama du labo)', value: p.name ?? '', spellcheck: 'false' });
   const url = h('input', { class: 'text-input url', placeholder: 'http://10.5.33.228:11434/v1', value: p.url ?? '', spellcheck: 'false' });
   const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: p.hasKey ? 'clé enregistrée (vide : inchangée)' : 'clé (facultative)' });
@@ -61,6 +85,7 @@ export function providerForm(p, redraw) {
       form.dataset.id = p.id;
       url.value = p.url;
       await refreshProviders();
+      onSaved(p);
       return true;
     } catch (e) { status.className = 'warn-text status'; status.textContent = errText(e); return false; }
   };
@@ -72,12 +97,13 @@ export function providerForm(p, redraw) {
       const ids = await invoke('test_provider', { id: p.id });
       status.textContent = ids.length ? `${ids.length} modèle(s) : ${ids.join(', ')}` : 'Le serveur répond, mais ne propose aucun modèle.';
       await refreshProviders();
+      onSaved(p);
     } catch (e) { status.className = 'warn-text status'; status.textContent = errText(e); }
   };
   form.append(h('div', { class: 'row-btns' }, name, h('button', { class: 'btn', onclick: test }, icon('refresh-cw'), 'Tester'),
     h('button', { class: 'btn', onclick: async () => (await save()) && toast('Fournisseur enregistré.', 'success', 2000) }, 'Enregistrer'),
     h('button', { class: 'btn danger', title: 'Supprimer le fournisseur (et sa clé)', onclick: async () => {
-      if (!p.id) return form.remove();   // pas encore enregistré
+      if (!p.id) return redraw();   // pas encore enregistré
       await invoke('delete_provider', { id: p.id });
       if (S.model.remote?.provider === p.id) Object.assign(S.model, { name: null, remote: null, blockSize: null });
       await refreshProviders(); redraw(); renderStatus(); refreshContext();

@@ -54,7 +54,7 @@ export async function startClaudeAgent() {
   }
   if (!st.hasKey) {
     toast('Claude Agent : ajoute d\'abord ta clé API Anthropic (Réglages → Claude Agent).', 'warning', 8000);
-    return openSettings();
+    return openSettings('claude');
   }
   closeEdit();
   S.current = { ...newSession(), claudeAgent: {} };
@@ -63,42 +63,30 @@ export async function startClaudeAgent() {
   $('input').focus();
 }
 
-// La section Claude Agent des réglages : rend { el, mode, tools, model, project } (enregistrés avec les autres réglages ; la clé, tout de suite).
-export async function claudeSection() {
+// Réglages → Claude Agent : l'outil trouvé et la clé API (rangée tout de suite). Le modèle, le mode de permission, les
+// outils autorisés et les réglages du projet sont des réglages ordinaires (settings.js).
+export async function claudeKeyBlock() {
   const st = S.claudeStatus = await invoke('claude_agent_status');
-  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', placeholder: st.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…' });
+  const key = h('input', { class: 'text-input key', type: 'password', autocomplete: 'off', 'aria-label': 'Clé API Anthropic', placeholder: st.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…' });
+  const btns = h('div', { class: 'row-btns' });
+  const drawBtns = () => btns.replaceChildren(key, h('button', { class: 'btn', onclick: () => saveKey(key.value) }, 'Ranger la clé'),
+    S.claudeStatus.hasKey ? h('button', { class: 'btn', onclick: () => saveKey('') }, 'Retirer la clé') : null);
   const saveKey = async (value) => {
     try {
       await invoke('claude_agent_save_key', { key: value });
       key.value = '';
       S.claudeStatus = await invoke('claude_agent_status');
       key.placeholder = S.claudeStatus.hasKey ? 'clé enregistrée (vide : inchangée)' : 'sk-ant-…';
-      toast(value ? 'Clé API enregistrée dans le Gestionnaire d\'identification.' : 'Clé API retirée.', 'success', 3000);
+      drawBtns();
+      toast(value ? `Clé API enregistrée dans le ${S.info.keystore}.` : 'Clé API retirée.', 'success', 3000);
     } catch (e) { toast(errText(e), 'error'); }
   };
-  const mode = h('select', { class: 'text-input mode' }, h('option', { value: 'default' }, 'Rien d\'automatique (par défaut) : tout ce qui demande un accord est refusé'),
-    h('option', { value: 'acceptEdits' }, 'Accepter les modifications de fichiers (acceptEdits)'));
-  mode.value = st.permissionMode;
-  const tools = h('textarea', { class: 'text-input claude-tools', rows: 2, spellcheck: 'false', placeholder: 'Read\nBash(dotnet build *)' });
-  tools.value = (st.allowedTools ?? []).join('\n');
-  // Le modèle (--model) : un alias de l'outil ou un id complet ; vide : celui de l'outil.
-  const model = h('input', { class: 'text-input model', list: 'claude-models', spellcheck: 'false', placeholder: 'celui de l\'outil (par défaut)' });
-  model.value = st.model ?? '';
-  const project = h('input', { type: 'checkbox', class: 'project-settings', checked: !!st.projectSettings });
-  const models = h('datalist', { id: 'claude-models' }, ...['opus', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'].map((m) => h('option', { value: m })));
-  const el = h('div', { class: 'field claude-field' }, h('div', { class: 'row' }, h('span', {}, 'Claude Agent')),
+  key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(key.value); } });
+  drawBtns();
+  return h('div', { class: 'claude-field' },
     h('div', { class: 'hint cli' }, st.cli ? `Outil « claude » : ${st.cli}` : [`Outil « claude » d'Anthropic introuvable : `, h('a', { href: '#', onclick: (e) => { e.preventDefault(); invoke('open_claude_install'); } }, 'l\'installer')]),
-    h('div', { class: 'row-btns' }, key, h('button', { class: 'btn', onclick: () => saveKey(key.value) }, 'Ranger la clé'),
-      st.hasKey ? h('button', { class: 'btn', onclick: () => saveKey('') }, 'Retirer la clé') : null),
-    h('div', { class: 'hint' }, `Clé API Anthropic (Console Anthropic), rangée dans le ${S.info.keystore} et passée à l'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.`),
-    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Modèle (--model)')), model, models,
-      h('div', { class: 'hint' }, 'Un alias (opus, sonnet, haiku) ou un id complet (claude-opus-5-5). Vide : le modèle par défaut de l\'outil.')),
-    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Mode de permission')), mode),
-    h('label', { class: 'field' }, h('div', { class: 'row' }, h('span', {}, 'Outils autorisés sans accord (--allowedTools)')), tools,
-      h('div', { class: 'hint' }, 'Un par ligne, par exemple « Read » ou « Bash(dotnet build *) ». Vide : seules les lectures dans le dossier de travail passent.')),
-    h('div', { class: 'field' }, h('label', { class: 'check' }, project, 'Lire les réglages du projet (.claude/settings.json)'),
-      h('div', { class: 'hint' }, 'Désactivé par défaut : seuls tes réglages (~/.claude/settings.json) comptent. Les réglages d\'un projet peuvent lancer des commandes (hooks), autoriser Bash sans accord ou envoyer ta clé à une autre adresse : ne l\'active que pour des projets de confiance.')));
-  return { el, mode, tools, model, project };
+    btns,
+    h('div', { class: 'hint' }, `Clé API Anthropic (Console Anthropic), rangée dans le ${S.info.keystore} et passée à l'outil comme ANTHROPIC_API_KEY. Pas de connexion à un compte Claude.ai.`));
 }
 
 export async function refreshNelcode() {

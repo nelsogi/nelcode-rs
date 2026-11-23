@@ -130,13 +130,13 @@ test('bouton désactivé avec une explication : modèle local, Claude Agent, mod
 });
 
 test('réglage manuel par modèle (Réglages → Fournisseurs → Images), détection automatique ; Claude sans détection', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.vision-models select[data-model="fake-unknown"]')`, 10_000);
-  await A.ev(`T.setValue(T.dialog().querySelector('.vision-models select[data-model="fake-unknown"]'), 'yes')`);
+  await A.ev(`openSettings('providers')`);
+  await A.waitFor(`T.settings()?.querySelector('.vision-models select[data-model="fake-unknown"]')`, 10_000);
+  await A.ev(`T.setValue(T.settings().querySelector('.vision-models select[data-model="fake-unknown"]'), 'yes')`);
   await A.waitFor(`S.model.vision === true`, 5_000, 'réglage manuel pris en compte');
   assert.equal(A.readJson('settings.json').providers[0].models[2].vision, true);
   assert.equal(await A.ev(`${btn}.classList.contains('off')`), false);
-  await A.ev(`T.setValue(T.dialog().querySelector('.vision-models select[data-model="fake-unknown"]'), 'auto')`);
+  await A.ev(`T.setValue(T.settings().querySelector('.vision-models select[data-model="fake-unknown"]'), 'auto')`);
   await A.waitFor(`S.model.vision === null`, 5_000);
   assert.equal(A.readJson('settings.json').providers[0].models[2].vision, undefined);
   await A.ev(`T.key('Escape', {}, document)`);

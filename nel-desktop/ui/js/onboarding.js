@@ -47,7 +47,7 @@ export function openWizard() {
     renderAll();
     $('input').focus();
     if (!go) return;
-    ({ catalog: () => openCatalog(), import: () => importFlow(), provider: () => openSettings(), claude: () => startClaudeAgent() })[w.source]();
+    ({ catalog: () => openCatalog(), import: () => importFlow(), provider: () => openSettings('providers'), claude: () => startClaudeAgent() })[w.source]();
   };
   const draw = () => {
     const dots = h('div', { class: 'wizard-steps', 'aria-label': `Étape ${w.step + 1} sur 3` }, [0, 1, 2].map((i) => h('span', { class: 'step-dot' + (i === w.step ? ' on' : i < w.step ? ' done' : '') })));

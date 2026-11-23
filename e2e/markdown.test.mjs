@@ -421,11 +421,12 @@ describe('application', () => {
     };
     await copy();
     const save = async (on) => {
-      await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-      await A.waitFor(`T.dialog()?.querySelector('input.markdown')`, 10_000, 'réglage');
-      assert.equal(await A.ev(`T.dialog().querySelector('input.markdown').checked`), !on);
-      await A.ev(`T.dialog().querySelector('input.markdown').click(); T.dialog().querySelector(':scope > .buttons .btn.primary').click(); true`);
+      await A.ev(`openSettings('general', 'markdown')`);
+      await A.waitFor(`T.control('markdown')`, 10_000, 'réglage');
+      assert.equal(await A.ev(`T.control('markdown').checked`), !on);
+      await A.ev(`T.control('markdown').click(); true`);
       await A.waitFor(`S.settings.markdown === ${on}`, 10_000);
+      await A.ev(`T.key('Escape', {}, document)`);
     };
     await save(false);
     assert.equal(A.readJson('settings.json').markdown, false);

@@ -5,6 +5,7 @@
 
 import { $, confirmDialog, dialog, errText, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
+import { commit } from './settings-page.js';
 
 // --- Formats ----------------------------------------------------------------------------------------------
 
@@ -261,29 +262,32 @@ export function parsePrices(text) {
   return { prices, bad };
 }
 
-/** La section Suivi des réglages : rend { el, changes() } (enregistrée avec les autres réglages). */
-export async function usageSection(s) {
+/** Réglages → Suivi et budget : la table de prix, enregistrée au fil de la saisie (les lignes illisibles sont
+ *  signalées sous la table et rien n'est enregistré tant qu'il y en a). La table par défaut : rien n'est gardé dans les
+ *  réglages (elle suit celle de Nel Code). */
+export async function pricesBlock() {
   const info = await invoke('usage_prices');
-  const budget = h('input', { class: 'text-input port budget', type: 'number', min: 0, step: 1, value: s.budgetMonthly || '', placeholder: 'aucun' });
-  const confirm = h('input', { type: 'checkbox', checked: s.budgetConfirm !== false });
-  const table = h('textarea', { class: 'text-input prices', rows: 6, spellcheck: 'false' });
+  const table = h('textarea', { class: 'text-input prices', rows: 7, spellcheck: 'false', 'aria-label': 'Prix par million de tokens', 'aria-describedby': 'prices-err' });
   table.value = priceLines(info.prices);
+  const err = h('div', { class: 'setting-error', id: 'prices-err', role: 'alert', hidden: true });
+  const key = (list) => JSON.stringify(list.map((p) => [p.model, Number(p.input), Number(p.output)]));
+  let timer = 0, last = key(info.prices);
+  const save = async () => {
+    clearTimeout(timer);
+    const { prices, bad } = parsePrices(table.value);
+    err.hidden = !bad.length;
+    err.textContent = bad.length ? `Format « modèle entrée sortie » attendu : ${bad.join(' · ')}` : '';
+    table.setAttribute('aria-invalid', bad.length ? 'true' : 'false');
+    if (bad.length || key(prices) === last) return;
+    last = key(prices);
+    const e = await commit({ prices: key(prices) === key(info.defaults) ? null : prices });
+    if (e) { err.hidden = false; err.textContent = e; }
+  };
+  table.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(save, 800); });
+  table.addEventListener('blur', save);
   const checked = new Date(info.checked + 'T12:00:00').toLocaleDateString('fr-CH', { day: 'numeric', month: 'long', year: 'numeric' });
-  const el = h('div', { class: 'field usage-field' }, h('div', { class: 'row' }, h('span', {}, 'Suivi : budget et prix')),
-    h('label', { class: 'inline' }, 'Budget mensuel', budget, h('span', { class: 'hint' }, '$ (fournisseurs payants ; vide : aucun)')),
-    h('label', { class: 'check' }, confirm, 'À 100 % du budget, demander confirmation avant chaque nouvelle demande payante'),
-    h('div', { class: 'row' }, h('span', {}, 'Prix par million de tokens (modèle, entrée, sortie, en $)'),
-      h('button', { class: 'btn', onclick: () => (table.value = priceLines(info.defaults)) }, 'Prix par défaut')),
-    table,
+  return h('div', { class: 'usage-field' }, table, err,
+    h('div', { class: 'row-btns' }, h('button', { class: 'btn', onclick: () => { table.value = priceLines(info.defaults); save(); } }, 'Prix par défaut')),
     h('div', { class: 'hint prices-checked' }, `Prix des modèles Claude vérifiés le ${checked} sur la page officielle des tarifs d'Anthropic (${info.source}), tarif de base. `
       + 'Un nom couvre aussi ses variantes datées (claude-sonnet-4-5 → claude-sonnet-4-5-20250929). Tous les coûts sont des estimations ; modèles de ce PC et modèles sans prix : 0.'));
-  const changes = () => {
-    const { prices, bad } = parsePrices(table.value);
-    if (bad.length) toast('Prix ignorés (format « modèle entrée sortie ») : ' + bad.join(' · '), 'warning', 8000);
-    // La table par défaut : rien n'est gardé dans les réglages (elle suit celle de Nel Code).
-    const key = (list) => JSON.stringify(list.map((p) => [p.model, Number(p.input), Number(p.output)]));
-    const same = key(prices) === key(info.defaults);
-    return { budgetMonthly: Number(budget.value) || 0, budgetConfirm: confirm.checked, prices: same ? null : prices };
-  };
-  return { el, changes };
 }

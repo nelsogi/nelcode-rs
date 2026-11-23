@@ -171,23 +171,25 @@ test('page Suivi : totaux, graphiques par jour, fournisseur, modèle, projet, te
 });
 
 test('réglages : table de prix modifiable, date de vérification affichée, prix par défaut', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.usage-field')`, 10_000);
-  assert.match(await A.ev(`T.dialog().querySelector('.prices-checked').textContent`), /vérifiés le 19 novembre 2026 sur la page officielle des tarifs d'Anthropic/);
-  const table = `T.dialog().querySelector('textarea.prices')`;
+  await A.ev(`openSettings('suivi')`);
+  await A.waitFor(`T.settings()?.querySelector('.usage-field')`, 10_000);
+  assert.match(await A.ev(`T.settings().querySelector('.prices-checked').textContent`), /vérifiés le 19 novembre 2026 sur la page officielle des tarifs d'Anthropic/);
+  const table = `T.settings().querySelector('textarea.prices')`;
   assert.match(await A.ev(`${table}.value`), /claude-opus-5-5 {2}4 {2}20/);
-  await A.ev(`T.setValue(${table}, ${table}.value + '\\nmon-modele  1,5  3')`);
-  await A.ev(`T.dialog().querySelector('.buttons .btn.primary').click()`);
-  await A.waitFor(`!T.dialog()`, 5_000);
+  // Une ligne illisible : l'erreur sous la table, rien d'enregistré.
+  await A.ev(`T.setValue(${table}, ${table}.value + '\\nmon-modele  un  3')`);
+  await A.waitFor(`T.settings().querySelector('#prices-err').textContent.includes('mon-modele  un  3')`, 5_000, 'erreur sous la table');
+  assert.equal(A.readJson('settings.json').prices, undefined);
+  await A.ev(`T.setValue(${table}, ${table}.value.replace('mon-modele  un  3', 'mon-modele  1,5  3'))`);
   await waitFile(() => Array.isArray(A.readJson('settings.json').prices), 'table enregistrée');
+  assert.equal(await A.ev(`T.settings().querySelector('#prices-err').hidden`), true);
   const prices = A.readJson('settings.json').prices;
   assert.deepEqual(prices.at(-1), { model: 'mon-modele', input: 1.5, output: 3 });
+  assert.ok(await A.ev(`T.row('prices').classList.contains('changed')`), 'différent de la valeur par défaut');
   // Prix par défaut : la table n'est plus gardée dans les réglages (elle suit celle de Nel Code).
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.usage-field')`, 10_000);
-  await A.ev(`T.button('Prix par défaut', T.dialog().querySelector('.usage-field')); T.dialog().querySelector('.buttons .btn.primary').click()`);
-  await A.waitFor(`!T.dialog()`, 5_000);
+  await A.ev(`T.button('Prix par défaut', T.settings().querySelector('.usage-field'))`);
   await waitFile(() => A.readJson('settings.json').prices === undefined, 'table par défaut');
+  await A.ev(`T.key('Escape', {}, document)`);
 });
 
 test('modèle de ce PC : tokens comptés avec le tokenizer, coût 0', { skip: !fs.existsSync(MODEL) && 'modèle de test absent' }, async () => {

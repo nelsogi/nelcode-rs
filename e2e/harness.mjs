@@ -25,6 +25,11 @@ const HELPERS = `window.T = {
     return true;
   },
   dialog() { return document.querySelector('#overlay:not([hidden]) .dialog'); },
+  /** La page Réglages ouverte (null sinon). */
+  settings() { return document.querySelector('#settings:not([hidden])'); },
+  /** La ligne d'un réglage de la page (par sa clé ou son id), et son contrôle. */
+  row(id) { return T.settings()?.querySelector('.setting[data-id="' + id + '"]'); },
+  control(id) { return T.row(id)?.querySelector('.setting-control input:not([tabindex="-1"]), .setting-control select, .setting-control textarea'); },
   setValue(el, value) { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); },
   toasts() { return document.getElementById('toasts').innerText; },
 }; true`;

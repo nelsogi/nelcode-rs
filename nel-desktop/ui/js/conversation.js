@@ -817,7 +817,11 @@ export function renderStatus() {
   else if (S.gen) st.append(h('span', { class: 'spinner' }), `${S.model.name} écrit…  Échap pour arrêter`);
   else if (S.bench) st.append(h('span', { class: 'spinner' }), `Test de vitesse · ${S.bench}…`);
   else if (S.current?.claudeAgent) st.append(`Claude Agent${S.claudeStatus?.model ? ' · ' + S.claudeStatus.model : ''} · ${S.claudeStatus?.permissionMode === 'acceptEdits' ? 'modifications de fichiers acceptées' : 'rien d\'automatique'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
-  else if (S.model.name) st.append(`${S.model.name} · ${S.model.device ?? 'CPU'}${S.lastSpeed ? ' · ' + S.lastSpeed : ''}`);
+  // Liens directs : le modèle → Réglages → Modèles ; le calcul (CPU, GPU) → Calcul ; un serveur → Fournisseurs.
+  else if (S.model.name) st.append(h('button', { class: 'status-link', 'data-settings': 'models', title: 'Réglages → Modèles' }, S.model.name), ' · ',
+    S.model.remote ? h('button', { class: 'status-link', 'data-settings': 'providers', title: 'Réglages → Fournisseurs' }, S.model.device)
+      : h('button', { class: 'status-link', 'data-settings': 'calc', 'data-setting': 'device', title: 'Réglages → Calcul (CPU ou GPU)' }, S.model.device ?? 'CPU'),
+    S.lastSpeed ? ' · ' + S.lastSpeed : '');
   else st.append('aucun modèle chargé');
   if (S.server.port) st.append(h('span', { class: 'server-on', title: `Serveur local (API OpenAI) : http://127.0.0.1:${S.server.port}/v1` },
     S.server.busy ? h('span', { class: 'spinner' }) : h('span', { class: 'dot' }), S.server.busy ? `API · répond…` : `API :${S.server.port}`));

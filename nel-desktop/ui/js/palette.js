@@ -14,7 +14,7 @@ import { projectName, recentProjects, selectProject } from './projects.js';
 import { toggleFiles } from './files.js';
 import { openWizard } from './onboarding.js';
 import { openUsage } from './usage.js';
-import { openMcp } from './mcp.js';
+import { CATEGORIES, paletteItems } from './settings-page.js';
 
 export const COMMANDS = [
   { name: 'new', desc: 'Nouvelle conversation', run: () => startNew() },
@@ -25,7 +25,7 @@ export const COMMANDS = [
   { name: 'compact', args: '[consigne]', desc: 'Résumer les anciens échanges (les 4 derniers restent tels quels) ; ex. /compact garde surtout les tests', run: (a) => compactNow(a) },
   { name: 'commands', desc: 'Commandes personnalisées (.md) : liste, et création', run: () => showCommands() },
   { name: 'transparence', desc: 'Activer / désactiver le mode transparence', run: () => toggleTransparency() },
-  { name: 'mcp', desc: 'Serveurs MCP : état, outils, journal, ajout, import (Claude Desktop, .mcp.json)', run: () => openMcp() },
+  { name: 'mcp', desc: 'Serveurs MCP : état, outils, journal, ajout, import (Claude Desktop, .mcp.json)', run: () => openSettings('mcp') },
   { name: 'agent', desc: 'Activer / désactiver le mode Agent (modèle distant qui gère les outils)', run: () => toggleAgent() },
   { name: 'model', args: '<nom>', desc: 'Charger un modèle installé', run: (a) => a ? loadModel(a) : toast('Usage : /model <nom>', 'warning') },
   { name: 'models', desc: 'Lister les modèles installés', run: () => toast(S.models.length ? S.models.map((m) => h('div', { class: 'line' }, m.name === S.model.name ? icon('check') : h('span', { class: 'pad' }), `${m.name} — ${sizeText(m.bytes)}`)) : 'Aucun modèle.', '', 8000) },
@@ -40,7 +40,7 @@ export const COMMANDS = [
   { name: 'dir', desc: 'Changer le dossier de travail de la conversation', run: () => chooseFolder() },
   { name: 'open', get desc() { return `Ouvrir le dossier de travail dans ${S.info.fileManager}`; }, run: () => openFolder() },
   { name: 'delete', desc: 'Supprimer la conversation', run: () => S.current.messages.length ? deleteSession(S.current) : null },
-  { name: 'settings', desc: 'Réglages de génération', run: () => openSettings() },
+  { name: 'settings', args: '[catégorie]', get desc() { return `Réglages ; ex. /settings gpu (${CATEGORIES.map((c) => c.alias[0]).join(', ')})`; }, run: (a) => openSettings(a || undefined) },
   { name: 'info', desc: 'Modèle, réglages, dossiers', run: () => showInfo() },
   { name: 'help', desc: 'Liste des commandes', run: () => showHelp() },
 ];
@@ -171,7 +171,7 @@ export const SHORTCUTS = [
   ['Entrée', 'envoyer'], ['Maj+Entrée', 'nouvelle ligne'], ['@', 'joindre un fichier du dossier de travail'], ['/', 'commandes'],
   ['Échap', 'arrêter la réponse, fermer une fenêtre'], ['Ctrl+K', 'palette'], ['Ctrl+N', 'nouvelle conversation'], ['Ctrl+Maj+N', 'conversation comparée'],
   ['Ctrl+,', 'réglages'], ['F2', 'renommer la conversation'], ['Ctrl+I', 'importer un modèle'], ['Ctrl+Maj+E', 'panneau Fichiers'],
-  ['Ctrl+= / Ctrl+-', 'taille du texte'], ['Ctrl+0', 'taille du texte normale'], ['?', 'cette aide (hors d\'un champ de saisie, ou saisie vide)'],
+  ['Ctrl+= / Ctrl+-', 'zoom (80 à 150 %)'], ['Ctrl+0', 'zoom à 100 %'], ['?', 'cette aide (hors d\'un champ de saisie, ou saisie vide)'],
 ];
 
 const keysEl = () => h('dl', { class: 'info-grid shortcuts' }, SHORTCUTS.flatMap(([k, d]) => [h('dt', {}, k.split(' / ').flatMap((x, i) => [i ? ' / ' : '', ...x.split('+').flatMap((p, j) => [j ? '+' : '', h('kbd', {}, p)])])), h('dd', {}, d)]));
@@ -193,7 +193,7 @@ export async function openPalette() {
   if (UI.closeOverlay) return;
   const actions = [
     ['Nouvelle conversation', 'Ctrl+N', startNew], ['Nouvelle conversation Claude Agent', '', startClaudeAgent], ['Conversation comparée…', 'Ctrl+Maj+N', openCompare], ['Classement', '', openLeaderboard], ['Suivi (tokens, coûts, temps de réponse)', '', openUsage],
-    ['Mode transparence', '', toggleTransparency], ['Mode Agent', '', toggleAgent], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', openSettings],
+    ['Mode transparence', '', toggleTransparency], ['Mode Agent', '', toggleAgent], ['Importer un modèle…', 'Ctrl+I', () => importFlow()], ['Catalogue de modèles', '', openCatalog], ['Réglages', 'Ctrl+,', () => openSettings()],
     ['Renommer la conversation', 'F2', () => renameSession(S.current)], ['Exporter en Markdown', '', () => exportSession(S.current, true)],
     ['Exporter en texte', '', () => exportSession(S.current, false)], ['Changer le dossier de travail', '', () => chooseFolder()],
     ['Ouvrir le dossier de travail', '', () => openFolder()], ['Supprimer la conversation', '', () => S.current.messages.length && deleteSession(S.current)],
@@ -208,6 +208,8 @@ export async function openPalette() {
     ...usable().map((c) => ({ kind: 'Commande', text: `/${c.name} — ${c.description || 'commande personnalisée'} (${originText(c)})`, key: '', run: () => useCommand(c) })),
     ...S.models.map((m) => ({ kind: 'Modèle', text: m.name, key: m.name === S.model.name ? 'chargé' : '', run: () => loadModel(m.name) })),
     ...[...S.sessions].sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).map((s) => ({ kind: 'Conversation', text: titleOf(s), key: relDate(s.date), run: () => openSession(s), search: s.messages.map((m) => m.content).join(' ') })),
+    // En dernier : sans recherche, la palette montre d'abord les actions, les modèles et les conversations.
+    ...paletteItems(),
   ];
   const input = h('input', { placeholder: 'Chercher une action, une conversation, un modèle…', spellcheck: 'false' });
   const results = h('div', { class: 'results' });

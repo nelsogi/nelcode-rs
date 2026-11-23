@@ -6,6 +6,7 @@
 export const UI = {
   editing: null,        // index du message en modification
   closeOverlay: null,   // ferme la fenêtre ouverte
+  page: null,           // la page Réglages ouverte : { close }
   sugg: { items: [], sel: 0 },
   contextTimer: 0,
   planCollapsed: false,

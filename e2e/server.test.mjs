@@ -19,11 +19,11 @@ const call = (route, { key = KEY, body, method = body ? 'POST' : 'GET' } = {}) =
   fetch(BASE + route, { method, headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) }, body: body && (typeof body === 'string' ? body : JSON.stringify(body)) });
 const reachable = (url) => fetch(url).then(() => true, () => false);
 
-/** Ouvre les réglages, change la section Serveur local avec `edit(section)` (code évalué dans la page), enregistre. */
-async function serverSettings(edit) {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.server .key')?.value`, 10_000, 'section Serveur local');
-  await A.ev(`(() => { const sec = T.dialog().querySelector('.server'); ${edit}; T.button('Enregistrer', T.dialog()); return true; })()`);
+/** Réglages → Serveur local : active ou désactive le serveur (enregistré tout de suite), puis ferme la page. */
+async function toggleServer() {
+  await A.ev(`openSettings('serveur')`);
+  await A.waitFor(`T.settings()?.querySelector('.cat-server .key')?.value`, 10_000, 'section Serveur local');
+  await A.ev(`T.control('serverEnabled').click()`);
 }
 
 before(async () => {
@@ -42,14 +42,16 @@ test('désactivé par défaut : rien n\'écoute, rien dans la barre d\'état', a
 });
 
 test('activé dans les réglages : clé générée et affichée, port réglé, indicateur dans la barre d\'état', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.server .key')?.value`, 10_000);
-  KEY = await A.ev(`T.dialog().querySelector('.server .key').value`);
+  await A.ev(`openSettings('server')`);
+  await A.waitFor(`T.settings()?.querySelector('.cat-server .key')?.value`, 10_000);
+  KEY = await A.ev(`T.settings().querySelector('.cat-server .key').value`);
   assert.match(KEY, /^nc-[0-9a-f]{64}$/);
-  assert.match(await A.ev(`T.dialog().querySelector('.server').textContent`), new RegExp(`arrêté[\\s\\S]*http://127\\.0\\.0\\.1:${PORT}/v1`));
+  assert.match(await A.ev(`T.settings().querySelector('.cat-server .server-block').textContent`), new RegExp(`arrêté[\\s\\S]*http://127\\.0\\.0\\.1:${PORT}/v1`));
   await A.ev(`T.key('Escape', {}, document)`);
-  await serverSettings(`sec.querySelector('input[type=checkbox]').click()`);
+  await toggleServer();
   await A.waitFor(`S.server.port === ${PORT}`, 10_000, 'serveur actif');
+  await A.waitFor(`T.settings().querySelector('.cat-server .state').textContent === 'actif sur le port ${PORT}'`, 5_000, 'état dans la page');
+  await A.ev(`T.key('Escape', {}, document)`);
   assert.match(await A.ev(`document.getElementById('status').textContent`), new RegExp(`API :${PORT}`));
   const s = A.readJson('settings.json');
   assert.deepEqual([s.serverEnabled, s.serverPort], [true, PORT]);
@@ -134,11 +136,11 @@ test('seulement sur 127.0.0.1', async (t) => {
 });
 
 test('nouvelle clé : l\'ancienne est refusée', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('.server .key')?.value`, 10_000);
-  await A.ev(`T.button('Nouvelle clé', T.dialog().querySelector('.server'))`);
-  await A.waitFor(`T.dialog().querySelector('.server .key').value !== ${JSON.stringify(KEY)}`, 5_000, 'nouvelle clé affichée');
-  const fresh = await A.ev(`T.dialog().querySelector('.server .key').value`);
+  await A.ev(`openSettings('server')`);
+  await A.waitFor(`T.settings()?.querySelector('.cat-server .key')?.value`, 10_000);
+  await A.ev(`T.button('Nouvelle clé', T.settings().querySelector('.cat-server'))`);
+  await A.waitFor(`T.settings().querySelector('.cat-server .key').value !== ${JSON.stringify(KEY)}`, 5_000, 'nouvelle clé affichée');
+  const fresh = await A.ev(`T.settings().querySelector('.cat-server .key').value`);
   await A.ev(`T.key('Escape', {}, document)`);
   assert.equal((await call('/models')).status, 401);
   KEY = fresh;
@@ -146,8 +148,9 @@ test('nouvelle clé : l\'ancienne est refusée', async () => {
 });
 
 test('désactivé : le port est fermé, l\'indicateur disparaît ; le journal ne contient pas les messages', async () => {
-  await serverSettings(`sec.querySelector('input[type=checkbox]').click()`);
+  await toggleServer();
   await A.waitFor(`S.server.port === null`, 10_000, 'serveur arrêté');
+  await A.ev(`T.key('Escape', {}, document)`);
   assert.equal(await reachable(BASE + '/models'), false);
   assert.doesNotMatch(await A.ev(`document.getElementById('status').textContent`), /API/);
   assert.equal(A.readJson('settings.json').serverEnabled, false);

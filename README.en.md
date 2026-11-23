@@ -116,7 +116,21 @@ every time.
 
 **MCP servers**: global ones in the data folder's `mcp.json`, project ones in `.nelcode/mcp.json` (never started
 without your approval, asked again when their configuration changes); stdio and Streamable HTTP; secrets in the
-keychain. Manage them on the **MCP page** (`/mcp`), or import those of Claude Desktop.
+keychain. Manage them in **Settings → MCP** (`/mcp`, or click the MCP chip), or import those of Claude Desktop.
+
+### Settings
+
+**Ctrl+,** opens the settings page: categories on the left (General, Models, Providers, Agent, Claude Agent, MCP,
+Images, Compute, Usage and budget, Local server, Advanced), their settings on the right, each with a short explanation,
+a dot when it differs from the default and a button to restore it (**Reset all** restores a whole category, after a
+confirmation). Changes are **saved automatically**; an invalid value is shown under its field and not saved. The search
+box (or Ctrl+F) searches every category and highlights the match. The status bar (model, CPU/GPU, context), the MCP
+chip, `/settings <category>` and the Ctrl+K palette open the right category. **Zoom** goes from 80 to 150 % (Ctrl + /
+Ctrl − / Ctrl 0), with a compact, normal or comfortable **density**; the base text is 15 px and the window opens at
+about 80 % of the screen. **Advanced → Export / Import** saves your preferences to a JSON file without any key or
+secret; importing shows what changes (security-related settings first) before saving anything.
+
+![The settings page](docs/reglages.png)
 
 ### Claude Agent
 

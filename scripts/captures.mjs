@@ -113,6 +113,12 @@ try {
   await A.ev(`T.submit('/suivi')`);
   await A.waitFor(`document.querySelector('.usage-page, #usage:not([hidden]), .dialog .usage')`, 10_000, 'page Suivi').catch(() => {});
   await shot('suivi.png');
+  await A.ev(`T.key('Escape', {}, document)`);
+
+  // 5. La page Réglages (Modèles : génération, contexte et résumé).
+  await A.ev(`openSettings('models')`);
+  await A.waitFor(`!!T.settings()?.querySelector('.setting[data-id="temperature"]')`, 10_000, 'page Réglages');
+  await shot('reglages.png');
 } finally {
   await A.close();
   server.close();

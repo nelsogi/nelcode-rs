@@ -94,11 +94,12 @@ test('réponse du modèle GGUF, avec un bloc de code colorié', async (t) => {
 
 test('contexte réglable : le modèle est rechargé avec la nouvelle limite', async (t) => {
   if (skip) return t.skip(skip);
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('input[type=range][max="32768"]')`);
-  assert.ok(await A.ev(`T.dialog().textContent.includes('Contexte des modèles GGUF')`));
-  await A.ev(`T.setValue(T.dialog().querySelector('input[type=range][max="32768"]'), '4096'); T.button('Enregistrer', T.dialog())`);
+  await A.ev(`openSettings('models', 'contextLimit')`);
+  await A.waitFor(`T.row('contextLimit')?.querySelector('input[type=range][max="32768"]')`);
+  assert.ok(await A.ev(`T.row('contextLimit').textContent.includes('Contexte des modèles GGUF')`));
+  await A.ev(`T.setValue(T.control('contextLimit'), '4096')`);
   await A.waitFor(`S.settings.contextLimit === 4096`);
+  await A.ev(`T.key('Escape', {}, document)`);
   await A.waitFor(`!S.model.loading && document.getElementById('context-text').textContent.endsWith('/ 4096 tokens')`, 120_000, 'contexte de 4096');
   assert.equal(A.readJson('settings.json').contextLimit, 4096);
 });

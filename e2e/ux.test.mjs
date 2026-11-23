@@ -205,7 +205,7 @@ test('aide « ? » des raccourcis, et taille du texte (Ctrl + = / - / 0, réglag
   await A.ev(`T.key('?', {}, document.getElementById('input'))`);
   await A.waitFor(`T.dialog()?.textContent.includes('Raccourcis clavier')`, 5_000, 'aide');
   const keys = await A.ev(`T.dialog().textContent`);
-  for (const k of ['Ctrl+K', 'Ctrl+Maj+E', 'taille du texte', '?']) assert.ok(keys.includes(k), k);
+  for (const k of ['Ctrl+K', 'Ctrl+Maj+E', 'zoom', '?']) assert.ok(keys.includes(k), k);
   await A.ev(`T.key('Escape', {}, document)`);
   // Dans une saisie déjà remplie, « ? » s'écrit.
   await A.ev(`T.type('Pourquoi')`);
@@ -225,7 +225,7 @@ test('aide « ? » des raccourcis, et taille du texte (Ctrl + = / - / 0, réglag
   await A.waitFor(`S.settings.textSize === 100 && Math.abs(devicePixelRatio - ${base}) < 0.02`, 5_000, 'taille normale');
   await A.waitFor(`window.__TAURI__.core.invoke('get_settings').then((s) => s.textSize === 100)`, 5_000, 'taille enregistrée');
   await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.querySelector('input[type=range][max="150"]')`, 10_000, 'réglage de la taille du texte');
+  await A.waitFor(`T.row('textSize')?.querySelector('input[type=range][max="150"][min="80"][step="10"]')`, 10_000, 'réglage du zoom');
   await A.ev(`T.key('Escape', {}, document)`);
 });
 

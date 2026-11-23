@@ -172,11 +172,15 @@ test('résumé automatique : les anciens échanges résumés, les 4 derniers gar
 });
 
 test('réglage : 0 = jamais ; contexte inconnu = jamais ; le réglage est dans la fenêtre des réglages', async () => {
-  await A.ev(`T.key(',', { ctrlKey: true }, document)`);
-  await A.waitFor(`T.dialog()?.textContent.includes('Résumé automatique à')`, 10_000);
-  assert.equal(await A.ev(`[...T.dialog().querySelectorAll('label.field')].find((l) => l.textContent.includes('Résumé automatique à')).querySelector('input').value`), '80', '80 % par défaut');
-  await A.ev(`(() => { const f = [...T.dialog().querySelectorAll('label.field')].find((l) => l.textContent.includes('Résumé automatique à')); T.setValue(f.querySelector('input'), '0'); T.button('Enregistrer', T.dialog().querySelector('.buttons')); return true; })()`);
+  // Lien direct : le contexte de la barre d'état ouvre Réglages → Modèles, sur la limite de contexte.
+  await A.ev(`document.getElementById('context').click()`);
+  await A.waitFor(`T.settings() && document.activeElement === T.control('contextLimit')`, 10_000, 'Réglages → Modèles, contexte');
+  assert.ok(await A.ev(`T.row('contextLimit').classList.contains('flash')`), 'réglage surligné');
+  assert.ok(await A.ev(`T.row('summaryThreshold').textContent.includes('Résumé automatique à')`));
+  assert.equal(await A.ev(`T.control('summaryThreshold').value`), '80', '80 % par défaut');
+  await A.ev(`T.setValue(T.control('summaryThreshold'), '0')`);
   await A.waitFor(`S.settings.summaryThreshold === 0`, 5_000, 'réglage enregistré');
+  await A.ev(`T.key('Escape', {}, document)`);
   assert.equal(A.readJson('settings.json').summaryThreshold, 0);
   const from = chats.length;
   await pick('petit');
