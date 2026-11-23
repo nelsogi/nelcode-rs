@@ -206,12 +206,33 @@ test('serveurs désactivés pour une conversation : moins de contexte, et leurs 
   assert.equal(ctx.total, ctx.builtin + ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tokens, 0));
   assert.match(await A.ev(`document.getElementById('context-text').textContent`), /outils ≈ \d+/);
   assert.equal(await A.ev(`document.getElementById('mcp-chip').textContent`), 'MCP 2/2');
-  // La puce : Réglages → MCP, les serveurs de la conversation ; décocher « fake » (enregistré tout de suite).
+  // La puce : une petite fenêtre au-dessus d'elle, les serveurs de la conversation et leur état ; décocher « fake »
+  // (enregistré tout de suite, la fenêtre reste ouverte).
+  const pop = `document.querySelector('#menu.mcp-pop:not([hidden])')`;
   await A.ev(`document.getElementById('mcp-chip').click()`);
-  await A.waitFor(`T.settings()?.querySelector('input[data-key="g:fake"]')`, 5_000);
-  assert.equal(await A.ev(`document.querySelector('#settings-nav .cat.sel').dataset.cat`), 'mcp');
-  await A.ev(`T.settings().querySelector('input[data-key="g:fake"]').click()`);
+  await A.waitFor(`${pop}?.querySelector('input[data-key="g:fake"]')`, 5_000, 'fenêtre de la puce');
+  assert.equal(await A.ev(`!!T.settings() || !!T.dialog()`), false, 'ni la page Réglages ni une fenêtre modale');
+  assert.equal(await A.ev(`${pop}.getAttribute('role')`), 'dialog');
+  const geo = await A.ev(`(() => { const c = document.getElementById('mcp-chip').getBoundingClientRect(), m = ${pop}.getBoundingClientRect(); return [m.top >= c.bottom, Math.abs(m.right - c.right) < 2 || m.right <= innerWidth - 8]; })()`);
+  assert.deepEqual(geo, [true, true], 'sous la puce');
+  assert.match(await A.ev(`${pop}.querySelector('input[data-key="g:fake"]').closest('label').querySelector('.mcp-state').textContent`), /^(en marche|arrêté|démarrage…|erreur)$/);
+  assert.equal(await A.ev(`document.activeElement.dataset.key`), 'g:fake', 'le focus sur le premier serveur');
+  await A.ev(`${pop}.querySelector('input[data-key="g:fake"]').click()`);
   await A.waitFor(`S.mcpCtx?.servers.find((x) => x.key === 'g:fake').on === false`, 5_000);
+  await A.waitFor(`${pop}?.querySelector('input[data-key="g:fake"]').checked === false`, 5_000, 'la fenêtre reste ouverte et à jour');
+  // Échap la ferme ; un clic dehors aussi.
+  await A.ev(`T.key('Escape', {}, document)`);
+  assert.equal(await A.ev(`!!${pop}`), false);
+  await A.ev(`document.getElementById('mcp-chip').click()`);
+  await A.waitFor(`${pop}?.querySelector('.pop-link')`, 5_000);
+  await A.ev(`document.getElementById('messages').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
+  assert.equal(await A.ev(`!!${pop}`), false, 'clic dehors');
+  // « Réglages MCP… » : la page, où restent les accords et le reste.
+  await A.ev(`document.getElementById('mcp-chip').click()`);
+  await A.waitFor(`${pop}?.querySelector('.pop-link')`, 5_000);
+  await A.ev(`T.button('Réglages MCP…', ${pop})`);
+  await A.waitFor(`document.querySelector('#settings-nav .cat.sel')?.dataset.cat === 'mcp' && !!T.settings().querySelector('.mcp-server[data-key="g:fake"]')`, 5_000, 'Réglages → MCP');
+  assert.equal(await A.ev(`!!${pop}`), false);
   await A.ev(`T.key('Escape', {}, document)`);
   assert.deepEqual(await A.ev(`S.current.mcpOff`), ['g:fake']);
   assert.equal(await A.ev(`S.mcpCtx.total`), ctx.total - fake.tokens);

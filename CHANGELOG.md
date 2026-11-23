@@ -17,9 +17,12 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - **Recherche** dans toutes les catégories (explications comprises, sans accents ni casse), texte trouvé surligné ; un
   bloc (fournisseurs, carte graphique…) trouvé mène à sa catégorie.
 - **Liens directs** : dans la barre d'état, le modèle ouvre Modèles, CPU/GPU ouvre Calcul (un modèle distant :
-  Fournisseurs), le contexte ouvre Contexte et résumé ; la puce MCP ouvre MCP, avec les serveurs de la conversation
-  (cochés ou non, enregistré tout de suite) ; `/settings <catégorie>` (`/settings gpu`, `/settings fournisseurs`…) ; la
-  palette Ctrl+K propose chaque catégorie et chaque réglage. `/mcp` ouvre Réglages → MCP (l'ancienne page MCP).
+  Fournisseurs), le contexte ouvre Contexte et résumé ; `/settings <catégorie>` (`/settings gpu`, `/settings
+  fournisseurs`…) ; la palette Ctrl+K propose chaque catégorie et chaque réglage. `/mcp` ouvre Réglages → MCP
+  (l'ancienne page MCP), où restent les accords des serveurs de projet.
+- **Puce MCP** : un clic ouvre une petite fenêtre juste sous la puce, avec les serveurs de la conversation à cocher
+  (enregistré tout de suite) et leur état (en marche, arrêté, erreur…), et un lien « Réglages MCP… » vers la page.
+  Échap ou un clic dehors la ferme.
 - **Clavier** : flèches, Début et Fin dans les catégories, Entrée ou flèche droite vers les réglages, Ctrl+F vers la
   recherche, Échap pour fermer (la recherche d'abord, si elle est remplie). Le reste de la fenêtre est inerte tant que
   la page est ouverte.
@@ -37,8 +40,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - **Interface plus grande** : texte de base de 15 px (14 px avant), toutes les autres tailles de texte en proportion,
   icônes et colonne de gauche un peu plus grandes. Les utilisateurs qui n'avaient jamais changé la taille ont la
   nouvelle taille par défaut ; un zoom choisi avant est gardé.
-- **Fenêtre au lancement** : environ 80 % de la zone utile de l'écran, centrée (1200 × 800 avant), jamais moins de
-  720 × 480.
+- **Fenêtre** : sa taille, sa position et son état agrandi sont retenus (settings.json, clé `windowState` ; la clé
+  `window` de Nel Code C# n'est pas touchée), enregistrés dès qu'elle ne bouge plus (un arrêt brutal ne perd rien).
+  Au premier lancement, ou si la position enregistrée tombe hors des écrans actuels (écran débranché) : environ 80 % de
+  la zone utile de l'écran, centrée (1200 × 800 avant), jamais moins de 720 × 480.
 - **Zoom** (l'ancienne « taille du texte ») : Ctrl + / Ctrl − / Ctrl 0, de 80 à 150 % par pas de 10 %, enregistré ;
   marche aussi page Réglages ouverte, et le pavé numérique compte.
 

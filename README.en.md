@@ -116,7 +116,8 @@ every time.
 
 **MCP servers**: global ones in the data folder's `mcp.json`, project ones in `.nelcode/mcp.json` (never started
 without your approval, asked again when their configuration changes); stdio and Streamable HTTP; secrets in the
-keychain. Manage them in **Settings → MCP** (`/mcp`, or click the MCP chip), or import those of Claude Desktop.
+keychain. Manage them in **Settings → MCP** (`/mcp`), or import those of Claude Desktop. The MCP chip opens a small
+popup to turn this conversation's servers on or off, with their state and a link to the settings.
 
 ### Settings
 
@@ -124,10 +125,11 @@ keychain. Manage them in **Settings → MCP** (`/mcp`, or click the MCP chip), o
 Images, Compute, Usage and budget, Local server, Advanced), their settings on the right, each with a short explanation,
 a dot when it differs from the default and a button to restore it (**Reset all** restores a whole category, after a
 confirmation). Changes are **saved automatically**; an invalid value is shown under its field and not saved. The search
-box (or Ctrl+F) searches every category and highlights the match. The status bar (model, CPU/GPU, context), the MCP
-chip, `/settings <category>` and the Ctrl+K palette open the right category. **Zoom** goes from 80 to 150 % (Ctrl + /
-Ctrl − / Ctrl 0), with a compact, normal or comfortable **density**; the base text is 15 px and the window opens at
-about 80 % of the screen. **Advanced → Export / Import** saves your preferences to a JSON file without any key or
+box (or Ctrl+F) searches every category and highlights the match. The status bar (model, CPU/GPU, context),
+`/settings <category>` and the Ctrl+K palette open the right category. **Zoom** goes from 80 to 150 % (Ctrl + /
+Ctrl − / Ctrl 0), with a compact, normal or comfortable **density**; the base text is 15 px. The window remembers its size,
+position and maximized state; the first time, or if it was on a screen that is gone, it opens at about 80 % of the
+screen, centered. **Advanced → Export / Import** saves your preferences to a JSON file without any key or
 secret; importing shows what changes (security-related settings first) before saving anything.
 
 ![The settings page](docs/reglages.png)

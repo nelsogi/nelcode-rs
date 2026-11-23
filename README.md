@@ -359,7 +359,7 @@ En mode Agent, le modèle peut aussi utiliser les outils de **serveurs MCP** (Mo
 `npx -y @modelcontextprotocol/server-filesystem C:\docs`) et **Streamable HTTP** (une adresse).
 
 - **Serveurs globaux** : `%APPDATA%\NelCode\mcp.json`, au format `mcpServers` de Claude Desktop. Les ajouter par la
-  page **Réglages → MCP** (ou `/mcp`, ou un clic sur la puce MCP), ou **importer** ceux de Claude Desktop ou d'un `.mcp.json`
+  page **Réglages → MCP** (ou `/mcp`, ou « Réglages MCP… » dans la fenêtre de la puce MCP), ou **importer** ceux de Claude Desktop ou d'un `.mcp.json`
   (chaque serveur est vérifié).
 - **Serveurs de projet** : `.nelcode/mcp.json` dans le dossier de travail. Un serveur de projet ne démarre **jamais**
   sans ton accord : Nel Code montre la commande exacte, les arguments et le dossier, avec Autoriser / Refuser ; l'accord
@@ -477,12 +477,14 @@ valeur impossible est signalée sous son champ et n'est pas enregistrée.
 - **Rechercher** (en haut, ou Ctrl+F) cherche dans toutes les catégories, explications comprises, et surligne le texte
   trouvé.
 - **Liens directs** : dans la barre d'état, le nom du modèle ouvre **Modèles**, CPU/GPU ouvre **Calcul**, la barre de
-  contexte ouvre **Contexte et résumé** ; la puce MCP ouvre **MCP** (les serveurs de la conversation) ;
-  `/settings <catégorie>` et la palette Ctrl+K (« Réglages : … » ou le nom d'un réglage) aussi.
+  contexte ouvre **Contexte et résumé** ; `/settings <catégorie>` et la palette Ctrl+K (« Réglages : … » ou le nom
+  d'un réglage) aussi. La puce MCP, elle, ouvre une petite fenêtre : les serveurs de la conversation à cocher, leur
+  état, et « Réglages MCP… ».
 - **Clavier** : flèches haut et bas dans les catégories, Entrée pour passer aux réglages, Tab entre les champs, Échap
   pour fermer.
 - **Général** : thème, couleur d'accent, **zoom** (80 à 150 %, aussi Ctrl + / Ctrl − / Ctrl 0) et **densité**
-  (compacte, normale, confortable). Le texte de base fait 15 px ; la fenêtre s'ouvre à environ 80 % de l'écran, centrée.
+  (compacte, normale, confortable). Le texte de base fait 15 px. La fenêtre retient sa taille, sa position et son état agrandi ; au premier lancement,
+  ou si elle était sur un écran débranché, elle s'ouvre à environ 80 % de l'écran, centrée.
 - **Avancé → Exporter / Importer** : tes préférences dans un fichier JSON, **jamais de clé ni de secret** (ni
   fournisseurs, ni projets, ni accords). À l'import, Nel Code montre ce qui change, les réglages de sécurité en premier
   (commandes autorisées, fichiers protégés, claude, serveur local), avant de rien enregistrer.
@@ -769,7 +771,8 @@ et contexte, en-têtes et variables secrets, page MCP, arrêt des processus, ser
 `e2e/markdown.test.mjs` couvre le rendu Markdown : tests unitaires de `markdown.js` sur un faux DOM (réponses piégées,
 textes coupés à chaque caractère), puis l'application (réponse en morceaux, liens, images, réglage, Copier).
 `e2e/ux.test.mjs` couvre les projets, le panneau Fichiers (aperçu, fichier protégé, badges et diff de la session avec un
-petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et le zoom. `e2e/settings.test.mjs` couvre la page
+petit faux modèle à outils), l'assistant du premier lancement, les notifications, l'aide « ? » et le zoom. `e2e/window.test.mjs` couvre la fenêtre (taille,
+position et état agrandi retenus, retour à 80 % centrée si la position est hors des écrans). `e2e/settings.test.mjs` couvre la page
 Réglages : catégories, enregistrement automatique, erreurs de saisie, valeur par défaut et « Tout réinitialiser »,
 recherche, clavier, liens directs (barre d'état, `/settings`, palette), zoom, thème et densité, export et import sans
 secret, modèle par défaut, taille du texte et de la fenêtre.
@@ -837,7 +840,7 @@ L'interface (`nel-desktop/ui/js/`) est découpée en modules ES, chargés par `i
 | `conversation.js` | Conversations, modèles, fichiers `@`, génération, réflexion, transparence, comparaison, affichage, saisie |
 | `markdown.js` | Rendu Markdown des réponses : jetons de markdown-it → éléments du DOM, réponse en cours, liens |
 | `agent.js` | Mode Agent et Claude Agent : étapes, plan, NELCODE.md |
-| `mcp.js` | Serveurs MCP : Réglages → MCP, accord des serveurs de projet, puce et contexte de la conversation |
+| `mcp.js` | Serveurs MCP : Réglages → MCP, accord des serveurs de projet, fenêtre de la puce MCP, contexte de la conversation |
 | `settings-page.js` | Page Réglages : catégories, liste des réglages, recherche, enregistrement automatique, valeurs par défaut, liens directs, export et import |
 | `settings.js` | Thème, zoom et densité, mises à jour, blocs Serveur local et Calcul (GPU, test de vitesse) |
 | `catalog.js` · `providers.js` | Catalogue de modèles ouverts · fournisseurs distants |

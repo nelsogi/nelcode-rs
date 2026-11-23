@@ -145,7 +145,10 @@ $('transp-btn').onclick = toggleTransparency;
 
 $('agent-btn').onclick = toggleAgent;
 
-$('mcp-chip').onclick = () => openSettings('mcp', 'mcp-conversation');
+// La puce MCP : une petite fenêtre au-dessus, avec les serveurs de la conversation (stopPropagation : le mousedown
+// qui ferme les menus ne la referme pas aussitôt).
+$('mcp-chip').onmousedown = (e) => e.stopPropagation();
+$('mcp-chip').onclick = () => MCP.serversPopover();
 
 $('nelcode-chip').onclick = nelcodeChip;
 
@@ -203,7 +206,7 @@ listen('gen-token', (e) => onToken(e.payload));
 listen('gen-done', async (e) => { await onDone(e.payload); U.idle?.(); MCP.closeOtherMcp(); });
 
 // Un serveur MCP a changé d'état (démarré, arrêté, liste d'outils) : la page MCP ouverte suit.
-listen('mcp-changed', () => UI.mcpRedraw?.());
+listen('mcp-changed', () => { UI.mcpRedraw?.(); if (!$('menu').hidden && $('menu').classList.contains('mcp-pop')) MCP.refreshMcp(); });
 
 listen('gen-side', (e) => { if (S.gen?.kind === 'compare') { S.gen.side = e.payload; renderStatus(); } });
 

@@ -6,6 +6,7 @@
 import { $, confirmDialog, dialog, errText, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { refreshContext, saveSession } from './conversation.js';
+import { openSettings } from './settings-page.js';
 
 const STATE = { stopped: 'arrêté', starting: 'démarrage…', running: 'en marche', error: 'erreur' };
 const SCOPE = { global: 'global', project: 'projet' };
@@ -47,20 +48,25 @@ export async function refreshMcp() {
   chip.classList.toggle('on', on > 0);
   chip.replaceChildren(icon('plug'), h('span', {}, `MCP ${on}/${avail.length}`));
   chip.title = `Serveurs MCP de cette conversation : ${on} sur ${avail.length} activé(s), ${ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tools, 0)} outil(s).\nClic : choisir les serveurs.`;
+  if (!$('menu').hidden && $('menu').classList.contains('mcp-pop')) drawPopover();
   refreshContext();
   checkApprovals();
 }
 
-/** Réglages → MCP : les serveurs de la conversation, cochés ou non (enregistré tout de suite ; moins d'outils envoyés
- *  au modèle). null hors du mode Agent. */
-export function conversationServers() {
+/** Les serveurs de la conversation, cochés ou non (enregistré tout de suite ; moins d'outils envoyés au modèle) :
+ *  dans la fenêtre de la puce MCP et dans Réglages → MCP. `states` : l'état de chaque serveur (clé → état), s'il est
+ *  connu. null hors du mode Agent. */
+export function conversationServers(states) {
   const s = S.current, ctx = S.mcpCtx;
   if (!s?.agent || s.claudeAgent || !ctx?.servers.length) return null;
   const boxes = ctx.servers.map((x) => {
     const c = h('input', { type: 'checkbox', checked: x.on, disabled: !x.available, 'data-key': x.key });
     c.addEventListener('change', save);
-    return h('label', { class: 'check mcp-choice' }, c, h('span', {}, x.name), h('span', { class: 'meta' },
-      x.available ? `${SCOPE[x.scope]} · ${x.tools} outil${x.tools > 1 ? 's' : ''} · ≈ ${x.tokens.toLocaleString('fr-CH')} tokens` : `${SCOPE[x.scope]} · ${x.scope === 'project' ? 'non autorisé' : 'désactivé'}`));
+    const state = x.available && states?.[x.key];
+    return h('label', { class: 'check mcp-choice' }, c, h('span', { class: 'name' }, x.name),
+      state ? h('span', { class: 'mcp-state ' + state }, STATE[state] ?? state) : null,
+      h('span', { class: 'meta' },
+        x.available ? `${SCOPE[x.scope]} · ${x.tools} outil${x.tools > 1 ? 's' : ''} · ≈ ${x.tokens.toLocaleString('fr-CH')} tokens` : `${SCOPE[x.scope]} · ${x.scope === 'project' ? 'non autorisé' : 'désactivé'}`));
   });
   async function save() {
     const off = boxes.map((b) => b.querySelector('input')).filter((c) => !c.checked && !c.disabled).map((c) => c.dataset.key);
@@ -73,6 +79,43 @@ export function conversationServers() {
     refreshMcp();
   }
   return h('div', { class: 'mcp-conversation' }, ...boxes);
+}
+
+// --- La fenêtre de la puce MCP ------------------------------------------------------------------------------
+// Ancrée sous la puce (l'élément #menu : fermée par un clic dehors ou Échap). Les accords des serveurs de projet et le
+// reste restent dans Réglages → MCP.
+
+/** Ouvre (ou ferme, si elle est déjà ouverte) la fenêtre des serveurs de la conversation. */
+export async function serversPopover() {
+  const menu = $('menu');
+  if (!menu.hidden && menu.classList.contains('mcp-pop')) { menu.hidden = true; return; }
+  if (!S.mcpCtx) return;
+  menu.className = 'menu mcp-pop';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Serveurs MCP de la conversation');
+  menu.replaceChildren();
+  menu.hidden = false;
+  await drawPopover();
+  menu.querySelector('input:not(:disabled), button')?.focus();
+}
+
+async function drawPopover() {
+  const menu = $('menu'), chip = $('mcp-chip');
+  if (menu.hidden || !menu.classList.contains('mcp-pop')) return;
+  const states = {};
+  try { for (const v of (await invoke('mcp_list', { dir: dirOf() })).servers) states[v.key] = v.status?.state ?? 'stopped'; } catch { /* sans les états */ }
+  if (menu.hidden || !menu.classList.contains('mcp-pop')) return;
+  const focused = document.activeElement?.dataset?.key;
+  menu.replaceChildren(h('div', { class: 'pop-title' }, 'Serveurs MCP de la conversation'),
+    conversationServers(states) ?? h('p', { class: 'hint' }, 'Aucun serveur MCP pour cette conversation.'),
+    h('p', { class: 'hint' }, 'Les outils des serveurs cochés sont envoyés au modèle à chaque tour.'),
+    h('hr'),
+    h('button', { class: 'pop-link', onclick: () => { menu.hidden = true; openSettings('mcp', 'mcp-servers'); } }, icon('settings'), 'Réglages MCP…'));
+  if (focused) menu.querySelector(`input[data-key="${CSS.escape(focused)}"]`)?.focus();
+  // Sous la puce, aligné sur son bord droit, sans sortir de la fenêtre.
+  const r = chip.getBoundingClientRect(), m = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.right - m.width, innerWidth - m.width - 8)) + 'px';
+  menu.style.top = Math.min(r.bottom + 6, innerHeight - m.height - 8) + 'px';
 }
 
 // --- Accord pour un serveur de projet ---------------------------------------------------------------------

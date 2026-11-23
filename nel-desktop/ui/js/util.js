@@ -192,6 +192,8 @@ export async function promptDialog(title, value, hint) {
 export function showMenu(e, items) {
   const menu = $('menu');
   menu.className = 'menu';
+  menu.removeAttribute('role');
+  menu.removeAttribute('aria-label');
   menu.replaceChildren(...items.map((it) => it === '-' ? h('hr') : h('button', { class: it.danger ? 'danger' : '', onclick: () => { menu.hidden = true; it.run(); } }, it.label)));
   menu.hidden = false;
   const r = menu.getBoundingClientRect();

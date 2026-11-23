@@ -19,6 +19,7 @@ mod remote;
 mod server;
 mod store;
 mod usage;
+mod window;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1209,18 +1210,35 @@ fn main() {
             let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
                 .on_navigation(os::is_app_url)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
-            // Environ 80 % de l'écran, centrée (sinon les 1200 × 800 de tauri.conf.json).
-            if let Ok(Some(m)) = app.primary_monitor() {
+            // La taille et la position retenues (si elles tombent sur un écran actuel), sinon environ 80 % de l'écran,
+            // centrée (sinon les 1200 × 800 de tauri.conf.json). Cachée le temps de la placer.
+            let saved = window::saved(app.handle());
+            if saved.is_none()
+                && let Ok(Some(m)) = app.primary_monitor()
+            {
                 let work = m.work_area().size;
                 let (w, h) = os::initial_window_size((work.width, work.height), m.scale_factor());
                 window = window.inner_size(w, h).center();
             }
+            window = window.visible(false);
             // En debug, NELCODE_DEBUG_PORT ouvre le port de débogage de WebView2 (tests de l'interface).
             #[cfg(debug_assertions)]
             if let Ok(port) = std::env::var("NELCODE_DEBUG_PORT") {
                 window = window.additional_browser_args(&format!("--remote-debugging-port={port}"));
             }
-            window.build()?;
+            let window = window.build()?;
+            if let Some(s) = saved {
+                window::apply(&window, s);
+            }
+            window.show()?;
+            window::maximize_if(&window, saved);
+            window::changed(&window);
+            let w = window.clone();
+            window.on_window_event(move |e| match e {
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => window::changed(&w),
+                tauri::WindowEvent::CloseRequested { .. } => window::closing(&w),
+                _ => {}
+            });
             // Le serveur local, s'il a été activé dans les réglages (une erreur, port pris, est dans le journal).
             let _ = server::apply(app.handle());
             Ok(())

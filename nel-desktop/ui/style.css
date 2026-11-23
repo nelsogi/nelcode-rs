@@ -705,6 +705,15 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .streaming .body.md > .code-block:last-child code::after { content: ""; display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 2px; background: var(--accent); animation: blink 1s steps(1) infinite; }
 .dialog .link-url { margin: 4px 0 8px; padding: 8px 10px; max-height: 180px; overflow-y: auto; background: var(--surface-2); border-radius: 8px; }
 
+/* --- Fenêtre de la puce MCP (mcp.js) --- */
+.menu.mcp-pop { width: min(380px, calc(100vw - 16px)); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.mcp-pop .pop-title { font-weight: 600; }
+.mcp-pop .hint { margin: 0; font-size: 0.8571rem; color: var(--dim); }
+.mcp-pop hr { width: 100%; }
+.mcp-pop .pop-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; width: auto; background: none; border: none; color: var(--accent-text); padding: 4px 6px; }
+.mcp-choice { flex-wrap: wrap; }
+.mcp-choice .meta { flex-basis: 100%; padding-left: 22px; font-size: 0.7857rem; color: var(--faint); }
+
 /* --- Page Réglages : catégories à gauche, réglages à droite (settings-page.js) --- */
 .settings-page { position: fixed; inset: 0; z-index: 15; background: var(--bg); display: flex; flex-direction: column; animation: fade .1s; }
 .settings-head { display: flex; align-items: center; gap: 14px; padding: calc(10px * var(--d)) 18px; border-bottom: 1px solid var(--border); background: var(--sidebar); }
