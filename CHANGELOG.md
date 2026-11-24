@@ -108,8 +108,11 @@ agrandi ; et l'interface existe **en anglais**. La 1.0.1 n'a jamais été publi�
 ### Corrigé
 
 - Mode Agent et Claude Agent : « Liste de dossier de travail » → « Liste du dossier de travail ».
-- Test de démarrage Linux (workflow) : il cherche la ligne « starting Nel Code », le journal étant maintenant en
-  anglais.
+- Rendu d'une réponse en cours : la ligne d'ouverture d'un bloc de code pas encore finie (« ```rus ») ne s'affiche
+  plus un instant comme du code en ligne.
+- Tests : le test de démarrage Linux (workflow) cherche la ligne « starting Nel Code », le journal étant maintenant en
+  anglais ; les tests des réglages remettent le français après « Tout réinitialiser » (Général), qui rend la langue du
+  système (l'anglais sur les runners).
 
 ## [1.0.0] - 2026-11-20
 

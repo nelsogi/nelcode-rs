@@ -263,6 +263,11 @@ test('thème, densité et couleur d\'accent : appliqués tout de suite', async (
   await A.ev(`T.button('Tout réinitialiser', T.dialog())`);
   await A.waitFor(`document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.accent === 'red' && document.documentElement.dataset.density === 'normal'`, 5_000);
   assert.equal(disk('autoUpdate'), true, 'les mises à jour aussi (désactivées par les tests)');
+  // La langue aussi revient à « auto » : celle du système (l'anglais sur les runners). Les tests suivants sont en
+  // français : remise en français comme le ferait l'utilisateur.
+  assert.equal(disk('language'), 'auto');
+  await A.ev(`T.setValue(T.control('language'), 'fr')`);
+  await A.waitFor(`document.documentElement.lang === 'fr' && S.settings.language === 'fr'`, 5_000, 'de nouveau en français');
   await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { autoUpdate: false } }).then((s) => (S.settings = s, true))`);
   await close();
 });

@@ -194,6 +194,10 @@ describe('rendu (unitaire)', () => {
     assert.equal(M.closeOpen('a\n---  '), 'a');
     assert.equal(M.closeOpen('**gras pas fini  '), '**gras pas fini**');
     assert.equal(M.closeOpen('a **b *'), 'a **b**');
+    // L'ouverture d'un bloc de code coupée en route n'est pas du code en ligne.
+    assert.equal(M.closeOpen('a\n\n```rus'), 'a\n');
+    assert.equal(M.closeOpen('a\n\n> - ~~~py'), 'a\n');
+    assert.equal(M.closeOpen('a\n\n```rust\nfn'), 'a\n\n```rust\nfn');
   });
 
   test('pendant la réponse : code, tableau, gras, lien pas terminés affichés proprement', () => {

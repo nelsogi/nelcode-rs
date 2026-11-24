@@ -154,6 +154,9 @@ export function closeOpen(text) {
   // sur une longue ligne d'espaces (texte d'un modèle : non fiable).
   const core = line.replace(/^[\s>]+/, '').trimEnd();
   if (/^(?:[-*+]|\d{1,9}[.)])?\s*(?:\[[ xX]?\]?)?$/.test(core) || /^[-=*_#`~|]+$/.test(core)) return until([]);
+  // L'ouverture d'un bloc de code pas encore finie (« ```rus ») : pas du code en ligne, attendue jusqu'à la ligne
+  // suivante.
+  if (/^(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(?:`{3,}|~{3,})/.test(core)) return until([]);
   return until([closeInline(line)]);
 }
 
