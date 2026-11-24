@@ -57,6 +57,7 @@ const WORKER = (task, n, body) => {
     call('write_file', { path: 'src/ui/.env', content: 'S=1' }), call('read_file', { path: '.env' }),
     call('run_command', { program: 'node', args: ['-e', 'require("fs").writeFileSync("commande.txt", "x")'] }), call('spawn_worker', { task: 'encore', files: ['src'] }),
     call('spawn_explorer', { task: 'x' }), call('update_plan', { tasks: [{ title: 'Pirater', status: 'in_progress' }] }), call('mcp__srv__outil', {}),
+    call('search', { query: 'MOTDEPASSE' }),
   ]];
   if (task === 'ECRIT') return n ? ['Écrit.', []] : ['', [call('write_file', { path: 'src/neuf/x.js', content: 'x\n' })]];
   if (task === 'ECRIT2') return n ? ['Écrit.', []] : ['', [call('write_file', { path: 'src/autre/y.js', content: 'y\n' })]];
@@ -100,6 +101,7 @@ const FILES = {
   'src/a.cs': 'un\ndeux\n',
   'src/ui/old.js': 'ancien\n',
   '.env': 'MOTDEPASSE=secret\n',
+  'secrets.json': '{ "pw": "MOTDEPASSE=secret" }\n',
   '.gitignore': '.env\n',
 };
 const read = (f) => fs.readFileSync(path.join(DIR, f), 'utf8');
@@ -214,12 +216,20 @@ test('attribution exclusive, plan des travailleurs, brouillon vu par ses lecture
   assert.equal(done.status, 'done');
   assert.equal(fr(done.title), 'Revue des changements des travailleurs : 2 accepté(s), 1 refusé(s), 0 en erreur');
   assert.deepEqual(done.workers.flatMap((g) => g.files.map((f) => f.decision)), ['accepted', 'rejected', 'accepted']);
+  // Au message suivant, l'agent reçoit une note avec le résultat de la revue, jointe à sa réponse.
+  assert.match(m.agent.reviewNote, /Acceptés et écrits : src\/ui\/new\.js, src\/a\.cs\. Refusés par l'utilisateur \(non écrits\) : src\/ui\/old\.js\.\]$/);
+  await start('chef-seul', 'Et maintenant ?');
+  await finish();
+  const prev = chats.at(-1).messages.filter((x) => x.role === 'assistant').at(-1).content;
+  assert.ok(prev.startsWith('Fini : à toi de revoir.\n\n[Note de Nel Code, ajoutée après ta réponse'), prev);
+  assert.ok(prev.endsWith(m.agent.reviewNote));
+  assert.equal(await A.ev(`S.current.messages.at(-3).content`), 'Fini : à toi de revoir.', 'la note n\'est pas dans la conversation affichée');
   // Les fichiers écrits sont des écritures ordinaires : Annuler marche.
   const written = m.agent.steps.filter((s) => !s.parent && s.worker && (s.kind === 'write' || s.kind === 'edit'));
   assert.deepEqual(written.map((s) => [s.path, s.status, s.worker]), [['src/ui/new.js', 'accepted', 'T1'], ['src/a.cs', 'accepted', 'T2']]);
   await A.ev(`window.__TAURI__.core.invoke('agent_undo', { request: ${JSON.stringify(m.agent.request)}, step: ${JSON.stringify(written[1].id)} })`);
   assert.equal(read('src/a.cs'), 'un\ndeux\n');
-  assert.equal(await A.ev(`${msgEl}.querySelectorAll('.undo-all').length`), 1);
+  assert.equal(await A.ev(`[...document.querySelectorAll('#messages .msg.assistant')].at(-2).querySelectorAll('.undo-all').length`), 1);
   // Le plan gardé avec la conversation ; les tokens des travailleurs dans le Suivi.
   assert.deepEqual(m.plan ?? (await A.ev(`S.current.plan.tasks`)).map((t) => [t.worker, t.workerStatus, t.status]), [['T1', 'done', 'done'], ['T2', 'done', 'done']]);
   const lines = usage();
@@ -242,11 +252,17 @@ test('un travailleur n\'écrit que ses fichiers, dans son brouillon : hors port�
   assert.match(results[2], /refusé : « src\/ui\/\.env » est un fichier protégé \(\.env\), un travailleur ne peut pas l'écrire/);
   assert.match(results[3], /refusé : « \.env » est un fichier protégé \(\.env\), un travailleur ne peut pas le lire/);
   for (const k of [4, 5, 6, 7, 8]) assert.match(results[k], /n'est pas permis à un travailleur/);
+  // Comme un explorateur : ni lecture ni recherche dans les fichiers protégés (il ne peut pas demander).
+  assert.equal(results[9], 'aucun résultat pour "MOTDEPASSE"\n(1 fichier protégé non parcouru : travailleur)');
+  const readEnv = m.agent.steps.find((s) => s.kind === 'read' && s.path === '.env');
+  assert.equal(readEnv.status, 'rejected');
+  assert.match(fr(readEnv.title), /fichier protégé, refusée au travailleur/);
+  assert.match(fr(m.agent.steps.find((s) => s.kind === 'search' && s.parent).title), /1 fichier protégé non parcouru : travailleur/);
   assert.ok(!JSON.stringify(workers.at(-1)).includes('MOTDEPASSE=secret'), 'le contenu protégé ne part jamais');
   assert.equal(m.agent.steps.filter((s) => s.kind === 'worker').length, 3, 'pas de travailleur de travailleur');
   // L'agent principal : les refus d'attribution (protégé, hors du dossier), et les fichiers protégés signalés.
   const toAgent = chats.at(-1).messages.filter((x) => x.role === 'tool').map((x) => x.content);
-  assert.match(toAgent[0], /Brouillon vide : aucun fichier changé\.\nFichiers protégés que le travailleur n'a pas pu lire ni écrire : \.env, src\/ui\/\.env/);
+  assert.match(toAgent[0], /Brouillon vide : aucun fichier changé\.\nFichiers protégés que le travailleur n'a pas pu lire ni écrire : \.env, secrets\.json, src\/ui\/\.env/);
   assert.match(toAgent[1], /« \.env » est un fichier protégé \(\.env\) : un travailleur ne peut pas l'écrire/);
   assert.match(toAgent[2], /\.\./);
 });
@@ -266,12 +282,21 @@ test('brouillon jamais écrit sans accord : Tout refuser ne touche à rien ; Tou
   await start('chef-tout', 'Écris tout');
   await reviewPending();
   assert.ok(!exists('src/neuf/x.js') && !exists('src/autre/y.js'));
+  // Pendant la revue, le fichier apparaît sur le disque : il n'est pas écrasé.
+  fs.mkdirSync(path.join(DIR, 'src/autre'));
+  fs.writeFileSync(path.join(DIR, 'src/autre/y.js'), 'manuel\n');
   await action('accept_all');
   await finish();
   assert.equal(read('src/neuf/x.js'), 'x\n');
-  assert.equal(read('src/autre/y.js'), 'y\n');
+  assert.equal(read('src/autre/y.js'), 'manuel\n');
   m = await lastMsg();
-  assert.equal(fr(m.agent.steps.find((s) => s.kind === 'review').title), 'Revue des changements des travailleurs : 2 accepté(s), 0 refusé(s), 0 en erreur');
+  assert.equal(fr(m.agent.steps.find((s) => s.kind === 'review').title), 'Revue des changements des travailleurs : 1 accepté(s), 0 refusé(s), 1 en erreur');
+  // Au message suivant, l'agent sait ce qui a vraiment été écrit (Tout refuser, puis Tout accepter avec un conflit).
+  await start('chef-seul', 'Qu\'est-ce qui a été écrit ?');
+  await finish();
+  const notes = chats.at(-1).messages.filter((x) => x.role === 'assistant').map((x) => x.content);
+  assert.match(notes.at(-2), /Acceptés et écrits : aucun\. Refusés par l'utilisateur \(non écrits\) : src\/neuf\/x\.js\.\]$/);
+  assert.match(notes.at(-1), /Acceptés et écrits : src\/neuf\/x\.js\. Refusés par l'utilisateur \(non écrits\) : aucun\. Refusés car modifiés entre-temps \(non écrits\) : src\/autre\/y\.js\.\]$/);
   fs.rmSync(path.join(DIR, 'src/neuf'), { recursive: true });
   fs.rmSync(path.join(DIR, 'src/autre'), { recursive: true });
 });
@@ -298,6 +323,7 @@ test('Stop : confirmation si des brouillons existent (Annuler continue), puis to
   assert.deepEqual(m.agent.steps.filter((s) => s.kind === 'worker').map((s) => s.status), ['stopped', 'stopped', 'stopped']);
   assert.deepEqual(m.agent.steps.filter((s) => s.parent && s.kind === 'write').map((s) => s.status), ['discarded', 'discarded']);
   assert.ok(!m.agent.steps.some((s) => s.kind === 'review'));
+  assert.match(m.agent.reviewNote, /Stop : les brouillons des travailleurs ont été jetés, rien n'a été écrit \(2 fichier\(s\)\)/);
   for (const d of ['s1', 's2', 's3']) assert.ok(!exists(d), `rien d'écrit dans ${d}`);
   await sleep(300);
   assert.equal(workers.length - before, 4, 'deux tours chacun pour les deux premiers ; le troisième n\'a jamais commencé');

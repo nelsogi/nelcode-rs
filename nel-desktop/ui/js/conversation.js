@@ -34,7 +34,13 @@ export function titleOf(s) {
 export function turnsOf(messages, end = messages.length) {
   const turns = [];
   for (let i = 0; i + 1 < end; i += 2)
-    if (messages[i].role === 'user' && messages[i + 1].role === 'assistant') turns.push([messages[i].content, messages[i + 1].content]);
+    if (messages[i].role === 'user' && messages[i + 1].role === 'assistant') {
+      // La revue groupée des travailleurs (après la réponse de l'agent) : le modèle sait ce qui a vraiment été écrit.
+      const note = messages[i + 1].agent?.reviewNote;
+      turns.push([messages[i].content, note ? `${messages[i + 1].content}
+
+${note}` : messages[i + 1].content]);
+    }
   return turns;
 }
 

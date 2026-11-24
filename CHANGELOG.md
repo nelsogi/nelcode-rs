@@ -12,8 +12,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   MCP, ni plan, ni explorateur ou travailleur. Un fichier n'est attribué qu'à un seul travailleur pendant toute la
   demande (sinon refus expliqué à l'agent), et l'agent ne peut pas l'écrire lui-même.
 - **Brouillon** : les écritures d'un travailleur vont dans un brouillon en mémoire, jamais sur le disque ; ses lectures
-  (`read_file`, `list_files`, `search`) voient son brouillon. Les fichiers protégés lui sont refusés (il ne peut pas
-  demander de confirmation) et signalés à l'agent.
+  (`read_file`, `list_files`, `search`) voient son brouillon. Les fichiers protégés lui sont refusés en lecture, en
+  recherche et en écriture (il ne peut pas demander de confirmation), comme aux explorateurs, et signalés à l'agent.
 - **Coordination** : le panneau Plan montre le travailleur de chaque tâche (T1, T2…) et son état en direct ; l'agent
   reçoit le résumé et le diff de chaque travailleur, et peut lui demander une correction (`revise_worker` : sa
   conversation et son brouillon sont repris).
@@ -21,6 +21,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   Accepter / Refuser par fichier puis Valider, Tout accepter et Tout refuser. Rien n'est écrit avant ; un fichier qui a
   changé entre-temps est refusé. Chaque fichier accepté devient une écriture ordinaire (Annuler, Annuler toute la
   demande, panneau Fichiers) ; le point de restauration git est pris avant la demande, comme d'habitude.
+- **Note de revue pour l'agent** : au message suivant, sa réponse est suivie d'une note courte avec le résultat de la
+  revue (fichiers acceptés et écrits, refusés, refusés car modifiés entre-temps, ou brouillons jetés par Stop) : il sait
+  ce qui a vraiment été écrit. La note part au modèle seulement, la conversation affichée ne change pas.
 - **Stop** arrête tous les travailleurs et jette les brouillons, après confirmation s'ils ne sont pas vides.
 - **Réglages → Agent → Travailleurs** : travailleurs en même temps (2), par demande (4 ; 0 : pas de travailleurs),
   tours par travailleur (10) et leur modèle. Exportés avec les réglages portables (sauf le modèle, propre au PC).

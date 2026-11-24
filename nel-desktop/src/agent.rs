@@ -327,7 +327,7 @@ pub(crate) fn edit_text(rel: &str, text: &str, old: &str, new: &str) -> Result<S
     Ok(after)
 }
 
-fn current(path: &Path) -> Option<String> {
+pub(crate) fn current(path: &Path) -> Option<String> {
     fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
@@ -706,6 +706,8 @@ pub(crate) struct Run<'a> {
     /// Agent : les travailleurs de la demande (avec leur brouillon), et leurs tokens et coût.
     pub(crate) workers: Vec<crate::worker::Worker>,
     pub(crate) worker_usage: Value,
+    /// Agent : le résultat de la revue groupée, pour le modèle (joint à sa réponse dans l'historique suivant).
+    pub(crate) review_note: Option<String>,
     /// Agent : les serveurs MCP de la demande (jamais pour un explorateur ni un travailleur).
     mcp: Vec<Arc<crate::mcp::Instance>>,
 }
@@ -715,7 +717,7 @@ impl<'a> Run<'a> {
         let role = if parent.is_some() { Role::Explorer } else { Role::Main };
         Run {
             app, request, steps: Vec::new(), accept_all: false, plan: Value::Null, parent, offset: 0, role, refused: Vec::new(), explorers: 0,
-            explorer_usage: Value::Null, workers: Vec::new(), worker_usage: Value::Null, mcp: Vec::new(),
+            explorer_usage: Value::Null, workers: Vec::new(), worker_usage: Value::Null, review_note: None, mcp: Vec::new(),
         }
     }
 
@@ -1569,7 +1571,7 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
         "text": text, "reasoning": reasoning, "reasoningSeconds": if reasoning.is_empty() { Value::Null } else { seconds.into() },
         "model": model, "tokens": tokens, "promptTokens": prompt_tokens, "seconds": clock.elapsed().as_secs_f64(), "stopped": stopped,
         "error": error, "limit": if limit { Some(max_turns) } else { None },
-        "agent": { "request": request, "steps": run.steps, "nelcode": nelcode },
+        "agent": { "request": request, "steps": run.steps, "nelcode": nelcode, "reviewNote": run.review_note },
         "plan": run.plan, "explorerUsage": run.explorer_usage, "workerUsage": run.worker_usage,
     })
 }

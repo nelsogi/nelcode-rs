@@ -571,6 +571,7 @@ pub(crate) fn discard(run: &mut Run<'_>) {
     }
     if files > 0 {
         crate::log::info(&format!("agent: workers' drafts discarded ({files} file(s))"));
+        run.review_note = Some(format!("{NOTE_HEAD} Stop : les brouillons des travailleurs ont été jetés, rien n'a été écrit ({files} fichier(s)).]"));
     }
 }
 
@@ -615,12 +616,16 @@ pub(crate) async fn review(run: &mut Run<'_>, cancel: &Notify) -> bool {
     };
     let (mut ok, mut refused, mut failed) = (0, 0, 0);
     let mut decisions: HashMap<String, &str> = HashMap::new();
+    // Pour la note au modèle : écrits, refusés par l'utilisateur, refusés car modifiés entre-temps, autres échecs.
+    let (mut n_ok, mut n_refused, mut n_changed, mut n_failed) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (worker, rel, d) in files {
         if !accepted.contains(&rel) {
             refused += 1;
+            n_refused.push(rel.clone());
             decisions.insert(rel, "rejected");
             continue;
         }
+        let changed = agent::current(&d.path) != d.before;
         let change = Change { path: d.path.clone(), rel: rel.clone(), before: d.before.clone(), after: d.after.clone() };
         let lines = diff(d.before.as_deref().unwrap_or_default(), &d.after);
         let (added, removed) = count(&lines);
@@ -635,6 +640,7 @@ pub(crate) async fn review(run: &mut Run<'_>, cancel: &Notify) -> bool {
                 ok += 1;
                 step["status"] = "accepted".into();
                 decisions.insert(rel.clone(), "accepted");
+                n_ok.push(rel.clone());
                 crate::log::info(&format!("agent: \"{rel}\" {} (worker {worker}, review)", if creating { "created" } else { "changed" }));
             }
             Err(e) => {
@@ -642,6 +648,7 @@ pub(crate) async fn review(run: &mut Run<'_>, cancel: &Notify) -> bool {
                 step["status"] = "error".into();
                 step["error"] = e.into();
                 decisions.insert(rel.clone(), "error");
+                if changed { n_changed.push(rel.clone()) } else { n_failed.push(rel.clone()) }
             }
         }
         run.step(step);
@@ -656,7 +663,24 @@ pub(crate) async fn review(run: &mut Run<'_>, cancel: &Notify) -> bool {
     for w in &mut run.workers {
         w.ctx.draft.clear();
     }
+    run.review_note = Some(review_note(&n_ok, &n_refused, &n_changed, &n_failed));
     false
+}
+
+/// Le début de la note pour le modèle.
+const NOTE_HEAD: &str = "[Note de Nel Code, ajoutée après ta réponse : revue groupée des changements des travailleurs par l'utilisateur.";
+
+/// La note courte pour le modèle : ce qui a vraiment été écrit sur le disque après la revue.
+pub fn review_note(ok: &[String], refused: &[String], changed: &[String], failed: &[String]) -> String {
+    let list = |v: &[String]| if v.is_empty() { "aucun".to_string() } else { v.join(", ") };
+    let mut note = format!("{NOTE_HEAD} Acceptés et écrits : {}. Refusés par l'utilisateur (non écrits) : {}.", list(ok), list(refused));
+    if !changed.is_empty() {
+        note += &format!(" Refusés car modifiés entre-temps (non écrits) : {}.", list(changed));
+    }
+    if !failed.is_empty() {
+        note += &format!(" Échec d'écriture : {}.", list(failed));
+    }
+    note + "]"
 }
 
 #[cfg(test)]
@@ -720,6 +744,14 @@ mod tests {
         keep_assignments(&old, &mut tasks);
         assert_eq!(tasks[0], json!({ "title": "UI", "status": "done", "worker": "T1", "workerStatus": "running" }));
         assert!(tasks[1]["worker"].is_null() && tasks[2]["worker"].is_null());
+    }
+
+    #[test]
+    fn note_de_revue() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let n = review_note(&s(&["a.cs"]), &s(&["b.cs", "c.cs"]), &s(&["d.cs"]), &[]);
+        assert_eq!(n, format!("{NOTE_HEAD} Acceptés et écrits : a.cs. Refusés par l'utilisateur (non écrits) : b.cs, c.cs. Refusés car modifiés entre-temps (non écrits) : d.cs.]"));
+        assert!(review_note(&[], &s(&["b"]), &[], &s(&["e"])).contains("Acceptés et écrits : aucun. Refusés par l'utilisateur (non écrits) : b. Échec d'écriture : e.]"));
     }
 
     #[test]
