@@ -281,12 +281,19 @@ test('export et import en JSON : sans aucun secret, changements montrés avant d
   out.settings.topK = 44;
   out.settings.allowedCommands = ['node'];
   out.settings.serverKey = 'pirate';
+  // Prix à zéro et confirmation du budget coupée : montrés en clair et marqués (le budget ne servirait plus à rien).
+  out.settings.prices = [{ model: 'gpt-gratuit', input: 0, output: 0 }];
+  out.settings.budgetConfirm = false;
   const parsed = await A.ev(`window.__TAURI__.core.invoke('parse_settings_import', { text: ${JSON.stringify(JSON.stringify(out))} })`);
   assert.deepEqual(parsed.ignored, ['serverKey']);
   await A.ev(`SETTINGS.applyImport(${JSON.stringify(parsed)}); true`);
   await A.waitFor(`T.dialog()?.getAttribute('aria-label') === 'Importer des réglages'`, 5_000);
   const t = await A.ev(`T.dialog().innerText`);
-  assert.match(t, /2 réglages changent/);
+  assert.match(t, /4 réglages changent/);
+  assert.match(t, /Prix par million de tokens : par défaut → gpt-gratuit : entrée 0 \$, sortie 0 \$/);
+  assert.match(t, /Confirmer au-delà du budget : activé → désactivé/);
+  assert.ok(!t.includes('[object Object]'), t);
+  assert.equal(await A.ev(`[...T.dialog().querySelectorAll('.import-diff li.sensitive')].length`), 3, 'commandes, prix, budget marqués');
   assert.match(t, /Commandes autorisées sans confirmation : dotnet build → node/);
   assert.match(t, /Top-k : 33 → 44/);
   assert.match(t, /touchent à la sécurité/);
@@ -307,7 +314,7 @@ test('export et import en JSON : sans aucun secret, changements montrés avant d
   assert.ok(await A.ev(`!!T.row('export') && [...T.row('export').querySelectorAll('button')].map((b) => b.textContent).join() === 'Exporter…,Importer…'`));
   await close();
   await A.ev(`window.__TAURI__.core.invoke('delete_provider', { id: ${JSON.stringify(p.id)} })`);
-  await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { topK: 20, allowedCommands: [] } }).then((s) => (S.settings = s, true))`);
+  await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { topK: 20, allowedCommands: [], prices: null, budgetConfirm: true } }).then((s) => (S.settings = s, true))`);
 });
 
 test('modèle par défaut : proposé dans Modèles, chargé au démarrage', async () => {

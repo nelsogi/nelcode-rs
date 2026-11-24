@@ -4,7 +4,27 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ## [Non publié]
 
+## [1.1.0] - 2026-11-24
+
+En bref : les réponses sont **mises en forme (Markdown)**, avec des liens confirmés puis ouverts par la partie
+Rust ; une **page Réglages** remplace la fenêtre (catégories, recherche, enregistrement automatique, export et
+import) ; l'**interface est plus grande** (texte de 15 px, zoom de 80 à 150 %) ; la **puce MCP** ouvre une petite
+fenêtre pour choisir les serveurs de la conversation ; la **fenêtre retient** sa taille, sa position et son état
+agrandi ; et l'interface existe **en anglais**. La 1.0.1 n'a jamais été publiée : ses nouveautés sont ici.
+
 ### Ajouté
+
+- **Rendu Markdown des réponses** (CommonMark, tableaux, listes de tâches, barré) : titres, gras, italique, listes,
+  citations, tableaux, liens, code en ligne, séparateurs. Dans les réponses des modèles, les messages intermédiaires du
+  mode Agent (lignes ✱), Claude Agent et ses sous-agents, les résumés des explorateurs et le résumé du contexte. Les
+  blocs de code gardent leur coloration et leur bouton Copier ; la sortie des outils reste telle quelle, et un retour à
+  la ligne du modèle reste un retour à la ligne.
+- **Pendant la réponse** : le rendu est refait au plus toutes les 100 ms, et seulement pour les blocs qui ont changé
+  (un bloc de code garde son défilement). Un bloc de code, un tableau, du gras ou un lien pas encore terminé s'affiche
+  déjà mis en forme.
+- **Liens** : un clic montre l'adresse complète et demande confirmation, puis la partie Rust ouvre le navigateur.
+- **Réglages → Mettre en forme les réponses (Markdown)** : désactivé, le texte brut. **Copier** copie toujours le
+  Markdown d'origine.
 
 - **Interface en anglais** : Réglages → Général → **Langue** (Automatique : la langue du système, l'anglais si ce n'est
   ni le français ni l'anglais ; Français ; English), appliquée tout de suite, sans redémarrer : menus, réglages,
@@ -46,7 +66,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   la page est ouverte.
 - **Fournisseurs** : la liste à gauche, le fournisseur choisi à droite.
 - **Modèle par défaut** (Modèles) : celui chargé au démarrage ; par défaut, le dernier utilisé.
-- **Thème** (sombre ou clair), **langue** (le français, seule langue pour l'instant) et **densité** (compacte,
+- **Thème** (sombre ou clair), **langue** (voir plus haut) et **densité** (compacte,
   normale, confortable) dans Général.
 - **Exporter / Importer les réglages** (Avancé) en JSON : une liste fermée de préférences, jamais de clé ni de secret,
   ni fournisseurs, projets, dernier modèle ou accords. À l'import, Nel Code montre ce qui change (les réglages de
@@ -67,22 +87,6 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - **Zoom** (l'ancienne « taille du texte ») : Ctrl + / Ctrl − / Ctrl 0, de 80 à 150 % par pas de 10 %, enregistré ;
   marche aussi page Réglages ouverte, et le pavé numérique compte.
 
-## [1.0.1] - 2026-11-22
-
-### Ajouté
-
-- **Rendu Markdown des réponses** (CommonMark, tableaux, listes de tâches, barré) : titres, gras, italique, listes,
-  citations, tableaux, liens, code en ligne, séparateurs. Dans les réponses des modèles, les messages intermédiaires du
-  mode Agent (lignes ✱), Claude Agent et ses sous-agents, les résumés des explorateurs et le résumé du contexte. Les
-  blocs de code gardent leur coloration et leur bouton Copier ; la sortie des outils reste telle quelle, et un retour à
-  la ligne du modèle reste un retour à la ligne.
-- **Pendant la réponse** : le rendu est refait au plus toutes les 100 ms, et seulement pour les blocs qui ont changé
-  (un bloc de code garde son défilement). Un bloc de code, un tableau, du gras ou un lien pas encore terminé s'affiche
-  déjà mis en forme.
-- **Liens** : un clic montre l'adresse complète et demande confirmation, puis la partie Rust ouvre le navigateur.
-- **Réglages → Mettre en forme les réponses (Markdown)** : désactivé, le texte brut. **Copier** copie toujours le
-  Markdown d'origine.
-
 ### Sécurité
 
 - **Le texte d'un modèle ne devient jamais du HTML** : [markdown-it](https://github.com/markdown-it/markdown-it) 15.0.3
@@ -94,6 +98,12 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - **Images** : jamais chargées (une image distante dirait au serveur que la réponse a été lue) ; un lien à la place.
 - **La fenêtre reste sur l'interface** : la partie Rust annule toute navigation ailleurs et refuse les nouvelles
   fenêtres.
+- **Relecture de la 1.1.0** : le rendu d'une réponse en cours (et d'un titre d'étape) ne peut plus figer l'interface.
+  Une dernière ligne faite de milliers d'espaces prenait un temps cubique : 80 s pour 8 000 espaces, quelques
+  millisecondes maintenant. markdown-it 15.0.3 est la dernière version : toutes les failles connues y sont corrigées.
+- **Import des réglages** : la table de prix est montrée en clair (elle s'affichait « [object Object] ») ; les prix,
+  le budget, la confirmation du budget et les mises à jour automatiques sont marqués comme réglages de sécurité, comme
+  les commandes et le serveur local. Aucune valeur n'est plus montrée « [object Object] ».
 
 ### Corrigé
 

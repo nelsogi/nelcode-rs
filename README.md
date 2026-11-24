@@ -30,10 +30,15 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
   trousseau du système.
 - **Mode Agent** : le modèle lit, cherche, modifie des fichiers (diff et accord à chaque écriture, annulation), lance
   des commandes **sans shell** avec ton accord, tient un **plan**, suit **NELCODE.md**, lance des **explorateurs** en
-  lecture seule et utilise des **serveurs MCP** ; **fichiers protégés** et **points de restauration git**.
+  lecture seule et utilise des **serveurs MCP** (une puce ouvre une petite fenêtre pour choisir ceux de la
+  conversation) ; **fichiers protégés** et **points de restauration git**.
 - **Claude Agent** : une conversation menée par l'outil `claude` d'Anthropic installé sur le PC, affichée dans Nel Code.
 - **Serveur local** compatible OpenAI (pour Continue dans VS Code…), désactivé par défaut.
 - **Suivi** des tokens, du coût estimé et du temps de réponse, avec un budget mensuel.
+- **Page Réglages** : catégories, recherche, enregistrement automatique, valeurs par défaut, liens directs depuis la
+  barre d'état, export et import sans aucun secret.
+- **Interface en français ou en anglais**, changée sans redémarrer ; texte de 15 px, **zoom** de 80 à 150 % (Ctrl + /
+  Ctrl −), trois densités ; la fenêtre retient sa **taille, sa position et son état agrandi**.
 - **Mises à jour automatiques** signées ; Windows, Linux et macOS (ces deux derniers en expérimental).
 
 ![Le mode Agent : plan, étapes et modification à valider](docs/agent.png)
@@ -46,7 +51,7 @@ fonctions (sauf le pack GPU, Windows seulement), mais moins éprouvées. Tous le
 
 ### Windows
 
-1. Télécharge `Nel Code_1.0.1_x64-setup.exe`.
+1. Télécharge `Nel Code_1.1.0_x64-setup.exe`.
 2. Lance-le. L'installateur n'est **pas signé** : si Windows SmartScreen affiche « Windows a protégé votre ordinateur »,
    clique sur « Informations complémentaires », puis « Exécuter quand même ».
 3. Il faut **WebView2** (déjà présent sur Windows 10 et 11 à jour). S'il manque, l'installateur l'installe tout seul
@@ -59,9 +64,9 @@ accélère les réponses.
 
 Deux paquets, pour les PC 64 bits (x86_64) avec une glibc 2.35 ou plus récente (Ubuntu 22.04, Debian 12, Fedora 36…) :
 
-- **AppImage** (`Nel Code_1.0.1_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
+- **AppImage** (`Nel Code_1.1.0_amd64.AppImage`) : `chmod +x` puis lance-le. Elle **se met à jour toute seule**.
   Sans FUSE (certaines distributions récentes), installe `libfuse2`, ou lance-la avec `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_1.0.1_amd64.deb"`. Le paquet **ne se met pas à jour
+- **.deb** (Debian, Ubuntu) : `sudo apt install "./Nel Code_1.1.0_amd64.deb"`. Le paquet **ne se met pas à jour
   tout seul** : pour une nouvelle version, télécharge le nouveau `.deb` et installe-le de la même façon.
 
 Il faut WebKitGTK 4.1 (déjà là sur un bureau GNOME ou KDE récent ; sinon le `.deb` l'installe). Les clés API sont
@@ -70,7 +75,7 @@ fonctionne, mais ne peut pas garder de clé.
 
 ### macOS (expérimental)
 
-1. Télécharge `Nel Code_1.0.1_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
+1. Télécharge `Nel Code_1.1.0_universal.dmg` (Mac Intel et Apple Silicon, macOS 11 ou plus récent), ouvre-le et
    glisse Nel Code dans **Applications**.
 2. L'appli n'est **pas signée** par un développeur Apple : au premier lancement, macOS dit qu'il ne peut pas vérifier
    le développeur (ou que l'appli est « endommagée »). Pour l'ouvrir quand même :
@@ -95,7 +100,7 @@ Puis, dans Ubuntu :
 ```bash
 sudo apt update && sudo apt install -y libfuse2t64 gnome-keyring
 # Le .deb (ou l'AppImage, avec chmod +x) téléchargé dans les Releases :
-sudo apt install -y "./Nel Code_1.0.1_amd64.deb"
+sudo apt install -y "./Nel Code_1.1.0_amd64.deb"
 # Puis Nel Code dans le menu des applications (WSLg ouvre sa fenêtre sous Windows).
 ```
 
@@ -637,7 +642,8 @@ de projet, outils toujours autorisés, dernières listes d'outils) et `logs\mcp\
 
 Nel Code fait tourner des modèles qui peuvent se tromper ou être manipulés (une instruction cachée dans un fichier, une
 page, un résultat d'outil) : ses protections ne supposent jamais que le modèle est fiable. La 1.0.0 a fait l'objet
-d'une relecture complète du code ; le détail est dans le [CHANGELOG](CHANGELOG.md).
+d'une relecture complète du code, et les nouveautés de la 1.1.0 (rendu Markdown et liens, navigation, import des
+réglages, traductions, état de la fenêtre) d'une relecture ciblée ; le détail est dans le [CHANGELOG](CHANGELOG.md).
 
 **Ce qui est protégé**
 

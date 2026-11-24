@@ -3,7 +3,7 @@
 // palette), export et import en JSON (sans aucun secret : voir store::PORTABLE_SETTINGS).
 // Les textes (noms, valeurs, messages) passent toujours par textContent, jamais par innerHTML.
 
-import { has, locale, t } from './i18n.js';
+import { has, locale, num, t } from './i18n.js';
 import { $, confirmDialog, dialog, errText, fold, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { loadModel, refreshContext, renderMessages, renderModels, renderStatus } from './conversation.js';
@@ -70,7 +70,7 @@ export const SETTINGS = [
   { key: 'textSize', cat: 'general', type: 'range', def: 100, min: 80, max: 150, step: 10, after: applyTextSize },
   { key: 'density', cat: 'general', type: 'select', def: 'normal', options: opts('density', ['compact', 'normal', 'comfortable']), after: applyDensity },
   { key: 'markdown', cat: 'general', type: 'switch', def: true, after: () => { if (UI.editing === null) renderMessages(); } },
-  { key: 'autoUpdate', cat: 'general', group: 'updates', type: 'switch', def: true },
+  { key: 'autoUpdate', cat: 'general', group: 'updates', type: 'switch', def: true, sensitive: true },
   { id: 'update-now', cat: 'general', group: 'updates', block: () => h('button', { class: 'btn', onclick: () => checkUpdate(true) }, icon('refresh-cw'), t('set.update-now.button')) },
 
   // Modèles
@@ -119,9 +119,9 @@ export const SETTINGS = [
   { id: 'gpu', cat: 'calc', block: calcBlock },
 
   // Suivi et budget
-  { key: 'budgetMonthly', cat: 'usage', type: 'number', def: 0, min: 0, max: 1e6, step: 0.01, cls: 'budget' },
-  { key: 'budgetConfirm', cat: 'usage', type: 'switch', def: true },
-  { id: 'prices', cat: 'usage', resets: { prices: null }, wide: true, block: pricesBlock },
+  { key: 'budgetMonthly', cat: 'usage', type: 'number', def: 0, min: 0, max: 1e6, step: 0.01, cls: 'budget', sensitive: true },
+  { key: 'budgetConfirm', cat: 'usage', type: 'switch', def: true, sensitive: true },
+  { id: 'prices', cat: 'usage', resets: { prices: null }, wide: true, block: pricesBlock, sensitive: true },
   { id: 'usage-page', cat: 'usage', block: () => h('button', { class: 'btn', onclick: () => { closeSettings(); openUsage(); } }, icon('chart-column'), t('set.usage-page.button')) },
 
   // Serveur local
@@ -519,18 +519,23 @@ async function importSettings() {
 
 /** Montre ce que l'import change (les réglages qui touchent à la sécurité en premier), puis l'enregistre. */
 export async function applyImport({ changes, ignored = [] }) {
-  const nameOf = (k) => { const d = SETTINGS.find((x) => x.key === k); return d ? label(d) : k; };
+  // Un réglage par sa clé, ou un bloc par son id (la table de prix : « prices »).
+  const defOf = (k) => SETTINGS.find((x) => x.key === k) ?? SETTINGS.find((x) => !x.key && x.id === k);
+  const nameOf = (k) => { const d = defOf(k); return d ? label(d) : k; };
+  // Tout est montré en clair : un objet en JSON, jamais « [object Object] ».
+  const plain = (x) => (x !== null && typeof x === 'object' ? JSON.stringify(x) : String(x));
   const show = (k, v) => {
-    const d = SETTINGS.find((x) => x.key === k);
-    if (Array.isArray(v)) return v.length ? v.join(', ') : t('settings-page.empty_list');
+    const d = defOf(k);
+    if (k === 'prices' && Array.isArray(v)) return v.length ? v.map((p) => t('settings-page.import_price', { model: plain(p?.model), input: num(p?.input), output: num(p?.output) })).join(' ; ') : t('settings-page.empty_list');
+    if (Array.isArray(v)) return v.length ? v.map(plain).join(', ') : t('settings-page.empty_list');
     if (d?.type === 'switch') return v ? t('settings-page.active') : t('settings-page.desactive');
     if (d?.type === 'select') return d.options().find(([o]) => o === (d.encode ?? String)(v ?? ''))?.[1] ?? String(v ?? '—');
     if (v === null || v === undefined) return t('settings-page.par_defaut');
-    return String(v);
+    return plain(v);
   };
   const diff = Object.entries(changes).filter(([k, v]) => !same(S.settings[k] ?? DEFAULTS[k], v ?? DEFAULTS[k]));
   if (!diff.length) return toast(t('settings-page.ces_reglages_sont_deja_tiens'), '', 4000);
-  const sensitive = (k) => SETTINGS.find((d) => d.key === k)?.sensitive;
+  const sensitive = (k) => defOf(k)?.sensitive;
   diff.sort(([a], [b]) => Number(!!sensitive(b)) - Number(!!sensitive(a)));
   const rows = diff.map(([k, v]) => h('li', { class: sensitive(k) ? 'sensitive' : '' }, sensitive(k) ? icon('circle-alert') : null,
     h('b', {}, nameOf(k)), t('settings-page.change_line', { from: show(k, S.settings[k] ?? DEFAULTS[k]), to: show(k, v) })));

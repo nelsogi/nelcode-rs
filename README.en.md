@@ -30,11 +30,15 @@ General → Language; automatic by default: the system's language).
   keychain.
 - **Agent mode**: the model reads, searches and edits files (diff and approval for each write, undo), runs commands
   **without a shell** with your approval, keeps a **plan**, follows **NELCODE.md**, starts read-only **explorers** and
-  uses **MCP servers**; **protected files** and **git restore points**.
+  uses **MCP servers** (a chip opens a small window to pick the ones for the conversation); **protected files** and
+  **git restore points**.
 - **Claude Agent**: a conversation driven by Anthropic's `claude` tool installed on the PC, shown in Nel Code.
 - OpenAI-compatible **local server** (for Continue in VS Code…), off by default.
 - **Usage tracking** of tokens, estimated cost and response time, with a monthly budget.
-- **Interface in English or French**, switched without restarting.
+- **Settings page**: categories, search, automatic saving, default values, direct links from the status bar, export
+  and import without any secret.
+- **Interface in English or French**, switched without restarting; 15 px text, **zoom** from 80 to 150 % (Ctrl + /
+  Ctrl −), three densities; the window remembers its **size, position and maximized state**.
 - Signed **automatic updates**; Windows, Linux and macOS (the last two experimental).
 
 ![Agent mode: plan, steps and an edit to review](docs/en/agent.png)
@@ -47,7 +51,7 @@ Nel Code is made first for **Windows**. The **Linux** and **macOS** versions are
 
 ### Windows
 
-1. Download `Nel Code_1.0.1_x64-setup.exe`.
+1. Download `Nel Code_1.1.0_x64-setup.exe`.
 2. Run it (in English or French, depending on Windows' language). The installer is **not signed**: if Windows
    SmartScreen shows "Windows protected your PC", click "More info", then "Run anyway".
 3. **WebView2** is required (already there on up-to-date Windows 10 and 11). If it is missing, the installer installs
@@ -60,9 +64,9 @@ responses.
 
 Two packages, for 64-bit PCs (x86_64) with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36…):
 
-- **AppImage** (`Nel Code_1.0.1_amd64.AppImage`): `chmod +x`, then run it. It **updates itself**. Without FUSE (some
+- **AppImage** (`Nel Code_1.1.0_amd64.AppImage`): `chmod +x`, then run it. It **updates itself**. Without FUSE (some
   recent distributions), install `libfuse2`, or run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **.deb** (Debian, Ubuntu): `sudo apt install "./Nel Code_1.0.1_amd64.deb"`. The package **does not update itself**:
+- **.deb** (Debian, Ubuntu): `sudo apt install "./Nel Code_1.1.0_amd64.deb"`. The package **does not update itself**:
   for a new version, download the new `.deb` and install it the same way.
 
 WebKitGTK 4.1 is required (already there on a recent GNOME or KDE desktop; otherwise the `.deb` installs it). API keys
@@ -71,7 +75,7 @@ cannot keep a key.
 
 ### macOS (experimental)
 
-1. Download `Nel Code_1.0.1_universal.dmg` (Intel and Apple Silicon Macs, macOS 11 or newer), open it and drag Nel Code
+1. Download `Nel Code_1.1.0_universal.dmg` (Intel and Apple Silicon Macs, macOS 11 or newer), open it and drag Nel Code
    into **Applications**.
 2. The app is **not signed** by an Apple developer: on first launch, macOS says it cannot verify the developer (or that
    the app is "damaged"). To open it anyway:
@@ -95,7 +99,7 @@ Then, in Ubuntu:
 ```bash
 sudo apt update && sudo apt install -y libfuse2t64 gnome-keyring
 # The .deb (or the AppImage, with chmod +x) downloaded from the Releases:
-sudo apt install -y "./Nel Code_1.0.1_amd64.deb"
+sudo apt install -y "./Nel Code_1.1.0_amd64.deb"
 # Then Nel Code in the applications menu (WSLg opens its window on Windows).
 ```
 
@@ -615,8 +619,9 @@ approvals, always-allowed tools, last tool lists) and `logs\mcp\` (each MCP serv
 ## Security
 
 Nel Code runs models that can be wrong or be manipulated (an instruction hidden in a file, a page, a tool result): its
-protections never assume the model is trustworthy. Version 1.0.0 went through a full code review; the details are in the
-[CHANGELOG](CHANGELOG.md) (in French).
+protections never assume the model is trustworthy. Version 1.0.0 went through a full code review, and the new features of 1.1.0
+(Markdown rendering and links, navigation, settings import, translations, window state) through a targeted one; the
+details are in the [CHANGELOG](CHANGELOG.md) (in French).
 
 **What is protected**
 

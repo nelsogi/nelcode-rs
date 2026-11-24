@@ -149,8 +149,11 @@ export function closeOpen(text) {
   const prev = lines.at(-1) ?? '', first = prev.includes('|') && !(lines.at(-2) ?? '').includes('|');
   if (row.test(line) && /[^\s|:-]/.test(line) && !prev.includes('|')) return until([closeInline(line), rule(line)]);
   if (first && /^ {0,3}[\s|:-]*$/.test(line) && (row.test(prev) || line.includes('|'))) return until([line.trim().endsWith('|') && cells(line) === cells(prev) && /-\s*:?\s*\|$/.test(line) ? line : rule(prev)]);
-  // Rien que des signes : leur sens n'est pas encore connu (« - » sous un texte en ferait un titre).
-  if (/^[\s>]*(?:[-*+]|\d{1,9}[.)])?\s*(?:\[[ xX]?\]?)?\s*$/.test(line) || /^[\s>]*[-=*_#`~|]+\s*$/.test(line)) return until([]);
+  // Rien que des signes : leur sens n'est pas encore connu (« - » sous un texte en ferait un titre). Le début et la fin
+  // (espaces, « > ») sont retirés d'abord : deux quantificateurs d'espaces à la suite prendraient un temps cubique
+  // sur une longue ligne d'espaces (texte d'un modèle : non fiable).
+  const core = line.replace(/^[\s>]+/, '').trimEnd();
+  if (/^(?:[-*+]|\d{1,9}[.)])?\s*(?:\[[ xX]?\]?)?$/.test(core) || /^[-=*_#`~|]+$/.test(core)) return until([]);
   return until([closeInline(line)]);
 }
 
@@ -166,7 +169,7 @@ function closeInline(line) {
     if (parts.length % 2) continue;
     const before = parts.at(-2), after = parts.at(-1);
     if ((before && !/[\s(«"'*_|]$/.test(before)) || !after.trim() || /^\s/.test(after)) continue;   // « 2**3 » n'ouvre pas de gras
-    return line.replace(/\s*[*~]?\s*$/, '') + mark;
+    return line.trimEnd().replace(/[*~]$/, '').trimEnd() + mark;   // sans regex sur les espaces : temps linéaire
   }
   return line;
 }

@@ -182,6 +182,20 @@ describe('rendu (unitaire)', () => {
     assert.ok(Date.now() - t < 10_000, `${Date.now() - t} ms`);
   });
 
+  test('pendant la réponse : une longue ligne d\'espaces ne fige pas l\'interface (pas de temps cubique)', () => {
+    const t = Date.now();
+    const spaces = ' '.repeat(50_000);
+    for (const text of [spaces + 'a', '> ' + spaces + '- a', '**a' + spaces + 'b', 'x\n' + spaces + '*']) { draw(text, true); M.closeOpen(text); }
+    const box = el();
+    box.append(...M.inlineMarkdown('**a' + spaces + 'b'));
+    assert.ok(Date.now() - t < 2_000, `${Date.now() - t} ms`);
+    // Le sens ne change pas : des signes seuls attendent, un gras pas refermé est refermé.
+    assert.equal(M.closeOpen('a\n  > - [ ]  '), 'a');
+    assert.equal(M.closeOpen('a\n---  '), 'a');
+    assert.equal(M.closeOpen('**gras pas fini  '), '**gras pas fini**');
+    assert.equal(M.closeOpen('a **b *'), 'a **b**');
+  });
+
   test('pendant la réponse : code, tableau, gras, lien pas terminés affichés proprement', () => {
     // Bloc de code pas fermé, puis fermeture en morceaux : toujours un bloc de code, sans les accents graves.
     for (const end of ['', '\n', '\n`', '\n``', `\n${F3}`]) {
