@@ -29,6 +29,8 @@ listen('agent-step', (e) => {
   if (i >= 0) g.steps[i] = st; else g.steps.push(st);
   // Une écriture faite : les badges du panneau Fichiers suivent.
   if ((st.kind === 'write' || st.kind === 'edit') && ['accepted', 'done'].includes(st.status)) refreshFiles(true);
+  // L'état d'un travailleur s'affiche aussi sur sa tâche du plan.
+  if (st.kind === 'worker') renderPlan();
   if (!g.el || S.current !== g.session) return;
   const fresh = stepsEl(g.steps, null), old = g.el.querySelector('.steps');
   // Les étapes dépliées par l'utilisateur le restent.

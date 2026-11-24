@@ -21,6 +21,7 @@ mod server;
 mod store;
 mod usage;
 mod window;
+mod worker;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -919,12 +920,13 @@ fn agent_generate(app: AppHandle, state: State<AppState>, provider: String, mode
                 seconds: done["seconds"].as_f64().unwrap_or(0.0), cost: None, local: false,
             });
         }
-        // Les explorateurs ont leurs propres lignes (« subagent ») ; l'en-tête de la conversation compte tout.
-        let sub = done["explorerUsage"].take();
-        if !sub.is_null() {
-            let u = &mut done["usage"];
-            let add = |a: &Value, b: &Value| a.as_f64().unwrap_or(0.0) + b.as_f64().unwrap_or(0.0);
-            *u = json!({ "input": add(&u["input"], &sub["input"]) as u64, "output": add(&u["output"], &sub["output"]) as u64, "cost": add(&u["cost"], &sub["cost"]) });
+        // Les explorateurs et les travailleurs ont leurs propres lignes (« subagent », « worker ») ; l'en-tête de la
+        // conversation compte tout.
+        for k in ["explorerUsage", "workerUsage"] {
+            let sub = done[k].take();
+            if !sub.is_null() {
+                agent::add_usage(&mut done["usage"], &sub);
+            }
         }
         if let Some(id) = checkpoint {
             done["agent"]["checkpoint"] = json!({ "id": id, "dir": dir });
@@ -968,6 +970,13 @@ fn create_nelcode_md(dir: String, text: String) -> Result<()> {
     std::io::Write::write_all(&mut f, text.as_bytes()).map_err(|e| e.to_string())?;
     log::info("template NELCODE.md created");
     Ok(())
+}
+
+/// La revue groupée des brouillons des travailleurs : les chemins acceptés (les autres sont refusés).
+#[tauri::command]
+fn agent_review(state: State<AppState>, request: String, step: String, accepted: Vec<String>) -> Result<()> {
+    let tx = state.approvals.lock().unwrap().remove(&format!("{request}/{step}")).ok_or_else(|| t!("rs.main.no_longer_waiting"))?;
+    tx.send(json!({ "accepted": accepted }).to_string()).map_err(|_| t!("rs.main.request_over"))
 }
 
 #[tauri::command]
@@ -1053,7 +1062,8 @@ fn mcp_list(app: AppHandle, dir: Option<String>) -> Value {
 /// conversation).
 #[tauri::command]
 fn mcp_context(dir: Option<String>, off: Option<Vec<String>>) -> Value {
-    mcp::context(dir.as_deref(), &off.unwrap_or_default(), store::load_settings()["explorerMax"].as_u64().unwrap_or(5) > 0)
+    let s = store::load_settings();
+    mcp::context(dir.as_deref(), &off.unwrap_or_default(), s["explorerMax"].as_u64().unwrap_or(5) > 0, s["workerMax"].as_u64().unwrap_or(4) > 0)
 }
 
 /// Ajoute un serveur global ; `secrets` : { env: { NOM: valeur }, headers: { Nom: valeur } } (Gestionnaire
@@ -1313,6 +1323,7 @@ fn main() {
             remote_generate,
             agent_generate,
             agent_decide,
+            agent_review,
             agent_undo,
             agent_undo_all,
             agent_restore,

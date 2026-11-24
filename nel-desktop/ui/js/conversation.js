@@ -468,7 +468,13 @@ export async function onCompareDone(g, s, p) {
   renderAll();
 }
 
-export function stop() { if (S.gen) invoke('stop_generation'); }
+// Stop. Des brouillons de travailleurs pas encore revus : ils seront jetés, après confirmation.
+export async function stop() {
+  if (!S.gen) return;
+  const drafts = new Set(S.gen.steps?.filter((st) => st.status === 'draft').map((st) => st.path)).size;
+  if (drafts && !(await confirmDialog(t('agent.stop_drafts_title'), t('agent.stop_drafts_text', { n: drafts }), t('agent.stop_drafts_button'), true))) return;
+  if (S.gen) invoke('stop_generation');
+}
 
 // --- Réflexion (modèles distants) ------------------------------------------------------------------------
 

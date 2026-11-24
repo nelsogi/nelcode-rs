@@ -479,6 +479,16 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         (Some(p), Some(m)) if !p.is_empty() && !m.trim().is_empty() => serde_json::json!({ "provider": p, "model": m }),
         _ => serde_json::Value::Null,
     };
+    // Les travailleurs du mode Agent : combien en même temps, combien par demande (0 : pas de travailleurs), leurs
+    // tours, et leur modèle (comme les explorateurs).
+    s["workerConcurrency"] = (num(&s["workerConcurrency"], 2.0).clamp(1.0, 8.0) as u64).into();
+    s["workerMax"] = (num(&s["workerMax"], 4.0).clamp(0.0, 10.0) as u64).into();
+    s["workerTurns"] = (num(&s["workerTurns"], 10.0).clamp(1.0, 30.0) as u64).into();
+    let wm = &s["workerModel"];
+    s["workerModel"] = match (wm["provider"].as_str(), wm["model"].as_str()) {
+        (Some(p), Some(m)) if !p.is_empty() && !m.trim().is_empty() => serde_json::json!({ "provider": p, "model": m }),
+        _ => serde_json::Value::Null,
+    };
     // Fichiers protégés en plus de ceux par défaut : des motifs, sans vide ni doublon, 200 au plus.
     let mut protected: Vec<String> = Vec::new();
     for p in s["protectedFiles"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|p| p.trim().to_string()) {
@@ -565,10 +575,11 @@ pub const DENSITIES: [&str; 3] = ["compact", "normal", "comfortable"];
 /// secret (ils sont dans le trousseau, pas dans settings.json), ni ce qui est propre à ce PC (fournisseurs et leurs
 /// adresses, projets récents, dernier modèle, fenêtre, accords…). Une liste fermée : une clé ajoutée plus tard à
 /// settings.json n'est jamais exportée sans être ajoutée ici.
-pub const PORTABLE_SETTINGS: [&str; 35] = [
+pub const PORTABLE_SETTINGS: [&str; 38] = [
     "language", "theme", "accent", "textSize", "density", "markdown", "autoUpdate",
     "defaultModel", "temperature", "topK", "topP", "maxReplyTokens", "repetitionPenalty", "contextLimit", "summaryThreshold",
     "agentMaxTurns", "commandTimeout", "allowedCommands", "protectedFiles", "explorerConcurrency", "explorerMax", "explorerTurns",
+    "workerConcurrency", "workerMax", "workerTurns",
     "claudeModel", "claudePermissionMode", "claudeAllowedTools", "claudeProjectSettings",
     "mcpStartTimeout", "mcpCallTimeout", "imageMaxSide", "device",
     "budgetMonthly", "budgetConfirm", "prices", "serverEnabled", "serverPort",
@@ -986,5 +997,17 @@ mod tests {
         for bad in [serde_json::json!("p1/qwen"), serde_json::json!({ "provider": "", "model": "m" }), serde_json::json!({ "provider": "p" })] {
             assert!(normalize(serde_json::json!({ "explorerModel": bad })) ["explorerModel"].is_null());
         }
+    }
+
+    #[test]
+    fn reglages_des_travailleurs() {
+        let s = normalize(serde_json::json!({}));
+        assert_eq!((s["workerConcurrency"].as_u64(), s["workerMax"].as_u64(), s["workerTurns"].as_u64()), (Some(2), Some(4), Some(10)));
+        assert!(s["workerModel"].is_null());
+        let s = normalize(serde_json::json!({ "workerConcurrency": 0, "workerMax": 99, "workerTurns": 1000, "workerModel": { "provider": "p1", "model": "m" } }));
+        assert_eq!((s["workerConcurrency"].as_u64(), s["workerMax"].as_u64(), s["workerTurns"].as_u64()), (Some(1), Some(10), Some(30)));
+        assert_eq!(s["workerModel"], serde_json::json!({ "provider": "p1", "model": "m" }));
+        assert!(normalize(serde_json::json!({ "workerModel": { "provider": "p" } }))["workerModel"].is_null());
+        assert!(PORTABLE_SETTINGS.contains(&"workerMax") && !PORTABLE_SETTINGS.contains(&"workerModel"), "le modèle (fournisseur de ce PC) ne s'exporte pas");
     }
 }

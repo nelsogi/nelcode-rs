@@ -24,6 +24,8 @@ Workspace Cargo : `nel-engine` (bibliothèque) + `nel-desktop` (application). Te
 - `server.rs` : serveur local compatible OpenAI (127.0.0.1 seulement, clé d'accès obligatoire, désactivé par défaut)
 - `agent.rs` : mode Agent (outils lecture/recherche/écriture dans un `Sandbox`, fichiers protégés, NELCODE.md, plan,
   explorateurs `spawn_explorer` en lecture seule)
+- `worker.rs` : travailleurs `spawn_worker` / `revise_worker` du mode Agent (portée exclusive, brouillon en mémoire,
+  revue groupée, Stop qui jette les brouillons)
 - `mcp.rs` : client MCP (stdio dans un Job Object, Streamable HTTP ; mcp.json global et .nelcode/mcp.json avec accord
   par empreinte ; secrets dans le Gestionnaire d'identification ; mcp-state.json : accords, « toujours », outils)
 - `command.rs` : outil `run_command` (sans shell, délai, variables secrètes retirées)
@@ -51,7 +53,7 @@ génération, saisie) · `markdown.js` (rendu Markdown des réponses : jetons �
 
 ### e2e/
 `harness.mjs` lance l'exe debug avec dossiers de données temporaires et le pilote par le port de débogage WebView2.
-Fichiers : `nelcode`, `ux`, `settings` (page Réglages), `i18n` (catalogues, clés, textes en dur, deux langues), `window` (état de la fenêtre), `agent`, `explorer`, `markdown`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
+Fichiers : `nelcode`, `ux`, `settings` (page Réglages), `i18n` (catalogues, clés, textes en dur, deux langues), `window` (état de la fenêtre), `agent`, `explorer`, `workers`, `markdown`, `remote`, `server`, `usage`, `images`, `context`, `mcp` (faux serveur `fake-mcp/server.mjs`), `claude` (faux `claude` : `fake-claude/main.rs` + `*.jsonl`),
 `gguf` et `gpu` (ignorés sans modèle / sans carte NVIDIA).
 
 ## Tests

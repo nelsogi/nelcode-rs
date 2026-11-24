@@ -106,10 +106,10 @@ export function toggleAgent() {
   toast(s.agent ? t('agent.mode_agent_peut_lire_fichiers', { name: S.model.name, v1: s.workingDirectory || '(aucun dossier)' }) : t('agent.mode_agent_desactive'), '', 4000);
 }
 
-export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot', mcp: 'plug' };   // i18n-ignore (noms d'icônes)
+export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot', mcp: 'plug', worker: 'hammer', review: 'list-checks' };   // i18n-ignore (noms d'icônes)
 
 // Les états d'une étape et d'une tâche du plan : des clés (step.status.*, plan.status.*), traduites à l'affichage.
-export const STEP_STATUS = Object.fromEntries(['pending', 'accepted', 'rejected', 'undone', 'error', 'running', 'stopped', 'waiting'].map((k) => [k, 'step.status.' + k]));
+export const STEP_STATUS = Object.fromEntries(['pending', 'accepted', 'rejected', 'undone', 'error', 'running', 'stopped', 'waiting', 'draft', 'discarded'].map((k) => [k, 'step.status.' + k]));
 
 export function diffEl(lines) {
   return h('div', { class: 'diff' }, lines.map(([c, l]) => h('div', { class: { '+': 'add', '-': 'del', '…': 'skip' }[c] ?? 'ctx' }, h('span', { class: 'sign' }, c === '…' ? '' : c), l)));
@@ -117,7 +117,7 @@ export function diffEl(lines) {
 
 // Le texte écrit par un modèle (message intermédiaire, rapport d'un sous-agent, résumé d'un explorateur) : en Markdown ;
 // la sortie d'un outil reste telle quelle.
-const isProse = (st) => st.status !== 'error' && st.status !== 'rejected' && (st.kind === 'explorer' || (st.kind === 'note' && (!st.tool || st.tool === 'Task' || st.tool === 'Agent')));
+const isProse = (st) => st.status !== 'error' && st.status !== 'rejected' && (st.kind === 'explorer' || st.kind === 'worker' || (st.kind === 'note' && (!st.tool || st.tool === 'Task' || st.tool === 'Agent')));
 
 function detailEl(st) {
   if (!isProse(st) || S.settings.markdown === false) return h('pre', { class: 'detail' }, tr(st.detail));
@@ -139,7 +139,9 @@ export function stepsEl(steps, m) {
     const status = STEP_STATUS[st.status] ? h('span', { class: 'status ' + st.status }, t(STEP_STATUS[st.status])) : null;
     const body = h('div', { class: 'step-body' });
     const n = count[st.id];
+    if (st.kind === 'worker' && st.files?.length) body.append(h('div', { class: 'hint worker-files' }, t('agent.worker_files', { files: st.files.join(', ') })));
     if (n) { subs.set(st.id, h('div', { class: 'substeps' })); body.append(subs.get(st.id)); }
+    if (st.kind === 'review') body.append(reviewEl(st, m));
     // La raison d'un refus ou d'une erreur (Claude Agent) accompagne le diff.
     if (st.detail && (!st.diff || st.protected || st.status === 'rejected' || st.status === 'error')) body.append(detailEl(st));
     if (st.diff) body.append(diffEl(st.diff));
@@ -167,19 +169,66 @@ export function stepsEl(steps, m) {
       h('button', { class: 'btn primary', onclick: (e) => decide('accept', e) }, icon('check'), t('agent.autoriser')),
       h('button', { class: 'btn', title: t('agent.ne_plus_demander_pour_cet'), onclick: (e) => decide('always', e) }, t('agent.toujours_autoriser_cet_outil')),
       h('button', { class: 'btn', onclick: (e) => decide('reject', e) }, t('agent.refuser'))));
-    if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command' && st.kind !== 'mcp') body.append(h('div', { class: 'row-btns' },
+    if (st.status === 'pending' && !m && !st.protected && st.kind !== 'command' && st.kind !== 'mcp' && st.kind !== 'review') body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn primary', onclick: (e) => decide('accept', e) }, icon('check'), t('agent.accepter')),
       h('button', { class: 'btn', onclick: (e) => decide('reject', e) }, t('agent.refuser')),
       h('button', { class: 'btn', title: t('agent.accepter_cette_ecriture_suivantes_cette'), onclick: (e) => decide('accept_all', e) }, t('agent.accepter_tout_pour_cette_demande'))));
-    if (write && st.status === 'accepted' && m) body.append(h('div', { class: 'row-btns' },
+    if (write && st.status === 'accepted' && m && !st.parent) body.append(h('div', { class: 'row-btns' },
       h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), t('agent.annuler'))));
     (subs.get(st.parent) ?? box).append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
       h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.kind === 'note' && !st.tool ? inlineMarkdown(tr(st.title)) : tr(st.title)),
-        n ? h('span', { class: 'count' }, t('agent.steps', { n })) : null, st.kind === 'explorer' ? explorerMeta(st) : null, status), body));
+        n ? h('span', { class: 'count' }, t('agent.steps', { n })) : null, st.kind === 'explorer' || st.kind === 'worker' ? explorerMeta(st) : null, status), body));
   }
-  const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted');
+  const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted' && !st.parent);
   if (undoable?.length) box.append(h('div', { class: 'row-btns undo-all' },
     h('button', { class: 'btn', onclick: () => undoSteps(m, undoable.map((st) => st.id), () => invoke('agent_undo_all', { request: m.agent.request })) }, icon('undo-2'), t('agent.annuler_toute_demande'))));
+  return box;
+}
+
+// La revue groupée des brouillons des travailleurs : par travailleur puis par fichier, le diff et Accepter / Refuser ;
+// « Valider » quand chaque fichier est décidé, « Tout accepter », « Tout refuser ». Rien n'est écrit avant. Les choix
+// sont gardés pendant que les étapes se redessinent. Une revue finie montre la décision de chaque fichier.
+const REVIEWS = new Map();   // « demande/étape » → Map(chemin → 'accepted' | 'rejected')
+
+function reviewEl(st, m) {
+  const live = st.status === 'pending' && !m;
+  const key = `${st.request}/${st.id}`;
+  if (!REVIEWS.has(key)) REVIEWS.set(key, new Map());
+  const choice = REVIEWS.get(key);
+  const paths = (st.workers ?? []).flatMap((g) => g.files.map((f) => f.path));
+  const box = h('div', { class: 'review' });
+  const redraw = () => box.replaceWith(reviewEl(st, m));
+  if (live) box.append(h('div', { class: 'hint' }, t('agent.review.hint')));
+  for (const g of st.workers ?? []) {
+    box.append(h('div', { class: 'review-worker' }, h('span', { class: 'badge' }, g.worker), h('span', {}, g.task)));
+    for (const f of g.files) {
+      const decided = live ? choice.get(f.path) : f.decision;
+      const pick = (d) => h('button', { class: 'btn' + (decided === d ? (d === 'accepted' ? ' primary' : ' on') : ''), 'data-choice': d, onclick: () => { choice.set(f.path, d); redraw(); } },
+        d === 'accepted' ? icon('check') : null, t(d === 'accepted' ? 'agent.review.accept' : 'agent.review.reject'));
+      box.append(h('div', { class: 'review-file', 'data-path': f.path, 'data-decision': decided ?? '' },
+        h('div', { class: 'review-head' }, h('span', { class: 'path' }, f.path),
+          h('span', { class: 'meta' }, `${t(f.created ? 'agent.review.created' : 'agent.review.modified')} +${f.added} −${f.removed}`),
+          live ? h('span', { class: 'row-btns' }, pick('accepted'), pick('rejected'))
+            : decided && STEP_STATUS[decided] ? h('span', { class: 'status ' + decided }, t(STEP_STATUS[decided])) : null),
+        diffEl(f.diff)));
+    }
+  }
+  if (!live) return box;
+  const send = (cmd, args, e) => {
+    const btns = [...(e?.currentTarget?.closest('.row-btns')?.querySelectorAll('button') ?? [])];
+    for (const b of btns) b.disabled = true;
+    invoke(cmd, { request: st.request, step: st.id, ...args }).then(() => REVIEWS.delete(key)).catch((err) => {
+      for (const b of btns) b.disabled = false;
+      toast(errText(err), 'error');
+    });
+  };
+  const accepted = paths.filter((p) => choice.get(p) === 'accepted');
+  const all = paths.every((p) => choice.has(p));
+  box.append(h('div', { class: 'row-btns review-actions' },
+    h('button', { class: 'btn primary', 'data-action': 'validate', disabled: !all, onclick: (e) => send('agent_review', { accepted }, e) }, icon('check'),
+      t('agent.review.validate', { accepted: accepted.length, rejected: paths.length - accepted.length })),
+    h('button', { class: 'btn', 'data-action': 'accept_all', onclick: (e) => send('agent_decide', { decision: 'accept_all' }, e) }, t('agent.review.accept_all')),
+    h('button', { class: 'btn', 'data-action': 'reject_all', onclick: (e) => send('agent_decide', { decision: 'reject' }, e) }, t('agent.review.reject_all'))));
   return box;
 }
 
@@ -219,5 +268,11 @@ export function renderPlan() {
   box.replaceChildren(
     h('button', { class: 'plan-head', title: UI.planCollapsed ? t('agent.deplier_plan') : t('agent.replier_plan'), 'aria-expanded': String(!UI.planCollapsed), onclick: () => { UI.planCollapsed = !UI.planCollapsed; renderPlan(); } },
       icon('list-checks'), h('span', { class: 'plan-title' }, t('agent.plan')), h('span', { class: 'plan-count' }, `${done}/${tasks.length}`), icon(UI.planCollapsed ? 'chevron-left' : 'chevron-right')),
-    UI.planCollapsed ? '' : h('ol', { class: 'plan-tasks' }, tasks.map((tx) => h('li', { 'data-status': tx.status, title: PLAN_STATUS[tx.status] ? t(PLAN_STATUS[tx.status]) : undefined }, icon(PLAN_ICONS[tx.status] ?? 'circle'), h('span', {}, tx.title)))));
+    UI.planCollapsed ? '' : h('ol', { class: 'plan-tasks' }, tasks.map((tx) => {
+      // Une tâche attribuée à un travailleur : son id et son état (en direct pendant la demande).
+      const live = S.gen?.session === s && S.gen.steps?.find((st) => st.kind === 'worker' && st.worker === tx.worker)?.status;
+      const ws = tx.worker ? (live || tx.workerStatus) : null;
+      const worker = tx.worker ? h('span', { class: 'plan-worker', 'data-worker-status': ws ?? '', title: t('agent.plan_worker', { worker: tx.worker, status: STEP_STATUS[ws] ? t(STEP_STATUS[ws]) : '' }) }, tx.worker) : null;
+      return h('li', { 'data-status': tx.status, 'data-worker': tx.worker ?? '', title: PLAN_STATUS[tx.status] ? t(PLAN_STATUS[tx.status]) : undefined }, icon(PLAN_ICONS[tx.status] ?? 'circle'), h('span', { class: 'plan-text' }, tx.title), worker);
+    })));
 }

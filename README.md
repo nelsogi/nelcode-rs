@@ -30,7 +30,7 @@ sur le processeur ou un GPU NVIDIA, avec un moteur écrit en Rust ([Candle](http
   trousseau du système.
 - **Mode Agent** : le modèle lit, cherche, modifie des fichiers (diff et accord à chaque écriture, annulation), lance
   des commandes **sans shell** avec ton accord, tient un **plan**, suit **NELCODE.md**, lance des **explorateurs** en
-  lecture seule et utilise des **serveurs MCP** (une puce ouvre une petite fenêtre pour choisir ceux de la
+  lecture seule et des **travailleurs** qui écrivent en parallèle dans un brouillon (revue groupée), et utilise des **serveurs MCP** (une puce ouvre une petite fenêtre pour choisir ceux de la
   conversation) ; **fichiers protégés** et **points de restauration git**.
 - **Claude Agent** : une conversation menée par l'outil `claude` d'Anthropic installé sur le PC, affichée dans Nel Code.
 - **Serveur local** compatible OpenAI (pour Continue dans VS Code…), désactivé par défaut.
@@ -294,6 +294,8 @@ la conversation. Les `.nelmodel` et les modèles GGUF de ce PC n'y ont pas accè
 | `update_plan` | Donne ou met à jour le plan de la demande (à faire, en cours, fait) |
 | `run_command` | Lance un programme, **sans shell** — **avec ton accord** (sauf liste autorisée) |
 | `spawn_explorer` | Lance un explorateur qui lit le projet et rend un résumé (lecture seulement) |
+| `spawn_worker` | Lance un travailleur qui écrit ses fichiers attribués dans un brouillon — **revue groupée à la fin** |
+| `revise_worker` | Demande une correction à un travailleur (il reprend sa conversation et son brouillon) |
 
 Le modèle demande un outil, Nel Code l'exécute et lui renvoie le résultat, jusqu'à sa réponse finale (10 tours au plus,
 réglable dans les Réglages). Tout s'affiche en direct dans la conversation : la **Réflexion** repliable, puis une ligne
@@ -317,6 +319,21 @@ accord. Une étape « Explorateur : … » montre ses propres étapes, son état
 aussi. Réglages : explorateurs en même temps (2 : beaucoup de serveurs, comme Ollama, répondent l'un après l'autre),
 par demande (5 ; 0 pour s'en passer), tours par explorateur (6), et leur modèle (le même que l'agent, ou un plus
 léger). Leurs tokens apparaissent dans le Suivi (`subagent`) et comptent dans le budget.
+
+**Travailleurs** : pour un travail en plusieurs parties indépendantes, l'agent fait un plan puis lance des travailleurs
+(`spawn_worker`), un par tâche, chacun avec **ses fichiers ou dossiers attribués**. Un travailleur a sa propre
+conversation, lit tout le dossier, mais n'écrit (`write_file`, `edit_file`) que ses fichiers, et **dans un brouillon en
+mémoire** : ses lectures voient son brouillon, le disque n'est pas touché. Un fichier n'est attribué qu'à un seul
+travailleur pendant toute la demande (sinon l'agent reçoit un refus expliqué), et l'agent ne peut pas l'écrire
+lui-même. Pas de commande, pas de MCP, pas de plan, ni explorateur ni travailleur ; les fichiers protégés lui sont
+refusés. Le panneau **Plan** montre le travailleur de chaque tâche (T1, T2…) et son état. L'agent reçoit le résumé et
+le diff de chaque travailleur, peut lui demander une correction (`revise_worker`), puis répond. Vient alors la **revue
+groupée** : par travailleur puis par fichier, le diff, **Accepter** / **Refuser** pour chaque fichier puis **Valider**,
+ou **Tout accepter** / **Tout refuser**. Rien n'est écrit avant ; chaque fichier accepté devient une écriture ordinaire
+(Annuler, Annuler toute la demande), et le point de restauration git est pris avant la demande, comme d'habitude.
+**Stop** arrête tous les travailleurs et jette les brouillons (après confirmation s'ils ne sont pas vides). Réglages :
+travailleurs en même temps (2), par demande (4 ; 0 pour s'en passer), tours par travailleur (10 ; une correction en
+redonne autant) et leur modèle. Leurs tokens apparaissent dans le Suivi (`worker`) et comptent dans le budget.
 
 **Commandes** : `run_command` lance un programme et ses arguments (`dotnet` avec `build`), **sans shell** : `cmd`,
 PowerShell, bash, les scripts `.bat` / `.cmd` / `.ps1` et les opérateurs `|`, `>`, `&&` sont refusés. La commande
@@ -666,6 +683,8 @@ réglages, traductions, état de la fenêtre) d'une relecture ciblée ; le déta
   secrets) n'y part jamais.
 - **Explorateurs** : lecture seule, vérifiée par Nel Code (pas seulement demandée au modèle) ; ni fichiers protégés, ni
   outils MCP.
+- **Travailleurs** : écriture seulement dans leurs fichiers attribués (exclusifs), et seulement dans un brouillon en
+  mémoire : rien n'arrive sur le disque sans la revue groupée ; ni fichiers protégés, ni commandes, ni outils MCP.
 - **MCP** : un serveur de projet (`.nelcode/mcp.json`) ne démarre jamais sans ton accord, redemandé si sa configuration
   ou le programme trouvé change ; chaque appel d'outil est validé (sauf « toujours autoriser ») ; les résultats sont
   limités et présentés comme des données ; les secrets restent dans le trousseau ; les processus sont arrêtés avec la
@@ -781,6 +800,9 @@ sable, jonction, fichier trop gros, injection dans un fichier, utilisateur), Acc
 annulation, Stop, nombre de tours, modèle sans outils, modèles locaux tenus à l'écart, fichiers protégés (lecture et
 recherche, motifs des réglages), noms réservés de Windows, NELCODE.md, plan et commandes (shells refusés, sortie en
 direct, liste autorisée, variables cachées, délai et Stop qui tuent les processus enfants), et le fournisseur Claude.
+`e2e/workers.test.mjs` couvre les travailleurs avec le même genre de faux serveur à outils : attribution exclusive,
+refus hors des fichiers attribués (et fichiers protégés, commandes, MCP), brouillon jamais écrit sans accord, revue
+groupée, correction, plan, Stop qui jette les brouillons après confirmation, limites et suivi.
 `e2e/mcp.test.mjs` couvre le client MCP avec un faux serveur MCP en Node (`e2e/fake-mcp/server.mjs`, stdio et HTTP) :
 poignée de main, appel validé, refus, « toujours autoriser », liste changée, délai, explorateurs, serveurs désactivés
 et contexte, en-têtes et variables secrets, page MCP, arrêt des processus, serveur de projet non autorisé, import.

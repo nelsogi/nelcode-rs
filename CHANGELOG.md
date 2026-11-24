@@ -4,6 +4,32 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ## [Non publié]
 
+### Ajouté
+
+- **Travailleurs du mode Agent** (`spawn_worker`, `revise_worker`) : l'agent principal fait un plan, attribue chaque
+  tâche à un travailleur avec ses fichiers ou dossiers, et les travailleurs écrivent en parallèle. Chacun a sa propre
+  conversation, les outils de lecture, et `write_file` / `edit_file` limités à ses fichiers attribués ; ni commande, ni
+  MCP, ni plan, ni explorateur ou travailleur. Un fichier n'est attribué qu'à un seul travailleur pendant toute la
+  demande (sinon refus expliqué à l'agent), et l'agent ne peut pas l'écrire lui-même.
+- **Brouillon** : les écritures d'un travailleur vont dans un brouillon en mémoire, jamais sur le disque ; ses lectures
+  (`read_file`, `list_files`, `search`) voient son brouillon. Les fichiers protégés lui sont refusés (il ne peut pas
+  demander de confirmation) et signalés à l'agent.
+- **Coordination** : le panneau Plan montre le travailleur de chaque tâche (T1, T2…) et son état en direct ; l'agent
+  reçoit le résumé et le diff de chaque travailleur, et peut lui demander une correction (`revise_worker` : sa
+  conversation et son brouillon sont repris).
+- **Revue groupée** : quand l'agent a répondu, tous les changements par travailleur puis par fichier, avec le diff,
+  Accepter / Refuser par fichier puis Valider, Tout accepter et Tout refuser. Rien n'est écrit avant ; un fichier qui a
+  changé entre-temps est refusé. Chaque fichier accepté devient une écriture ordinaire (Annuler, Annuler toute la
+  demande, panneau Fichiers) ; le point de restauration git est pris avant la demande, comme d'habitude.
+- **Stop** arrête tous les travailleurs et jette les brouillons, après confirmation s'ils ne sont pas vides.
+- **Réglages → Agent → Travailleurs** : travailleurs en même temps (2), par demande (4 ; 0 : pas de travailleurs),
+  tours par travailleur (10) et leur modèle. Exportés avec les réglages portables (sauf le modèle, propre au PC).
+- **Suivi** : les tokens des travailleurs ont leurs lignes (`worker`), comptent dans le budget et dans l'en-tête de la
+  conversation ; les lignes des explorateurs (`subagent`) ont maintenant un libellé.
+- Tests : unitaires (portées et chevauchements, brouillon, plan, rapport à l'agent, réglages) et
+  `e2e/workers.test.mjs` (attribution exclusive, refus hors des fichiers attribués, brouillon jamais écrit sans
+  accord, revue groupée, correction, Stop, limites).
+
 ## [1.1.0] - 2026-11-24
 
 En bref : les réponses sont **mises en forme (Markdown)**, avec des liens confirmés puis ouverts par la partie

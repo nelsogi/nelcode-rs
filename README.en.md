@@ -30,7 +30,7 @@ General → Language; automatic by default: the system's language).
   keychain.
 - **Agent mode**: the model reads, searches and edits files (diff and approval for each write, undo), runs commands
   **without a shell** with your approval, keeps a **plan**, follows **NELCODE.md**, starts read-only **explorers** and
-  uses **MCP servers** (a chip opens a small window to pick the ones for the conversation); **protected files** and
+  **workers** that write in parallel into a draft (grouped review), and uses **MCP servers** (a chip opens a small window to pick the ones for the conversation); **protected files** and
   **git restore points**.
 - **Claude Agent**: a conversation driven by Anthropic's `claude` tool installed on the PC, shown in Nel Code.
 - OpenAI-compatible **local server** (for Continue in VS Code…), off by default.
@@ -283,6 +283,8 @@ Qwen3…), the **Agent** button (at the top, or `/agent`) lets the model work in
 | `update_plan` | Gives or updates the request's plan (to do, in progress, done) |
 | `run_command` | Runs a program, **without a shell** — **with your approval** (except the allowed list) |
 | `spawn_explorer` | Starts an explorer that reads the project and returns a summary (read-only) |
+| `spawn_worker` | Starts a worker that writes its assigned files into a draft — **grouped review at the end** |
+| `revise_worker` | Asks a worker for a correction (it resumes its conversation and its draft) |
 
 The model asks for a tool, Nel Code runs it and returns the result, until its final answer (10 turns at most,
 adjustable in Settings). Everything is shown live in the conversation: the collapsible **Thinking**, then one line per
@@ -305,6 +307,20 @@ confirmation): the agent is told and can read them itself, with your approval. A
 its state, its duration and its tokens; **Stop** stops them too. Settings: explorers at the same time (2: many servers,
 like Ollama, answer one after another), per request (5; 0 to do without), turns per explorer (6), and their model (the
 same as the agent, or a lighter one). Their tokens appear in Usage (`subagent`) and count toward the budget.
+
+**Workers**: for work in several independent parts, the agent makes a plan then starts workers (`spawn_worker`), one
+per task, each with **its assigned files or folders**. A worker has its own conversation, reads the whole folder, but
+only writes (`write_file`, `edit_file`) its own files, and **into an in-memory draft**: its reads see its draft, the
+disk is not touched. A file is assigned to only one worker for the whole request (otherwise the agent gets an
+explained refusal), and the agent cannot write it itself. No command, no MCP, no plan, no explorer or worker; protected
+files are refused. The **Plan** panel shows each task's worker (T1, T2…) and its state. The agent receives each worker's
+summary and diff, can ask it for a correction (`revise_worker`), then answers. Then comes the **grouped review**: by
+worker then by file, the diff, **Accept** / **Deny** for each file then **Confirm**, or **Accept all** / **Deny all**.
+Nothing is written before; each accepted file becomes an ordinary write (Undo, Undo the whole request), and the git
+restore point is taken before the request, as usual. **Stop** stops every worker and discards the drafts (after
+confirmation if they are not empty). Settings: workers at the same time (2), per request (4; 0 to do without), turns
+per worker (10; a correction gives as many again) and their model. Their tokens appear in Usage (`worker`) and count
+toward the budget.
 
 **Commands**: `run_command` runs a program and its arguments (`dotnet` with `build`), **without a shell**: `cmd`,
 PowerShell, bash, `.bat` / `.cmd` / `.ps1` scripts and the `|`, `>`, `&&` operators are refused. The command runs in the
@@ -642,6 +658,8 @@ details are in the [CHANGELOG](CHANGELOG.md) (in French).
   another host, the request stops with an error and the key (`Authorization`, `x-api-key`, secret headers) is never sent
   there.
 - **Explorers**: read-only, enforced by Nel Code (not just asked of the model); no protected files, no MCP tools.
+- **Workers**: write only their assigned (exclusive) files, and only into an in-memory draft: nothing reaches the disk
+  without the grouped review; no protected files, commands or MCP tools.
 - **MCP**: a project server (`.nelcode/mcp.json`) never starts without your approval, asked again if its configuration or
   the program found changes; each tool call is approved (except "always allow"); results are limited and presented as
   data; secrets stay in the keychain; processes stop with the conversation.
@@ -748,7 +766,7 @@ The test files cover: `nelcode` (startup, import, a response, Stop, Regenerate a
 rename and delete, settings, transparency, comparison and vote, speed test, bug report, code blocks, `@` files),
 `server` (local server), `remote` (remote models with a fake local server), `agent` (Agent mode with a fake model that
 calls the tools: each tool, each refusal, Accept / Deny / Accept all, each undo, Stop, protected files, commands, the
-Claude provider), `explorer`, `mcp` (fake MCP server in Node, stdio and HTTP), `markdown`, `ux` (projects, Files panel,
+Claude provider), `explorer`, `workers` (assignment, draft, grouped review, Stop), `mcp` (fake MCP server in Node, stdio and HTTP), `markdown`, `ux` (projects, Files panel,
 first-launch assistant, notifications, help, zoom), `window` (size, position and maximized state remembered), `settings`
 (the settings page), `i18n` (`fr.json` and `en.json` with the same keys, parameters and plurals, every key used exists —
 JS, HTML, Rust codes —, no hard-coded text in the modules, the main screens in both languages, switching language from

@@ -496,6 +496,26 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .plan-tasks li[data-status="in_progress"] .icon { color: var(--accent-text); }
 .plan-tasks li[data-status="done"] { color: var(--faint); text-decoration: line-through; }
 .plan-tasks li[data-status="done"] .icon { color: var(--success); }
+.plan-tasks li .plan-text { flex: 1; }
+.plan-worker { font: 0.7857rem var(--mono); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--dim); display: inline-block; }
+.plan-worker[data-worker-status="running"] { color: var(--accent-text); border-color: var(--accent-border); }
+.plan-worker[data-worker-status="done"] { color: var(--success); border-color: var(--success); }
+.plan-worker[data-worker-status="error"], .plan-worker[data-worker-status="stopped"] { color: var(--error); border-color: var(--error-border); }
+
+/* --- Mode Agent : travailleurs et revue groupée --- */
+.step .status.draft { color: var(--accent-text); border-color: var(--accent-border); }
+.step .status.discarded { color: var(--faint); text-decoration: line-through; }
+.step-body .worker-files { font: 0.8214rem var(--mono); color: var(--dim); }
+.review { display: flex; flex-direction: column; gap: 8px; }
+.review-worker { display: flex; align-items: center; gap: 8px; font-size: 0.8929rem; color: var(--text-2); margin-top: 4px; }
+.review-worker .badge { font: 0.7857rem var(--mono); border: 1px solid var(--border-strong); border-radius: 4px; padding: 0 5px; }
+.review-file { border: 1px solid var(--border); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.review-file[data-decision="accepted"] { border-color: var(--success); }
+.review-file[data-decision="rejected"] { opacity: .7; }
+.review-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.review-head .path { flex: 1; font: 0.8571rem var(--mono); overflow-wrap: anywhere; }
+.review-head .meta { font-size: 0.8214rem; color: var(--faint); }
+.review-head .btn.on { border-color: var(--error-border); color: var(--error); }
 
 /* --- Claude Agent --- */
 .new-chat.claude { padding: 6px 10px; font-size: 0.9286rem; color: var(--text-2); }

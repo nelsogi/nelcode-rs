@@ -18,7 +18,7 @@ export const usd = (x) => `≈ ${nf(x, Math.abs(x ?? 0) >= 1 ? 2 : 4)} $`;
 /** Des tokens : « 950 », « 12,3 k », « 4,56 M ». */
 export const tokensText = (n) => (n >= 1e6 ? nf(n / 1e6, 2) + ' M' : n >= 1e4 ? nf(n / 1e3, 1) + ' k' : nf(n));
 
-export const KIND_LABEL = { chat: 'usage.kind.chat', agent: 'usage.kind.agent', 'claude-agent': 'usage.kind.claude', api: 'usage.kind.api' };   // clés
+export const KIND_LABEL = { chat: 'usage.kind.chat', agent: 'usage.kind.agent', subagent: 'usage.kind.subagent', worker: 'usage.kind.worker', 'claude-agent': 'usage.kind.claude', api: 'usage.kind.api' };   // clés
 
 const pad = (n) => String(n).padStart(2, '0');
 /** Le jour local « AAAA-MM-JJ » d'une date. */

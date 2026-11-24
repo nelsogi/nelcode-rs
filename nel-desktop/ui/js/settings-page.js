@@ -20,7 +20,7 @@ export const CATEGORIES = [
   { id: 'general', icon: 'settings', alias: ['general', 'langue', 'language', 'theme', 'zoom'] },
   { id: 'models', icon: 'asterisk', alias: ['modeles', 'modele', 'models', 'model', 'generation', 'contexte', 'context'] },
   { id: 'providers', icon: 'arrow-left-right', alias: ['fournisseurs', 'fournisseur', 'providers', 'provider', 'distants', 'remote'] },
-  { id: 'agent', icon: 'bot', alias: ['agent', 'explorateurs', 'explorers', 'commandes', 'commands'] },
+  { id: 'agent', icon: 'bot', alias: ['agent', 'explorateurs', 'explorers', 'travailleurs', 'workers', 'commandes', 'commands'] },
   { id: 'claude', icon: 'terminal', alias: ['claude', 'claude-agent'] },
   { id: 'mcp', icon: 'plug', alias: ['mcp'] },
   { id: 'images', icon: 'image', alias: ['images', 'image'] },
@@ -96,6 +96,11 @@ export const SETTINGS = [
   { key: 'explorerTurns', cat: 'agent', group: 'explorers', type: 'range', def: 6, min: 1, max: 20, step: 1 },
   { key: 'explorerModel', cat: 'agent', group: 'explorers', type: 'select', def: null, cls: 'explorer-model', encode: explorerKey, decode: (v) => (v ? JSON.parse(v) : null),
     options: () => [['', t('set.explorerModel.opt.same')], ...S.providers.flatMap((p) => (p.models ?? []).map((m) => [JSON.stringify({ provider: p.id, model: m.id }), `${m.id} — ${p.name}`]))] },
+  { key: 'workerConcurrency', cat: 'agent', group: 'workers', type: 'range', def: 2, min: 1, max: 8, step: 1 },
+  { key: 'workerMax', cat: 'agent', group: 'workers', type: 'range', def: 4, min: 0, max: 10, step: 1 },
+  { key: 'workerTurns', cat: 'agent', group: 'workers', type: 'range', def: 10, min: 1, max: 30, step: 1 },
+  { key: 'workerModel', cat: 'agent', group: 'workers', type: 'select', def: null, cls: 'worker-model', encode: explorerKey, decode: (v) => (v ? JSON.parse(v) : null),
+    options: () => [['', t('set.workerModel.opt.same')], ...S.providers.flatMap((p) => (p.models ?? []).map((m) => [JSON.stringify({ provider: p.id, model: m.id }), `${m.id} — ${p.name}`]))] },
 
   // Claude Agent
   { id: 'claude-key', cat: 'claude', block: claudeKeyBlock },

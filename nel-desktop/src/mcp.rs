@@ -1487,8 +1487,8 @@ pub fn list(app: &AppHandle, dir: Option<&str>) -> Value {
 
 /// Les définitions d'outils comptées dans la barre de contexte (mode Agent) : les outils de Nel Code, et ceux de chaque
 /// serveur activé pour la conversation (dernière liste connue).
-pub fn context(dir: Option<&str>, off: &[String], explorers: bool) -> Value {
-    let builtin = est_tokens(crate::agent::tools(explorers).as_array().unwrap());
+pub fn context(dir: Option<&str>, off: &[String], explorers: bool, workers: bool) -> Value {
+    let builtin = est_tokens(crate::agent::tools(explorers, workers).as_array().unwrap());
     let (servers, _) = servers_for(dir);
     let list: Vec<Value> = servers
         .iter()
