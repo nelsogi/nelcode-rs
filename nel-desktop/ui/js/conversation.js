@@ -6,7 +6,7 @@
 import { locale, num, t, tr } from './i18n.js';
 import { $, confirmDialog, dialog, errText, fold, h, invoke, localIso, newId, paramsText, promptDialog, relDate, richText, showMenu, sizeText, toast } from './util.js';
 import { S, UI } from './state.js';
-import { AGENT_LOCAL, claudeCost, money, refreshNelcode, renderPlan, stepsEl } from './agent.js';
+import { AGENT_LOCAL, STEP_STATUS, claudeCost, money, refreshNelcode, renderPlan, stepsEl } from './agent.js';
 import { U } from './settings.js';
 import { openCatalog } from './catalog.js';
 import { runCommand, updateSuggest } from './palette.js';
@@ -115,9 +115,26 @@ export async function renameSession(s) {
   renderHeader();
 }
 
-// Comme Export de Nel Code C# : "> question" / "● réponse", ou Markdown.
-export async function exportSession(s, markdown) {
-  if (!s.messages.length) return toast(t('conversation.conversation_vide_rien_exporter'), 'warning');
+// Les étapes d'une réponse du mode Agent, en version courte : une ligne par étape de premier niveau (outils,
+// explorateurs et travailleurs avec leur nombre d'étapes), puis le résultat de la revue groupée, fichier par fichier.
+export function stepsText(m, markdown) {
+  const steps = m.agent?.steps ?? [];
+  if (!steps.length) return '';
+  const count = {};
+  for (const st of steps) if (st.parent) count[st.parent] = (count[st.parent] ?? 0) + 1;
+  const status = (k) => (STEP_STATUS[k] ? ` — ${t(STEP_STATUS[k])}` : '');
+  const block = (head, lines) => (markdown ? `*${head}*\n\n${lines.join('\n')}\n\n` : `${head}\n${lines.map((l) => `  ${l}`).join('\n')}\n\n`);
+  let text = block(t('conversation.export_steps'), steps.filter((st) => !st.parent && st.kind !== 'review')
+    .map((st) => `- ${tr(st.title)}${count[st.id] ? ` (${t('agent.steps', { n: count[st.id] })})` : ''}${status(st.status)}`));
+  const rv = steps.find((st) => st.kind === 'review');
+  if (rv) text += block(t('conversation.export_review'), [`- ${tr(rv.title)}${status(rv.status)}`,
+    ...(rv.workers ?? []).flatMap((g) => g.files.map((f) => `  - ${f.path} (${g.worker})${status(f.decision)}`))]);
+  return text;
+}
+
+// Le texte exporté. Comme Export de Nel Code C# : "> question" / "● réponse", ou Markdown ; chaque réponse est signée
+// du modèle qui l'a écrite.
+export function exportText(s, markdown) {
   const title = titleOf(s);
   const about = `${new Date(s.date).toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' })} · ${s.model}`;
   let text = (markdown ? `# ${title}` : title) + '\n\n' + (markdown ? `*${about}*` : about) + '\n\n';
@@ -125,8 +142,17 @@ export async function exportSession(s, markdown) {
     const user = m.role === 'user';
     if (m.compare) { text += `● [${m.model}] ${m.content}\n\n● [${m.compare.model}] ${m.compare.content}\n\n`; continue; }
     const content = [imageLines(m), m.content].filter(Boolean).join('\n');
-    text += markdown ? `${user ? '**Moi**' : '**MiniChat**'}\n\n${content}\n\n` : `${user ? '>' : '●'} ${content}\n\n`;
+    const who = user ? t('conversation.export_me') : (m.model || s.model || t('conversation.export_assistant'));
+    const steps = user ? '' : stepsText(m, markdown);
+    text += markdown ? `**${who}**\n\n${steps}${content}\n\n` : `${user ? '>' : `● [${who}]`}${steps ? `\n${steps}` : ' '}${content}\n\n`;
   }
+  return text;
+}
+
+export async function exportSession(s, markdown) {
+  if (!s.messages.length) return toast(t('conversation.conversation_vide_rien_exporter'), 'warning');
+  const title = titleOf(s);
+  const text = exportText(s, markdown);
   const fileName = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + (markdown ? '.md' : '.txt');
   try {
     const path = await invoke('export_session', { fileName, content: text, markdown, directory: s.workingDirectory || '' });
@@ -326,7 +352,7 @@ export async function startGen(s, g) {
   // Une demande payante (Claude Agent, ou un modèle distant avec un prix) : le budget du mois d'abord. Le résumé
   // automatique n'est pas vérifié : le message qui le suit l'est.
   // S.gen est posé avant : rien d'autre ne part pendant la question.
-  S.gen = { ...g, session: s, text: '', tokens: [], reasoning: '', thinkStart: null, thinkEnd: null, steps: [] };
+  S.gen = { ...g, session: s, text: '', tokens: [], reasoning: '', thinkStart: null, thinkEnd: null, steps: [], modelName: S.model?.remote?.model ?? S.model?.name };
   renderMessages();
   renderComposer();
   renderStatus();
@@ -420,6 +446,8 @@ async function finishReply(g, s, p) {
     // La réflexion d'un modèle distant : gardée avec la réponse, jamais renvoyée au modèle (turnsOf ne prend que content).
     const thought = p.reasoning?.trim() ? { reasoning: p.reasoning.trim(), reasoningSeconds: p.reasoningSeconds ?? 0 } : { reasoning: undefined, reasoningSeconds: undefined };
     thought.agent = p.agent ?? undefined;
+    // Le modèle qui a écrit la réponse (export, signature).
+    thought.model = p.model || g.modelName || undefined;
     if (g.kind === 'send') s.messages.push({ role: 'assistant', content: text, tokens: g.tokens.length ? g.tokens : undefined, ...thought });
     else {
       const versions = g.old.versions ? [...g.old.versions] : [g.old.content];

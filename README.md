@@ -331,7 +331,10 @@ le diff de chaque travailleur, peut lui demander une correction (`revise_worker`
 groupée** : par travailleur puis par fichier, le diff, **Accepter** / **Refuser** pour chaque fichier puis **Valider**,
 ou **Tout accepter** / **Tout refuser**. Rien n'est écrit avant ; chaque fichier accepté devient une écriture ordinaire
 (Annuler, Annuler toute la demande), et le point de restauration git est pris avant la demande, comme d'habitude.
-**Stop** arrête tous les travailleurs et jette les brouillons (après confirmation s'ils ne sont pas vides). Réglages :
+**Dépendances** : avec `after: ["T1"]`, un travailleur attend la fin de T1, puis peut lire son brouillon (jamais
+l'écrire) ; les autres brouillons lui restent invisibles, et une dépendance circulaire est refusée. L'agent est invité
+à écrire dans chaque tâche ce qui doit correspondre (noms de fichiers, classes, identifiants, fonctions), ou à utiliser
+`after`. **Stop** arrête tous les travailleurs et jette les brouillons (après confirmation s'ils ne sont pas vides). Réglages :
 travailleurs en même temps (2), par demande (4 ; 0 pour s'en passer), tours par travailleur (10 ; une correction en
 redonne autant) et leur modèle. Leurs tokens apparaissent dans le Suivi (`worker`) et comptent dans le budget.
 

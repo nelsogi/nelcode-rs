@@ -4,7 +4,7 @@
 import { applyStatic, loadLang, num, t, tr } from './i18n.js';
 import { $, errText, h, invoke, listen, toast } from './util.js';
 import { S, UI } from './state.js';
-import { F, autoGrow, chooseFolder, closeEdit, followEnd, importFlow, loadModel, newSession, onDone, onDrop, onToken, openCompare, openFolder, openLeaderboard, openSession, refreshContext, refreshModels, renameSession, renderAll, renderHeader, renderMessages, renderModels, renderSessions, renderStatus, selectRemote, showReasoning, startNew, stop, submitInput, toggleTransparency, visible, waiting } from './conversation.js';
+import { F, autoGrow, chooseFolder, closeEdit, exportText, followEnd, importFlow, loadModel, newSession, onDone, onDrop, onToken, openCompare, openFolder, openLeaderboard, openSession, refreshContext, refreshModels, renameSession, renderAll, renderHeader, renderMessages, renderModels, renderSessions, renderStatus, selectRemote, showReasoning, startNew, stop, submitInput, toggleTransparency, visible, waiting } from './conversation.js';
 import { nelcodeChip, renderPlan, startClaudeAgent, stepsEl, toggleAgent } from './agent.js';
 import { G, U, UPDATE_EVERY, applyDensity, applyTextSize, applyTheme, checkUpdate, gpuProgress, openSettings, runBenchmark, showBenchmarks, stepTextSize } from './settings.js';
 import * as SETTINGS from './settings-page.js';
@@ -290,4 +290,4 @@ listen('tauri://drag-drop', (e) => onDrop(e.payload.paths ?? []));
 })().catch((e) => toast(t('main.demarrage', { error: errText(e) }), 'error', 0));
 
 // Les tests de l'interface (e2e/) lisent l'état et appellent ces fonctions depuis la page.
-Object.assign(window, { S, F, C, USAGE, IMG, MCP, I18N, SETTINGS, openSettings, renderStatus, newSession, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark });
+Object.assign(window, { S, F, C, USAGE, IMG, MCP, I18N, SETTINGS, openSettings, renderStatus, newSession, startNew, renderHeader, renderMessages, openSession, refreshProviders, onDrop, runBenchmark, exportText });

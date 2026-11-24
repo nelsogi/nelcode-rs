@@ -317,8 +317,10 @@ files are refused. The **Plan** panel shows each task's worker (T1, T2…) and i
 summary and diff, can ask it for a correction (`revise_worker`), then answers. Then comes the **grouped review**: by
 worker then by file, the diff, **Accept** / **Deny** for each file then **Confirm**, or **Accept all** / **Deny all**.
 Nothing is written before; each accepted file becomes an ordinary write (Undo, Undo the whole request), and the git
-restore point is taken before the request, as usual. **Stop** stops every worker and discards the drafts (after
-confirmation if they are not empty). Settings: workers at the same time (2), per request (4; 0 to do without), turns
+restore point is taken before the request, as usual. **Dependencies**: with `after: ["T1"]`, a worker waits for T1 to finish, then may read
+its draft (never write it); other drafts stay invisible, and a circular dependency is refused. The agent is asked to
+write in each task what must match (file names, classes, identifiers, functions), or to use `after`. **Stop** stops
+every worker and discards the drafts (after confirmation if they are not empty). Settings: workers at the same time (2), per request (4; 0 to do without), turns
 per worker (10; a correction gives as many again) and their model. Their tokens appear in Usage (`worker`) and count
 toward the budget.
 

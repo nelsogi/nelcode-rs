@@ -140,6 +140,7 @@ export function stepsEl(steps, m) {
     const body = h('div', { class: 'step-body' });
     const n = count[st.id];
     if (st.kind === 'worker' && st.files?.length) body.append(h('div', { class: 'hint worker-files' }, t('agent.worker_files', { files: st.files.join(', ') })));
+    if (st.kind === 'worker' && st.after?.length) body.append(h('div', { class: 'hint worker-files' }, t('agent.worker_after', { workers: st.after.join(', ') })));
     if (n) { subs.set(st.id, h('div', { class: 'substeps' })); body.append(subs.get(st.id)); }
     if (st.kind === 'review') body.append(reviewEl(st, m));
     // La raison d'un refus ou d'une erreur (Claude Agent) accompagne le diff.

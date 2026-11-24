@@ -568,6 +568,7 @@ fn all_tools() -> Value {
             "task": s("La tâche du travailleur, complète et précise : il ne voit pas la conversation"),
             "files": { "type": "array", "items": { "type": "string" }, "description": "Les fichiers ou dossiers qu'il peut créer ou modifier, relatifs au dossier de travail (un dossier comprend tout ce qu'il contient)" },
             "plan_task": { "type": "integer", "description": "Le numéro (à partir de 1) de la tâche du plan qu'il réalise, s'il y en a une" },
+            "after": { "type": "array", "items": { "type": "string" }, "description": "Les travailleurs (par exemple [\"T1\"]) dont il attend la fin : il pourra lire leurs brouillons, sans les écrire" },
         }), &["task", "files"]),
         f("revise_worker", "Demande une correction à un travailleur déjà lancé dans cette demande : il reprend sa conversation et son brouillon, puis te rend un nouveau résumé et son diff.", json!({
             "worker": s("L'id du travailleur, par exemple « T1 »"),
@@ -705,6 +706,8 @@ pub(crate) struct Run<'a> {
     explorer_usage: Value,
     /// Agent : les travailleurs de la demande (avec leur brouillon), et leurs tokens et coût.
     pub(crate) workers: Vec<crate::worker::Worker>,
+    /// Agent : les ids de travailleurs déjà donnés (T1, T2…), refusés compris : jamais deux fois le même.
+    pub(crate) worker_seq: usize,
     pub(crate) worker_usage: Value,
     /// Agent : le résultat de la revue groupée, pour le modèle (joint à sa réponse dans l'historique suivant).
     pub(crate) review_note: Option<String>,
@@ -717,7 +720,7 @@ impl<'a> Run<'a> {
         let role = if parent.is_some() { Role::Explorer } else { Role::Main };
         Run {
             app, request, steps: Vec::new(), accept_all: false, plan: Value::Null, parent, offset: 0, role, refused: Vec::new(), explorers: 0,
-            explorer_usage: Value::Null, workers: Vec::new(), worker_usage: Value::Null, review_note: None, mcp: Vec::new(),
+            explorer_usage: Value::Null, workers: Vec::new(), worker_seq: 0, worker_usage: Value::Null, review_note: None, mcp: Vec::new(),
         }
     }
 
@@ -1752,7 +1755,7 @@ mod tests {
         assert!(sys.contains("spawn_explorer(task)") && sys.contains("3 au plus par demande") && sys.contains("Ne les lance pas pour une petite tâche"));
         assert!(!system_prompt(&sb, 0, 0).0.contains("spawn_explorer"));
         let (sys, _) = system_prompt(&sb, 0, 4);
-        assert!(sys.contains("spawn_worker(task, files, plan_task)") && sys.contains("4 au plus par demande") && sys.contains("revise_worker") && !sys.contains("spawn_explorer"));
+        assert!(sys.contains("spawn_worker(task, files, plan_task, after)") && sys.contains("Contrat commun") && sys.contains("4 au plus par demande") && sys.contains("revise_worker") && !sys.contains("spawn_explorer"));
         assert!(!system_prompt(&sb, 3, 0).0.contains("spawn_worker"));
         assert!(EXPLORER_SYSTEM.contains("tu n'écris rien") && EXPLORER_SYSTEM.contains("{turns}"));
         assert_eq!(with_ids(&[json!({ "id": "" }), json!({ "id": "x" })], 2).iter().map(|c| c["id"].as_str().unwrap()).collect::<Vec<_>>(), ["call_2_0", "x"]);

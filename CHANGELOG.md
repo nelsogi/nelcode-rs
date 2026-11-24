@@ -25,13 +25,27 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   revue (fichiers acceptés et écrits, refusés, refusés car modifiés entre-temps, ou brouillons jetés par Stop) : il sait
   ce qui a vraiment été écrit. La note part au modèle seulement, la conversation affichée ne change pas.
 - **Stop** arrête tous les travailleurs et jette les brouillons, après confirmation s'ils ne sont pas vides.
+- **Dépendances entre travailleurs** : `spawn_worker` accepte `after: ["T1", …]`. Le travailleur attend que ceux-là
+  aient fini (sans prendre de place), puis peut **lire** leurs brouillons (`read_file`, `list_files`, `search`), jamais
+  les écrire ; les autres brouillons lui restent invisibles. Dépendance inconnue, sur soi-même ou circulaire (même
+  indirecte), ou vers un travailleur refusé : refus expliqué à l'agent. Un id de travailleur n'est jamais donné deux
+  fois dans une demande.
+- **Contrat commun** : le message système demande à l'agent d'écrire dans chaque tâche, mot pour mot, ce qui doit
+  correspondre entre les travailleurs (noms de fichiers, classes, identifiants, fonctions et signatures), ou d'utiliser
+  `after` quand un fichier doit partir de celui d'un autre.
+
+### Modifié
+
+- **Export** : chaque réponse est signée du modèle qui l'a écrite (gardé avec la réponse ; plus jamais « MiniChat »
+  pour un autre modèle), et l'export comprend, en version courte, les étapes du mode Agent (outils, explorateurs et
+  travailleurs avec leur nombre d'étapes) et le résultat de la revue groupée, fichier par fichier.
 - **Réglages → Agent → Travailleurs** : travailleurs en même temps (2), par demande (4 ; 0 : pas de travailleurs),
   tours par travailleur (10) et leur modèle. Exportés avec les réglages portables (sauf le modèle, propre au PC).
 - **Suivi** : les tokens des travailleurs ont leurs lignes (`worker`), comptent dans le budget et dans l'en-tête de la
   conversation ; les lignes des explorateurs (`subagent`) ont maintenant un libellé.
 - Tests : unitaires (portées et chevauchements, brouillon, plan, rapport à l'agent, réglages) et
   `e2e/workers.test.mjs` (attribution exclusive, refus hors des fichiers attribués, brouillon jamais écrit sans
-  accord, revue groupée, correction, Stop, limites).
+  accord, revue groupée, correction, Stop, limites, dépendances `after` et cycles, export).
 
 ## [1.1.0] - 2026-11-24
 

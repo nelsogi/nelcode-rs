@@ -16,11 +16,12 @@ use crate::t;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use crate::agent::{self, Change, Done, Helpers, Role, Run, Sandbox, clip_at, diff, fail, short};
 use crate::remote;
@@ -31,9 +32,11 @@ const MAX_REPORT: usize = 12_000;
 /// Au plus ce nombre de fichiers ou dossiers attribués à un travailleur.
 const MAX_SCOPE: usize = 50;
 
-pub const WORKERS: &str = "Tu peux lancer des travailleurs avec spawn_worker(task, files, plan_task) : chacun a sa propre conversation, lit tout le dossier mais ne crée ou ne modifie que les fichiers (ou dossiers) de files, dans un brouillon ; rien n'est écrit sur le disque avant la revue de l'utilisateur, après ta réponse. \
+pub const WORKERS: &str = "Tu peux lancer des travailleurs avec spawn_worker(task, files, plan_task, after) : chacun a sa propre conversation, lit tout le dossier mais ne crée ou ne modifie que les fichiers (ou dossiers) de files, dans un brouillon ; rien n'est écrit sur le disque avant la revue de l'utilisateur, après ta réponse. \
 Pour un travail en plusieurs parties indépendantes : fais d'abord un plan avec update_plan, puis lance un travailleur par tâche (plan_task : le numéro de la tâche), avec une tâche complète (il ne voit pas la conversation) et ses fichiers ; plusieurs appels dans le même tour tournent en parallèle ; {max} au plus par demande. \
 Un fichier n'est attribué qu'à un seul travailleur pendant toute la demande, et tu ne peux pas écrire toi-même un fichier attribué. \
+Contrat commun : avant de lancer des travailleurs dont le travail doit s'accorder, écris dans chaque tâche, mot pour mot, ce qui doit correspondre entre eux (noms de fichiers, classes, identifiants, fonctions et leurs signatures). \
+Quand un fichier doit partir de celui d'un autre travailleur, utilise after (par exemple after: [\"T1\"]) : le travailleur attend la fin de T1, puis peut lire son brouillon (jamais l'écrire) ; les autres brouillons lui restent invisibles. Pas de dépendance circulaire. \
 Chaque travailleur te rend son résumé et son diff : vérifie-les, et demande une correction avec revise_worker(worker, instructions) plutôt que de tout refaire. \
 Ne lance pas de travailleur pour un petit changement : fais-le toi-même. Quand tout est prêt, réponds par un résumé court : l'utilisateur revoit alors les changements et les accepte ou les refuse.";
 
@@ -60,26 +63,36 @@ pub(crate) struct DraftFile {
 pub(crate) struct Ctx {
     pub scope: Vec<String>,
     pub draft: BTreeMap<String, DraftFile>,
+    /// Les brouillons des travailleurs dont il dépend (after) : lus, jamais écrits.
+    pub deps: BTreeMap<String, DepFile>,
+}
+
+/// Un fichier du brouillon d'une dépendance, tel qu'à sa fin.
+#[derive(Debug, Clone)]
+pub(crate) struct DepFile {
+    pub worker: String,
+    pub created: bool,
+    pub text: String,
 }
 
 impl Ctx {
-    /// Le texte du brouillon pour ce chemin relatif.
+    /// Le texte du brouillon pour ce chemin relatif (le sien, sinon celui d'une dépendance).
     pub fn text(&self, rel: &str) -> Option<String> {
-        self.draft.get(rel).map(|d| d.after.clone())
+        self.draft.get(rel).map(|d| d.after.clone()).or_else(|| self.deps.get(rel).map(|d| d.text.clone()))
     }
 
     pub fn texts(&self) -> HashMap<String, String> {
-        self.draft.iter().map(|(k, d)| (k.clone(), d.after.clone())).collect()
+        let deps = self.deps.iter().map(|(k, d)| (k.clone(), d.text.clone()));
+        deps.chain(self.draft.iter().map(|(k, d)| (k.clone(), d.after.clone()))).collect()
     }
 
-    /// Les fichiers créés dans le brouillon sous `dir` (chemin relatif, « . » : tout), relatifs à `dir`.
+    /// Les fichiers créés dans les brouillons (le sien et ceux des dépendances) sous `dir` (chemin relatif, « . » :
+    /// tout), relatifs à `dir`.
     pub fn created_under(&self, dir: &str) -> Vec<String> {
         let prefix = format!("{dir}/");
-        self.draft
-            .iter()
-            .filter(|(_, d)| d.before.is_none())
-            .filter_map(|(rel, _)| if dir == "." { Some(rel.clone()) } else { rel.strip_prefix(&prefix).map(str::to_string) })
-            .collect()
+        let own = self.draft.iter().filter(|(_, d)| d.before.is_none()).map(|(rel, _)| rel);
+        let deps = self.deps.iter().filter(|(_, d)| d.created).map(|(rel, _)| rel);
+        own.chain(deps).filter_map(|rel| if dir == "." { Some(rel.clone()) } else { rel.strip_prefix(&prefix).map(str::to_string) }).collect()
     }
 }
 
@@ -162,7 +175,9 @@ pub(crate) fn draft_tool(run: &mut Run<'_>, sb: &Sandbox, creating: bool, args: 
             Role::Worker(c) => c,
             _ => unreachable!("draft_tool hors d'un travailleur"),
         };
-        let r = if !in_scope(&ctx.scope, &rel) {
+        let r = if let Some(dep) = ctx.deps.get(&rel) {
+            Err(t!("rs.worker.dep_read_only", path = rel, worker = dep.worker))
+        } else if !in_scope(&ctx.scope, &rel) {
             Err(t!("rs.worker.out_of_scope", path = rel, files = ctx.scope.join(", ")))
         } else if creating {
             let content = args["content"].as_str().unwrap_or_default();
@@ -268,6 +283,77 @@ pub(crate) struct Worker {
     /// Les étapes déjà rangées sous la sienne.
     pub steps_n: usize,
     pub refused: Vec<String>,
+    /// Les travailleurs dont il dépend (after).
+    pub after: Vec<String>,
+}
+
+/// Ce qu'un travailleur laisse à ceux qui dépendent de lui : son état et son brouillon.
+pub(crate) struct Shared {
+    status: String,
+    files: BTreeMap<String, DepFile>,
+}
+
+type Waiter = watch::Receiver<Option<Arc<Shared>>>;
+
+fn dep_files(w: &Worker) -> BTreeMap<String, DepFile> {
+    w.ctx.draft.iter().map(|(k, d)| (k.clone(), DepFile { worker: w.id.clone(), created: d.before.is_none(), text: d.after.clone() })).collect()
+}
+
+/// Les dépendances (after) des travailleurs d'un tour : (id, after) de chacun, et les travailleurs déjà finis de la
+/// demande. Rend les refus (place dans `batch`, raison) : dépendance inconnue, circulaire (soi-même compris), ou vers un
+/// travailleur refusé.
+pub fn check_after(batch: &[(String, Vec<String>)], finished: &[String]) -> Vec<(usize, String)> {
+    let pos = |d: &str| batch.iter().position(|(b, _)| b == d);
+    let mut bad: BTreeMap<usize, String> = BTreeMap::new();
+    for (i, (id, after)) in batch.iter().enumerate() {
+        for d in after {
+            if d == id {
+                bad.entry(i).or_insert(t!("rs.worker.cycle", cycle = format!("{id} → {id}")));
+            } else if pos(d).is_none() && !finished.contains(d) {
+                let mut known: Vec<&str> = finished.iter().map(String::as_str).chain(batch.iter().map(|(b, _)| b.as_str()).filter(|b| b != id)).collect();
+                known.sort();
+                bad.entry(i).or_insert(t!("rs.worker.unknown_after", worker = d, known = if known.is_empty() { "—".to_string() } else { known.join(", ") }));
+            }
+        }
+    }
+    // Un cycle : un chemin de dépendances du tour qui revient sur lui-même.
+    fn cycle(batch: &[(String, Vec<String>)], i: usize, path: &mut Vec<usize>) -> Option<Vec<usize>> {
+        if let Some(p) = path.iter().position(|&x| x == i) {
+            return Some(path[p..].to_vec());
+        }
+        path.push(i);
+        for d in &batch[i].1 {
+            if let Some(j) = batch.iter().position(|(b, _)| b == d).filter(|&j| j != i)
+                && let Some(c) = cycle(batch, j, path)
+            {
+                return Some(c);
+            }
+        }
+        path.pop();
+        None
+    }
+    for i in 0..batch.len() {
+        if let Some(c) = cycle(batch, i, &mut Vec::new()) {
+            let ids: Vec<&str> = c.iter().chain(c.first()).map(|&k| batch[k].0.as_str()).collect();
+            for k in &c {
+                bad.entry(*k).or_insert(t!("rs.worker.cycle", cycle = ids.join(" → ")));
+            }
+        }
+    }
+    // Un travailleur qui attend un travailleur refusé l'est aussi.
+    loop {
+        let more: Vec<(usize, String)> = batch
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !bad.contains_key(i))
+            .filter_map(|(i, (_, after))| after.iter().find(|d| pos(d).is_some_and(|j| bad.contains_key(&j))).map(|d| (i, t!("rs.worker.after_refused", worker = d))))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        bad.extend(more);
+    }
+    bad.into_iter().collect()
 }
 
 /// Ce que rend un passage de travailleur.
@@ -282,17 +368,50 @@ struct Worked {
 
 /// Un travailleur (nouveau, ou une correction avec `instructions`) : attend une place, puis mène sa conversation avec
 /// les outils de lecture et son brouillon. Son étape (`step`) suit son état, sa durée et ses tokens.
+/// `waits` : les travailleurs du même tour dont il dépend ; à la fin, son état et son brouillon partent dans `done`
+/// pour ceux qui dépendent de lui.
 #[allow(clippy::too_many_arguments)]
-async fn work(app: &AppHandle, request: &str, mut w: Worker, mut step: Value, instructions: Option<String>, sb: &Sandbox, cfg: &Helpers, cancel: &Notify) -> Worked {
+async fn work(app: &AppHandle, request: &str, w: Worker, step: Value, instructions: Option<String>, waits: Vec<(String, Waiter)>, done: watch::Sender<Option<Arc<Shared>>>, sb: &Sandbox, cfg: &Helpers, cancel: &Notify) -> Worked {
+    let out = work_inner(app, request, w, step, instructions, waits, sb, cfg, cancel).await;
+    let _ = done.send(Some(Arc::new(Shared { status: out.status.to_string(), files: dep_files(&out.worker) })));
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn work_inner(app: &AppHandle, request: &str, mut w: Worker, mut step: Value, instructions: Option<String>, mut waits: Vec<(String, Waiter)>, sb: &Sandbox, cfg: &Helpers, cancel: &Notify) -> Worked {
     let emit = |s: &Value| {
         let _ = app.emit("agent-step", s);
     };
     let mut run = Run::new(app, request.to_string(), Some(w.step_id.clone()));
     run.offset = w.steps_n;
     run.role = Role::Worker(std::mem::take(&mut w.ctx));
-    let place = tokio::select! {
-        p = cfg.places.acquire() => p.ok(),
-        _ = cancel.notified() => None,
+    // Les travailleurs dont il dépend : il attend leur fin (sans prendre de place), puis lit leurs brouillons.
+    let mut stopped_waiting = false;
+    for (_, rx) in waits.iter_mut() {
+        let got = tokio::select! {
+            r = rx.wait_for(|v| v.is_some()) => r.ok().and_then(|v| (*v).clone()),
+            _ = cancel.notified() => {
+                stopped_waiting = true;
+                None
+            }
+        };
+        if stopped_waiting {
+            break;
+        }
+        if let (Some(sh), Role::Worker(c)) = (got, &mut run.role) {
+            c.deps.extend(sh.files.iter().map(|(k, f)| (k.clone(), f.clone())));
+            if sh.status != "done" {
+                crate::log::info(&format!("agent: worker {} starts after a dependency that ended \"{}\"", w.id, sh.status));
+            }
+        }
+    }
+    let place = if stopped_waiting {
+        None
+    } else {
+        tokio::select! {
+            p = cfg.places.acquire() => p.ok(),
+            _ = cancel.notified() => None,
+        }
     };
     let give_back = |w: &mut Worker, run: &mut Run<'_>| {
         if let Role::Worker(c) = std::mem::replace(&mut run.role, Role::Main) {
@@ -312,7 +431,19 @@ async fn work(app: &AppHandle, request: &str, mut w: Worker, mut step: Value, in
     emit(&step);
     if w.messages.is_empty() {
         let files = w_scope(&run).join(", ");
-        let system = format!("{}\nDossier de travail : .", WORKER_SYSTEM.replace("{turns}", &cfg.turns.to_string()).replace("{files}", &files));
+        let mut system = WORKER_SYSTEM.replace("{turns}", &cfg.turns.to_string()).replace("{files}", &files);
+        if !w.after.is_empty() {
+            let theirs: Vec<String> = match &run.role {
+                Role::Worker(c) => c.deps.keys().cloned().collect(),
+                _ => vec![],
+            };
+            let theirs = if theirs.is_empty() { "aucun fichier".to_string() } else { theirs.join(", ") };
+            system += &format!(
+                "\nTu commences après {} : tu peux lire leurs brouillons ({theirs}) avec read_file, list_files et search, mais jamais les écrire. Les autres brouillons te sont invisibles.",
+                w.after.join(", ")
+            );
+        }
+        let system = format!("{system}\nDossier de travail : .");
         w.messages = vec![json!({ "role": "system", "content": system }), json!({ "role": "user", "content": w.task })];
     }
     if let Some(i) = &instructions {
@@ -438,12 +569,42 @@ fn num(id: &str) -> u32 {
     id.trim_start_matches('T').parse().unwrap_or(0)
 }
 
+/// Un appel de travailleur du tour, prêt à partir.
+struct Job {
+    /// Sa place dans les résultats du tour.
+    k: usize,
+    w: Worker,
+    step: Value,
+    /// Une correction (revise_worker).
+    instructions: Option<String>,
+    /// Une note pour l'agent (plan_task inconnu).
+    note: Option<String>,
+}
+
+/// `after` : une liste d'ids (« T1 », « t2 »), ou un seul.
+fn parse_after(v: &Value) -> Result<Vec<String>> {
+    let list: Vec<&Value> = match v {
+        Value::Null => vec![],
+        Value::String(_) => vec![v],
+        Value::Array(a) => a.iter().collect(),
+        _ => return Err(t!("rs.worker.bad_after")),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for x in list {
+        let id = x.as_str().map(|s| s.trim().to_uppercase()).filter(|s| !s.is_empty()).ok_or_else(|| t!("rs.worker.bad_after"))?;
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
 /// Des `spawn_worker` et `revise_worker` du même tour : lancés ensemble (au plus `places` à la fois), dans la limite
-/// par demande. Stop les arrête tous. Rend le résultat de chaque appel, dans l'ordre.
+/// par demande ; un travailleur avec `after` attend ceux-là (du tour, ou déjà finis) et lit leurs brouillons. Stop les
+/// arrête tous. Rend le résultat de chaque appel, dans l'ordre.
 pub(crate) async fn work_all(run: &mut Run<'_>, sb: &Sandbox, calls: &[Value], cfg: &Helpers, cancel: &Notify) -> Vec<Done> {
     let mut out: Vec<Option<Done>> = Vec::new();
-    // (place dans `out`, travailleur, son étape, correction demandée, note pour l'agent)
-    let mut jobs: Vec<(usize, Worker, Value, Option<String>, Option<String>)> = Vec::new();
+    let mut jobs: Vec<Job> = Vec::new();
     for c in calls {
         let name = c["function"]["name"].as_str().unwrap_or_default();
         let raw = c["function"]["arguments"].as_str().unwrap_or("{}");
@@ -463,7 +624,7 @@ pub(crate) async fn work_all(run: &mut Run<'_>, sb: &Sandbox, calls: &[Value], c
                 continue;
             }
             let Some(pos) = run.workers.iter().position(|w| w.id.eq_ignore_ascii_case(&id)) else {
-                let why = if jobs.iter().any(|j| j.1.id.eq_ignore_ascii_case(&id)) {
+                let why = if jobs.iter().any(|j| j.w.id.eq_ignore_ascii_case(&id)) {
                     t!("rs.worker.busy", worker = id)
                 } else {
                     let known: Vec<&str> = run.workers.iter().map(|w| w.id.as_str()).collect();
@@ -476,7 +637,7 @@ pub(crate) async fn work_all(run: &mut Run<'_>, sb: &Sandbox, calls: &[Value], c
             run.update(&w.step_id, json!({ "status": "waiting", "revision": instructions }));
             let step = run.steps.iter().find(|s| s["id"] == w.step_id.as_str()).cloned().unwrap_or_default();
             plan_mark(run, &w.id, "waiting", Some("in_progress"));
-            jobs.push((out.len(), w, step, Some(instructions), None));
+            jobs.push(Job { k: out.len(), w, step, instructions: Some(instructions), note: None });
             out.push(None);
             continue;
         }
@@ -485,8 +646,8 @@ pub(crate) async fn work_all(run: &mut Run<'_>, sb: &Sandbox, calls: &[Value], c
             out.push(Some(fail(run, "worker", t!("rs.step.worker_title"), t!("rs.worker.empty_task"))));
             continue;
         }
-        let spawned = run.workers.len() + jobs.iter().filter(|j| j.3.is_none()).count();
-        let id = format!("T{}", spawned + 1);
+        let spawned = run.workers.len() + jobs.iter().filter(|j| j.instructions.is_none()).count();
+        let id = format!("T{}", run.worker_seq + 1);
         let title = t!("rs.step.worker", worker = id, task = short(&task, 80));
         if spawned >= cfg.max {
             out.push(Some(fail(run, "worker", title, t!("rs.worker.max_reached", n = cfg.max))));
@@ -499,20 +660,47 @@ pub(crate) async fn work_all(run: &mut Run<'_>, sb: &Sandbox, calls: &[Value], c
                 continue;
             }
         };
+        let after = match parse_after(&args["after"]) {
+            Ok(a) => a,
+            Err(e) => {
+                out.push(Some(fail(run, "worker", title, e)));
+                continue;
+            }
+        };
         // Attribution exclusive : aucun chevauchement avec un travailleur de la demande (en cours ou fini).
-        let others = run.workers.iter().map(|w| (&w.id, &w.ctx.scope)).chain(jobs.iter().map(|j| (&j.1.id, &j.1.ctx.scope)));
+        let others = run.workers.iter().map(|w| (&w.id, &w.ctx.scope)).chain(jobs.iter().map(|j| (&j.w.id, &j.w.ctx.scope)));
         let clash = others.flat_map(|(wid, ws)| ws.iter().map(move |s| (wid, s))).find_map(|(wid, s)| scope.iter().find(|n| overlap(n, s)).map(|n| (n.clone(), wid.clone(), s.clone())));
         if let Some((path, worker, theirs)) = clash {
             out.push(Some(fail(run, "worker", title, t!("rs.worker.overlap", path = path, worker = worker, scope = theirs))));
             continue;
         }
-        let step_id = run.step(json!({ "kind": "worker", "title": title, "worker": id, "task": task, "files": scope, "model": cfg.model, "status": "waiting" }));
+        run.worker_seq += 1;
+        let step_id = run.step(json!({ "kind": "worker", "title": title, "worker": id, "task": task, "files": scope, "after": after, "model": cfg.model, "status": "waiting" }));
         let note = args["plan_task"].as_u64().and_then(|n| plan_assign(run, n, &id));
         let step = run.steps.last().cloned().unwrap_or_default();
-        let w = Worker { id, task, step_id, messages: Vec::new(), ctx: Ctx { scope, draft: BTreeMap::new() }, steps_n: 0, refused: Vec::new() };
-        jobs.push((out.len(), w, step, None, note));
+        let w = Worker { id, task, step_id, messages: Vec::new(), ctx: Ctx { scope, ..Default::default() }, steps_n: 0, refused: Vec::new(), after };
+        jobs.push(Job { k: out.len(), w, step, instructions: None, note });
         out.push(None);
     }
+    // Les dépendances : inconnues, circulaires, ou vers un travailleur refusé : refusées, avec la raison pour l'agent.
+    let batch: Vec<(String, Vec<String>)> = jobs.iter().map(|j| (j.w.id.clone(), if j.instructions.is_none() { j.w.after.clone() } else { vec![] })).collect();
+    let finished: Vec<String> = run.workers.iter().map(|w| w.id.clone()).collect();
+    for (i, why) in check_after(&batch, &finished).into_iter().rev() {
+        let j = jobs.remove(i);
+        run.update(&j.w.step_id, json!({ "status": "error", "detail": why }));
+        plan_mark(run, &j.w.id, "error", None);
+        out[j.k] = Some(Done::Result(format!("erreur : {}", crate::i18n::french(&why))));
+    }
+    // Les dépendances déjà finies : leurs brouillons tout de suite ; celles du tour : attendues.
+    for j in jobs.iter_mut().filter(|j| j.instructions.is_none()) {
+        for d in &j.w.after {
+            if let Some(fw) = run.workers.iter().find(|w| &w.id == d) {
+                j.w.ctx.deps.extend(dep_files(fw));
+            }
+        }
+    }
+    let ids: Vec<String> = jobs.iter().map(|j| j.w.id.clone()).collect();
+    let (txs, rxs): (Vec<_>, Vec<_>) = jobs.iter().map(|_| watch::channel(None::<Arc<Shared>>)).unzip();
     // Chaque travailleur a son propre Stop : celui de la demande ne réveille qu'une attente.
     let stops: Vec<Notify> = jobs.iter().map(|_| Notify::new()).collect();
     let (app, request) = (run.app, run.request.clone());
@@ -520,11 +708,14 @@ pub(crate) async fn work_all(run: &mut Run<'_>, sb: &Sandbox, calls: &[Value], c
     let mut notes: Vec<Option<String>> = Vec::new();
     let futures: Vec<_> = jobs
         .into_iter()
+        .zip(txs)
         .zip(&stops)
-        .map(|((k, w, step, instructions, note), stop)| {
-            places.push(k);
-            notes.push(note);
-            work(app, &request, w, step, instructions, sb, cfg, stop)
+        .map(|((j, tx), stop)| {
+            places.push(j.k);
+            notes.push(j.note);
+            let waits: Vec<(String, Waiter)> =
+                if j.instructions.is_some() { vec![] } else { j.w.after.iter().filter_map(|d| ids.iter().position(|x| x == d).map(|p| (d.clone(), rxs[p].clone()))).collect() };
+            work(app, &request, j.w, j.step, j.instructions, waits, tx, sb, cfg, stop)
         })
         .collect();
     let mut all = std::pin::pin!(futures_util::future::join_all(futures));
@@ -715,7 +906,7 @@ mod tests {
         assert!(parse_scope(&sb, &json!(["../x"])).is_err());
         assert!(parse_scope(&sb, &json!([".env"])).unwrap_err().fr().contains("protégé"));
         assert!(parse_scope(&sb, &json!([3])).is_err());
-        let w = Worker { id: "T1".into(), task: "t".into(), step_id: "s1".into(), messages: vec![], ctx: Ctx { scope: vec!["src/ui".into()], draft: BTreeMap::new() }, steps_n: 0, refused: vec![] };
+        let w = Worker { id: "T1".into(), task: "t".into(), step_id: "s1".into(), messages: vec![], ctx: Ctx { scope: vec!["src/ui".into()], ..Default::default() }, steps_n: 0, refused: vec![], after: vec![] };
         assert_eq!(owner(std::slice::from_ref(&w), &sb, "src/ui/x.js"), Some(("T1".into(), "src/ui".into())));
         assert_eq!(owner(&[w], &sb, "src/a.cs"), None);
         fs::remove_dir_all(&d).unwrap();
@@ -724,7 +915,7 @@ mod tests {
     #[test]
     fn brouillon() {
         let d = tmp();
-        let mut c = Ctx { scope: vec!["src".into()], draft: BTreeMap::new() };
+        let mut c = Ctx { scope: vec!["src".into()], ..Default::default() };
         c.draft.insert("src/ui/n.js".into(), DraftFile { path: d.join("src/ui/n.js"), before: None, after: "n".into() });
         c.draft.insert("src/a.cs".into(), DraftFile { path: d.join("src/a.cs"), before: Some("un\n".into()), after: "1\n".into() });
         assert_eq!(c.text("src/a.cs").as_deref(), Some("1\n"));
@@ -747,6 +938,29 @@ mod tests {
     }
 
     #[test]
+    fn dependances() {
+        let b = |v: &[(&str, &[&str])]| v.iter().map(|(id, a)| (id.to_string(), a.iter().map(|x| x.to_string()).collect())).collect::<Vec<(String, Vec<String>)>>();
+        // Valides : du tour (même plus loin dans la liste), ou déjà finies.
+        assert!(check_after(&b(&[("T1", &[]), ("T2", &["T1"]), ("T3", &["T4", "T0"]), ("T4", &[])]), &["T0".into()]).is_empty());
+        let bad = check_after(&b(&[("T1", &["T2"]), ("T2", &["T3"]), ("T3", &["T1"]), ("T4", &["T4"]), ("T5", &["T9"]), ("T6", &["T5"]), ("T7", &["T1"])]), &[]);
+        let why: Vec<(usize, String)> = bad.into_iter().map(|(i, w)| (i, w.fr())).collect();
+        assert_eq!(why.iter().map(|w| w.0).collect::<Vec<_>>(), [0, 1, 2, 3, 4, 5, 6]);
+        assert!(why[0].1.contains("dépendance circulaire refusée (T1 → T2 → T3 → T1)"), "{}", why[0].1);
+        assert!(why[3].1.contains("(T4 → T4)"));
+        assert!(why[4].1.contains("pas de travailleur « T9 »"));
+        assert!(why[5].1.contains("il attend le travailleur T5, qui a été refusé") && why[6].1.contains("T1, qui a été refusé"));
+        assert_eq!(parse_after(&json!(["t1", " T2 ", "T1"])).unwrap(), ["T1", "T2"]);
+        assert_eq!(parse_after(&json!("T3")).unwrap(), ["T3"]);
+        assert!(parse_after(&Value::Null).unwrap().is_empty() && parse_after(&json!([1])).is_err() && parse_after(&json!({})).is_err());
+        // Le brouillon d'une dépendance : lu (le sien d'abord), jamais écrit ; ses fichiers créés sont listés.
+        let mut c = Ctx { scope: vec!["src/b".into()], ..Default::default() };
+        c.deps.insert("src/a/api.js".into(), DepFile { worker: "T1".into(), created: true, text: "api".into() });
+        assert_eq!(c.text("src/a/api.js").as_deref(), Some("api"));
+        assert_eq!(c.created_under("src"), ["a/api.js"]);
+        assert_eq!(c.texts()["src/a/api.js"], "api");
+    }
+
+    #[test]
     fn note_de_revue() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let n = review_note(&s(&["a.cs"]), &s(&["b.cs", "c.cs"]), &s(&["d.cs"]), &[]);
@@ -756,10 +970,10 @@ mod tests {
 
     #[test]
     fn rapport_pour_l_agent() {
-        let mut ctx = Ctx { scope: vec!["src".into()], draft: BTreeMap::new() };
+        let mut ctx = Ctx { scope: vec!["src".into()], ..Default::default() };
         ctx.draft.insert("src/a.cs".into(), DraftFile { path: PathBuf::from("a"), before: Some("un\ndeux\n".into()), after: "un\n2\n".into() });
         ctx.draft.insert("src/b.cs".into(), DraftFile { path: PathBuf::from("b"), before: None, after: "b\n".into() });
-        let w = Worker { id: "T2".into(), task: "Corriger".into(), step_id: "s1".into(), messages: vec![], ctx, steps_n: 0, refused: vec![".env".into()] };
+        let w = Worker { id: "T2".into(), task: "Corriger".into(), step_id: "s1".into(), messages: vec![], ctx, steps_n: 0, refused: vec![".env".into()], after: vec![] };
         let r = report(&w, "done", "Fait.");
         assert!(r.starts_with("Travailleur T2 (« Corriger ») : terminé.\nRésumé :\nFait.\n"));
         assert!(r.contains("- src/a.cs : modifié (+1 −1)\n- src/b.cs : créé (+1 −0)\n"));

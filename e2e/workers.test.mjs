@@ -42,6 +42,11 @@ const MAIN = {
   'chef-stop-vide': () => ['', [work('ATTEND', ['s4'])]],
   'chef-limite': (n) => (n ? ['Limité.', []] : ['', [work('L', ['l1']), work('L', ['l2']), work('L', ['l3'])]]),
   'chef-seul': () => ['OK.', []],
+  'chef-dep': (n) => (n ? ['Dépendances faites.', []] : ['', [work('BASE', ['src/base']), call('spawn_worker', { task: 'SUITE', files: ['src/suite'], after: ['T1'] }), work('AUTRE', ['src/autre2'])]]),
+  'chef-cycle': (n) => (n ? ['Refusé.', []] : ['', [
+    call('spawn_worker', { task: 'C1', files: ['c1'], after: ['T2'] }), call('spawn_worker', { task: 'C2', files: ['c2'], after: ['T1'] }),
+    call('spawn_worker', { task: 'C3', files: ['c3'], after: ['T3'] }), call('spawn_worker', { task: 'C4', files: ['c4'], after: ['T9'] }),
+  ]]),
   ouvrier: () => ['?', []],
 };
 // Un travailleur, selon sa tâche : [contenu, appels, délai en ms]. n : résultats d'outils déjà reçus.
@@ -66,6 +71,13 @@ const WORKER = (task, n, body) => {
     return n ? ['Trop tard.', [], 15_000] : ['', [call('write_file', { path: `${dir}/x.txt`, content: 'x' })]];
   }
   if (task === 'ATTEND') return ['Trop tard.', [], 15_000];
+  if (task === 'BASE') return n ? ['Base faite.', []] : ['', [call('write_file', { path: 'src/base/api.js', content: 'export function nom() {}\n' })], 800];
+  if (task === 'AUTRE') return n ? ['Autre fait.', []] : ['', [call('write_file', { path: 'src/autre2/z.js', content: 'secret du brouillon\n' })]];
+  if (task === 'SUITE') return n ? ['Suite faite.', []] : ['', [
+    call('read_file', { path: 'src/base/api.js' }), call('edit_file', { path: 'src/base/api.js', old_text: 'nom', new_text: 'X' }),
+    call('list_files', {}), call('search', { query: 'export function' }), call('read_file', { path: 'src/autre2/z.js' }),
+    call('write_file', { path: 'src/suite/use.js', content: "import { nom } from '../base/api.js';\n" }),
+  ]];
   if (task === 'L') return ['', [call('list_files', {})]];
   return ['?', []];
 };
@@ -192,7 +204,8 @@ test('attribution exclusive, plan des travailleurs, brouillon vu par ses lecture
   assert.ok(workers.every((b) => !JSON.stringify(b.messages).includes('Refais l\'interface')));
   assert.match(workers.find((b) => b.messages[1].content === 'UI').messages[0].content, /que ces fichiers ou dossiers : src\/ui\./);
   assert.ok(chats[0].tools.some((t) => t.function.name === 'spawn_worker') && chats[0].tools.some((t) => t.function.name === 'revise_worker'));
-  assert.match(chats[0].messages[0].content, /spawn_worker\(task, files, plan_task\)/);
+  assert.match(chats[0].messages[0].content, /spawn_worker\(task, files, plan_task, after\)/);
+  assert.match(chats[0].messages[0].content, /Contrat commun : .*noms de fichiers, classes, identifiants, fonctions/);
   // Le plan : chaque tâche avec son travailleur et son état.
   assert.equal(await A.ev(`[...document.querySelectorAll('#plan li')].map((li) => li.dataset.worker + ':' + li.dataset.status + ':' + li.querySelector('.plan-worker')?.dataset.workerStatus).join()`), 'T1:done:done,T2:done:done');
   // La revue : par travailleur puis par fichier.
@@ -334,6 +347,57 @@ test('Stop : confirmation si des brouillons existent (Annuler continue), puis to
   await A.ev(`T.key('Escape', {}, document)`);
   await finish();
   assert.ok(await A.ev(`document.getElementById('overlay').hidden`));
+});
+
+test('after : le travailleur attend T1, lit son brouillon sans pouvoir l\'écrire, ne voit pas les autres ; export avec les étapes et le nom du modèle', async () => {
+  const before = workers.length;
+  await start('chef-dep', 'Fais la base puis la suite');
+  await A.waitFor(`(() => { const w = S.gen?.steps.filter((s) => s.kind === 'worker') ?? []; return w[0]?.status === 'running' && w[1]?.status === 'waiting'; })()`, 10_000, 'T2 attend T1');
+  await reviewPending();
+  const mine = workers.slice(before);
+  const task = (b) => b.messages[1].content;
+  assert.ok(mine.findIndex((b) => task(b) === 'SUITE') > mine.findLastIndex((b) => task(b) === 'BASE'), 'SUITE commence après la fin de BASE');
+  const suite = mine.findLast((b) => task(b) === 'SUITE');
+  assert.match(suite.messages[0].content, /Tu commences après T1 : tu peux lire leurs brouillons \(src\/base\/api\.js\) avec read_file, list_files et search, mais jamais les écrire\./);
+  const r = suite.messages.filter((x) => x.role === 'tool').map((x) => x.content);
+  assert.match(r[0], /1  export function nom\(\) \{\}/, 'lit le brouillon de T1');
+  assert.match(r[1], /« src\/base\/api\.js » est dans le brouillon du travailleur T1 : tu peux le lire, jamais l'écrire/);
+  assert.ok(r[2].split('\n').includes('src/base/api.js') && !r[2].includes('autre2'), 'liste : le brouillon de T1, pas celui de T3');
+  assert.match(r[3], /^src\/base\/api\.js:1: export function nom\(\) \{\}\n\(1 fichier protégé non parcouru : travailleur\)$/, 'search : le brouillon de T1');
+  assert.match(r[4], /^erreur : /, 'le brouillon de T3 lui est invisible');
+  assert.ok(!JSON.stringify(suite).includes('secret du brouillon'));
+  const steps = await genSteps();
+  assert.deepEqual(steps.find((s) => s.worker === 'T2').after, ['T1']);
+  assert.match(await A.ev(`${msgEl}.querySelector('.step.worker[data-step="${steps.find((s) => s.worker === 'T2').id}"]').textContent`), /Après : T1/);
+  await action('accept_all');
+  await finish();
+  assert.equal(read('src/base/api.js'), 'export function nom() {}\n', 'jamais écrit par T2');
+  assert.equal(read('src/suite/use.js'), "import { nom } from '../base/api.js';\n");
+  // L'export : chaque réponse signée du modèle, avec les étapes et la revue groupée en version courte.
+  const md = await A.ev(`exportText(S.current, true)`);
+  assert.ok(!md.includes('MiniChat'), 'plus jamais MiniChat');
+  assert.match(md, /\*\*Moi\*\*\n\nFais la base puis la suite\n\n\*\*chef-dep\*\*\n\n\*Étapes\*\n\n/);
+  assert.match(md, /- Travailleur T1 : BASE \(1 étape\)\n- Travailleur T2 : SUITE \(6 étapes\)\n- Travailleur T3 : AUTRE \(1 étape\)\n/);
+  assert.match(md, /\*Revue groupée\*\n\n- Revue des changements des travailleurs : 3 accepté\(s\), 0 refusé\(s\), 0 en erreur\n  - src\/base\/api\.js \(T1\) — acceptée\n  - src\/suite\/use\.js \(T2\) — acceptée\n  - src\/autre2\/z\.js \(T3\) — acceptée\n\nDépendances faites\./);
+  assert.match(md, /\*\*chef\*\*\n\n\*Étapes\*\n\n/, 'les réponses plus anciennes aussi');
+  const txt = await A.ev(`exportText(S.current, false)`);
+  assert.match(txt, /> Fais la base puis la suite\n\n● \[chef-dep\]\nÉtapes\n  - Travailleur T1 : BASE \(1 étape\)/);
+  for (const d of ['src/base', 'src/suite', 'src/autre2']) fs.rmSync(path.join(DIR, d), { recursive: true });
+});
+
+test('after : dépendance circulaire, sur soi-même ou inconnue refusée, avec la raison pour l\'agent', async () => {
+  const before = workers.length;
+  await start('chef-cycle', 'Boucle');
+  await finish();
+  assert.equal(workers.length, before, 'aucun travailleur lancé');
+  const r = chats.at(-1).messages.filter((x) => x.role === 'tool').map((x) => x.content);
+  assert.match(r[0], /^erreur : dépendance circulaire refusée \(T1 → T2 → T1\)/);
+  assert.match(r[1], /dépendance circulaire refusée/);
+  assert.match(r[2], /dépendance circulaire refusée \(T3 → T3\)/);
+  assert.match(r[3], /after : pas de travailleur « T9 » dans cette demande/);
+  const m = await lastMsg();
+  assert.deepEqual(m.agent.steps.filter((s) => s.kind === 'worker').map((s) => s.status), ['error', 'error', 'error', 'error']);
+  assert.ok(!m.agent.steps.some((s) => s.kind === 'review'));
 });
 
 test('limites (travailleurs par demande, tours), 0 : pas de travailleurs ; réglages ; modèle des travailleurs', async () => {
