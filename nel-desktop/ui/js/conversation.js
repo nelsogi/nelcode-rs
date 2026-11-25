@@ -3,7 +3,7 @@
 
 // --- Conversations ---------------------------------------------------------------------------------------
 
-import { locale, num, t, tr } from './i18n.js';
+import { locale, num, stepText, t, tr } from './i18n.js';
 import { $, confirmDialog, dialog, errText, fold, h, invoke, localIso, newId, paramsText, promptDialog, relDate, richText, showMenu, sizeText, toast } from './util.js';
 import { S, UI } from './state.js';
 import { AGENT_LOCAL, STEP_STATUS, claudeCost, money, refreshNelcode, renderPlan, stepsEl } from './agent.js';
@@ -127,9 +127,9 @@ export function stepsText(m, markdown) {
   // Un travailleur : sa tâche entière (le contrat donné par l'agent), jamais coupée.
   const task = (st) => (st.kind === 'worker' && st.task ? [`  - ${t('conversation.export_task', { task: st.task.replace(/\n/g, '\n    ') })}`] : []);
   let text = block(t('conversation.export_steps'), steps.filter((st) => !st.parent && st.kind !== 'review')
-    .flatMap((st) => [`- ${tr(st.title)}${count[st.id] ? ` (${t('agent.steps', { n: count[st.id] })})` : ''}${status(st.status)}`, ...task(st)]));
+    .flatMap((st) => [`- ${stepText(st, 'title')}${count[st.id] ? ` (${t('agent.steps', { n: count[st.id] })})` : ''}${status(st.status)}`, ...task(st)]));
   const rv = steps.find((st) => st.kind === 'review');
-  if (rv) text += block(t('conversation.export_review'), [`- ${tr(rv.title)}${status(rv.status)}`,
+  if (rv) text += block(t('conversation.export_review'), [`- ${stepText(rv, 'title')}${status(rv.status)}`,
     ...(rv.workers ?? []).flatMap((g) => g.files.map((f) => `  - ${f.path} (${g.worker})${status(f.decision)}`))]);
   return text;
 }
@@ -185,7 +185,7 @@ export async function refreshModels() {
 export async function selectRemote(p, m) {
   if (S.gen) return toast(t('conversation.attends_fin_reponse_stop'), 'warning');
   Object.assign(S.model, { name: m.id, blockSize: m.contextLength ?? null, // Codé : traduit à l'affichage (et après un changement de langue).
-    device: JSON.stringify({ $t: 'conversation.network_device', p: { name: p.name } }), remote: { provider: p.id, model: m.id }, vision: null, visionManual: null });
+    device: { $t: 'conversation.network_device', p: { name: p.name } }, remote: { provider: p.id, model: m.id }, vision: null, visionManual: null });
   S.lastSpeed = '';
   refreshVision();
   renderModels(); renderStatus(); refreshContext();

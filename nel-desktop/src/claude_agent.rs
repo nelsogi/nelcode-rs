@@ -214,6 +214,8 @@ impl<'a> Translator<'a> {
     fn step(&mut self, mut s: Value) -> String {
         let id = format!("s{}", self.steps.len() + 1);
         s["id"] = id.clone().into();
+        s["v"] = 2.into();   // comme agent.rs : les chaînes sont du texte brut
+
         s["request"] = self.request.clone().into();
         if let Some(p) = &self.parent {
             s["parent"] = p.clone().into();

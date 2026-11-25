@@ -13,14 +13,30 @@ export const MODEL = path.resolve(process.env.NELMODEL ?? path.join(ROOT, 'test-
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Les messages codés de la partie Rust ({"$t":"clé","p":{…}}, aussi inclus dans un texte) rendus en français ou en
-// anglais avec les catalogues de l'interface : pour comparer ce qui est enregistré (titres d'étapes, erreurs).
+// Les messages codés de la partie Rust rendus en français ou en anglais avec les catalogues de l'interface : pour
+// comparer ce qui est enregistré (titres d'étapes, erreurs). Un message codé est un objet { $t, p } (ou { $parts })
+// dans l'interface et les conversations ; une chaîne marquée {"$t<secret>":…} (appel direct à la partie Rust) ou
+// ancienne {"$t":…} est aussi rendue (les tests seulement : l'interface ne décode jamais une chaîne).
 const CATALOGS = Object.fromEntries(['fr', 'en'].map((l) => [l, JSON.parse(fs.readFileSync(path.join(ROOT, 'nel-desktop', 'ui', 'i18n', `${l}.json`), 'utf8'))]));
-export function text(s, lang = 'fr') {
-  if (typeof s !== 'string' || !s.includes('{"$t":')) return s;
+function one(key, p, lang) {
   const cat = CATALOGS[lang], plural = new Intl.PluralRules(lang);
-  let out = '', i = 0, j;
-  while ((j = s.indexOf('{"$t":', i)) >= 0) {
+  let v = cat[key] ?? key;
+  p ??= {};
+  if (typeof v === 'object') v = v[plural.select(Number(p.n ?? p.count ?? 0))] ?? v.other;
+  return v.replace(/\{\{|\}\}|\{(\w+)\}/g, (all, k) => (all === '{{' ? '{' : all === '}}' ? '}' : k in p ? text(p[k] ?? '', lang) : all));
+}
+export function text(s, lang = 'fr') {
+  if (s && typeof s === 'object') {
+    if (Array.isArray(s.$parts)) return s.$parts.map((x) => text(x, lang)).join('');
+    if (typeof s.$t === 'string') return one(s.$t, s.p, lang);
+    return s;
+  }
+  if (typeof s !== 'string') return s;
+  const re = /\{"(\$t(?:[0-9a-f]{32})?)":/g;
+  let out = '', i = 0, m0;
+  while ((m0 = re.exec(s))) {
+    const j = m0.index;
+    if (j < i) continue;
     out += s.slice(i, j);
     let depth = 0, inStr = false, end = -1;
     for (let k = j; k < s.length; k++) {
@@ -30,12 +46,10 @@ export function text(s, lang = 'fr') {
     }
     let m = null;
     try { m = end > 0 ? JSON.parse(s.slice(j, end)) : null; } catch { m = null; }
-    if (!m) { out += s[j]; i = j + 1; continue; }
-    let v = cat[m.$t] ?? m.$t;
-    const p = m.p ?? {};
-    if (typeof v === 'object') v = v[plural.select(Number(p.n ?? p.count ?? 0))] ?? v.other;
-    out += v.replace(/\{\{|\}\}|\{(\w+)\}/g, (all, k) => (all === '{{' ? '{' : all === '}}' ? '}' : k in p ? text(String(p[k] ?? ''), lang) : all));
+    if (!m) { out += s[j]; i = j + 1; re.lastIndex = i; continue; }
+    out += one(m[m0[1]], m.p, lang);
     i = end;
+    re.lastIndex = i;
   }
   return out + s.slice(i);
 }

@@ -449,6 +449,17 @@ pub fn update_settings<T>(change: impl FnOnce(&mut serde_json::Value) -> Result<
 }
 
 /// Les bornes de Nel Code C# (Settings.Clamp*), valeurs par défaut si absentes ou pas des nombres finis.
+/// Une liste de dossiers (chaînes), sans « \ » ni « / » final, sans doublon à la casse près, `max` au plus.
+fn project_list(v: &serde_json::Value, max: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in v.as_array().into_iter().flatten().filter_map(|v| v.as_str()).map(|p| p.trim().trim_end_matches(['\\', '/']).to_string()) {
+        if !p.is_empty() && p.len() <= 1000 && !out.iter().any(|r| r.eq_ignore_ascii_case(&p)) && out.len() < max {
+            out.push(p);
+        }
+    }
+    out
+}
+
 fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     let num = |v: &serde_json::Value, d: f64| v.as_f64().filter(|x| x.is_finite()).unwrap_or(d);
     s["temperature"] = num(&s["temperature"], 0.8).clamp(0.1, 2.0).into();
@@ -541,6 +552,9 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
         }
     }
     s["recentProjects"] = recent.into();
+    // Les projets où un fichier .html s'ouvre dans le navigateur sans confirmation (« Ne plus demander pour ce
+    // projet ») : propres à ce PC, jamais exportés.
+    s["htmlOpenNoAsk"] = project_list(&s["htmlOpenNoAsk"], 200).into();
     if !s["currentProject"].is_string() {
         s["currentProject"] = "".into();
     }
@@ -869,6 +883,14 @@ mod tests {
         assert_eq!(save_settings(&c).unwrap()["topK"], 5);
         assert_eq!(fs::read_to_string(home.join("settings.illisible.json")).unwrap(), "{ pas du json");
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn projets_sans_confirmation_pour_ouvrir_un_html() {
+        let s = normalize(serde_json::json!({ "htmlOpenNoAsk": ["C:\\Projet\\", "c:\\projet", " D:/web/ ", "", 3] }));
+        assert_eq!(s["htmlOpenNoAsk"], serde_json::json!(["C:\\Projet", "D:/web"]));
+        assert_eq!(normalize(serde_json::json!({}))["htmlOpenNoAsk"], serde_json::json!([]));
+        assert!(!PORTABLE_SETTINGS.contains(&"htmlOpenNoAsk"), "propre à ce PC");
     }
 
     #[test]

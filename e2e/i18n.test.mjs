@@ -246,9 +246,14 @@ test('langue changée depuis Réglages → Général : English tout de suite, sa
   assert.equal(await A.ev(`(async () => (await import('./js/i18n.js')).num(1234.5))()`), (1234.5).toLocaleString('en-US'));
   await screens('en');
   // Une erreur de la partie Rust : codée, traduite par l'interface.
-  const err = await A.ev(`window.__TAURI__.core.invoke('open_folder', { path: 'Z:\\\\pas\\\\de\\\\dossier' }).then(() => '', (e) => String(e))`);
-  assert.match(err, /^\{"\$t":"rs\.main\.folder_missing"/);
+  // Brute, l'erreur est marquée du secret du lancement ; l'interface (util.js, invoke) en fait un objet { $t, p }.
+  const raw = await A.ev(`window.__TAURI__.core.invoke('open_folder', { path: 'Z:\\\\pas\\\\de\\\\dossier' }).then(() => '', (e) => String(e))`);
+  assert.match(raw, /^\{"\$t[0-9a-f]{32}":"rs\.main\.folder_missing"/);
+  const err = await A.ev(`(async () => (await import('./js/util.js')).invoke('open_folder', { path: 'Z:\\\\pas\\\\de\\\\dossier' }).then(() => null, (e) => e))()`);
+  assert.equal(err.$t, 'rs.main.folder_missing');
   assert.equal(await A.ev(`(async () => (await import('./js/util.js')).errText(${JSON.stringify(err)}))()`), 'folder not found: Z:\\pas\\de\\dossier');
+  // Le même texte sans le secret (venu du modèle, d'un fichier…) : du texte brut.
+  assert.equal(await A.ev(`(async () => (await import('./js/util.js')).errText(${JSON.stringify(raw.replace(/\$t[0-9a-f]{32}/, '$t'))}))()`), raw.replace(/\$t[0-9a-f]{32}/, '$t'));
   // Retour au français.
   await A.ev(`openSettings('general', 'language')`);
   await A.waitFor(`T.control('language')`, 5_000);
@@ -267,12 +272,19 @@ test('une conversation enregistrée change de langue : titres d\'étapes et dét
       { id: 's1', kind: 'read', title: coded('rs.step.read', { path: 'src/a.txt' }), status: 'done', detail: 'contenu' },
       { id: 's2', kind: 'search', title: coded('rs.step.search_results', { query: 'x', n: 3, note: '' }), status: 'done' },
       { id: 's3', kind: 'error', title: coded('rs.step.unknown_tool', { name: 'z' }), status: 'error', detail: coded('rs.sandbox.parent_dir', { path: '../x' }) },
+      // Des champs qui recevaient un texte non fiable : jamais décodés (note du modèle, fichier lu, paramètre query).
+      { id: 's4', kind: 'note', title: coded('rs.step.read', { path: 'pirate' }), status: 'done', detail: 'x' },
+      { id: 's5', kind: 'read', title: coded('rs.step.read', { path: 'b.txt' }), status: 'done', detail: coded('rs.step.read', { path: 'pirate' }) },
+      { id: 's6', kind: 'search', title: coded('rs.step.search_results', { query: coded('rs.step.read', { path: 'pirate' }), n: 1, note: '' }), status: 'done' },
     ] } },
   ] };
   await A.ev(`S.sessions.push(${JSON.stringify(session)}); openSession(S.sessions.at(-1)); true`);
   const titles = () => A.ev(`[...document.querySelectorAll('#messages .step .title')].map((e) => e.textContent)`);
-  await A.waitFor(`document.querySelectorAll('#messages .step').length === 3`, 5_000);
-  assert.deepEqual(await titles(), ['Lecture de src/a.txt', 'Recherche de "x" — 3 résultats', 'Outil inconnu : z']);
+  await A.waitFor(`document.querySelectorAll('#messages .step').length === 6`, 5_000);
+  const raw = coded('rs.step.read', { path: 'pirate' });
+  assert.deepEqual(await titles(), ['Lecture de src/a.txt', 'Recherche de "x" — 3 résultats', 'Outil inconnu : z', raw, 'Lecture de b.txt', `Recherche de "${raw}" — 1 résultat`]);
+  await A.ev(`document.querySelector('#messages .step[data-step="s5"]').open = true; true`);
+  assert.equal(await A.ev(`document.querySelector('#messages .step[data-step="s5"] .detail').textContent`), raw);
   assert.match(await A.ev(`document.querySelector('#messages .step[data-step="s3"]').textContent`), /« \.\.\/x » : « \.\. » est refusé/);
   await A.ev(`openSettings('general', 'language')`);
   await A.waitFor(`T.control('language')`, 5_000);
@@ -280,7 +292,7 @@ test('une conversation enregistrée change de langue : titres d\'étapes et dét
   await A.waitFor(`document.documentElement.lang === 'en'`, 5_000);
   await A.ev(`T.key('Escape', {}, document)`);
   await A.waitFor(`[...document.querySelectorAll('#messages .step .title')][0]?.textContent === 'Reading src/a.txt'`, 5_000, 'titres en anglais');
-  assert.deepEqual(await titles(), ['Reading src/a.txt', 'Search for "x" — 3 results', 'Unknown tool: z']);
+  assert.deepEqual((await titles()).slice(0, 3), ['Reading src/a.txt', 'Search for "x" — 3 results', 'Unknown tool: z']);
   assert.match(await A.ev(`document.querySelector('#messages .step[data-step="s3"]').textContent`), /"\.\.\/x": "\.\." is refused/);
   await A.ev(`openSettings('general', 'language')`);
   await A.waitFor(`T.control('language')`, 5_000);

@@ -166,7 +166,9 @@ dossiers cachés ni de compilation), repliable dossier par dossier. Un clic sur 
 fichier protégé (`.env`, `*.pem`…) n'est affiché qu'après confirmation. Les fichiers créés (**A**) ou modifiés (**M**) par
 l'agent dans la conversation portent un badge, et leurs dossiers un point ; **Diff de la session** montre tout ce qui a
 changé depuis avant la première modification de l'agent (pour Claude Agent : les diffs de ses étapes). Le panneau est en
-lecture seule.
+lecture seule. Un fichier `.html` ou `.htm` a un bouton **Ouvrir dans le navigateur** (aussi sur une étape d'écriture
+acceptée) : il s'ouvre dans le navigateur par défaut, seulement s'il est dans le dossier de travail et déjà écrit sur le
+disque, après une confirmation (son JavaScript s'exécutera dans le navigateur ; « Ne plus demander pour ce projet »).
 
 ### Discuter
 
@@ -680,6 +682,10 @@ réglages, traductions, état de la fenêtre) d'une relecture ciblée ; le déta
 - **Réponses** : le texte d'un modèle ne devient jamais du HTML (éléments créés un par un, HTML brut affiché comme du
   texte) ; un lien ne s'ouvre que dans le navigateur, après confirmation, en http ou https ; les images des réponses ne
   sont pas chargées ; la fenêtre ne quitte jamais l'interface.
+- **Messages de Nel Code** : un texte du modèle, d'un fichier, d'une commande, d'un serveur MCP ou d'un sous-agent
+  n'est jamais pris pour un message de Nel Code, même s'il en imite la forme (`{"$t":…}`) : les messages de Nel Code
+  sont marqués par un secret tiré à chaque lancement, qui ne quitte jamais l'application, et l'interface les reçoit
+  comme des objets à part ; le reste est affiché tel quel.
 - **Variables secrètes** : une seule liste pour les commandes de l'agent, les serveurs MCP et Claude Agent. Une
   variable de Nel Code dont le nom contient `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`,
   `CREDENTIAL` ou `PRIVATE`, ou commence par `ANTHROPIC_` ou `OPENAI_`, ne leur est jamais transmise.

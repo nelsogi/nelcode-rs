@@ -168,6 +168,22 @@ impl Sandbox {
         Ok(if rest.as_os_str().is_empty() { canon } else { canon.join(rest) })
     }
 
+    /// Un fichier .html ou .htm du dossier de travail, déjà écrit sur le disque (un brouillon n'y est jamais), à ouvrir
+    /// dans le navigateur : son chemin absolu. Refusé : hors du dossier (« .. », absolu, lien), autre extension, absent,
+    /// dossier, lien.
+    pub fn html_file(&self, rel: &str) -> Result<PathBuf> {
+        let abs = self.resolve(rel).map_err(|_| t!("rs.main.not_in_workdir", path = rel))?;
+        let ext = abs.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if ext != "html" && ext != "htm" {
+            return Err(t!("rs.open.not_html", path = rel));
+        }
+        match fs::symlink_metadata(&abs) {
+            Ok(m) if m.is_file() => Ok(abs),
+            Ok(_) => Err(t!("rs.main.not_in_workdir", path = rel)),
+            Err(_) => Err(t!("rs.open.missing", path = rel)),
+        }
+    }
+
     pub fn rel(&self, abs: &Path) -> String {
         let r = abs.strip_prefix(&self.root).unwrap_or(abs).to_string_lossy().replace('\\', "/");
         if r.is_empty() { ".".into() } else { r }
@@ -769,6 +785,8 @@ impl<'a> Run<'a> {
     pub(crate) fn step(&mut self, mut s: Value) -> String {
         let id = self.next_id();
         s["id"] = id.clone().into();
+        // v 2 : un titre ou un détail en chaîne est du texte brut ; un message codé est un objet (i18n.js, stepText).
+        s["v"] = 2.into();
         s["request"] = self.request.clone().into();
         if let Some(p) = &self.parent {
             s["parent"] = p.clone().into();
@@ -1371,7 +1389,7 @@ async fn explore(app: &AppHandle, request: &str, mut step: Value, task: &str, sb
                     Done::Result(r) => (r, false),
                     Done::Stopped(r) => (r, true),
                 };
-                messages.push(json!({ "role": "tool", "tool_call_id": c["id"], "content": content }));
+                messages.push(json!({ "role": "tool", "tool_call_id": c["id"], "content": crate::i18n::french(&content) }));
                 if stop {
                     stopped = true;
                     return Ok(());
@@ -1589,7 +1607,7 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
                             r
                         }
                     };
-                    messages.push(json!({ "role": "tool", "tool_call_id": c["id"], "content": content }));
+                    messages.push(json!({ "role": "tool", "tool_call_id": c["id"], "content": crate::i18n::french(&content) }));
                 }
                 if stop {
                     stopped = true;
@@ -1636,6 +1654,24 @@ mod tests {
         fs::create_dir_all(d.join("src")).unwrap();
         fs::write(d.join("src/a.txt"), "un\ndeux\n").unwrap();
         d
+    }
+
+    #[test]
+    fn fichier_html_a_ouvrir_dans_le_navigateur() {
+        let d = tmp();
+        fs::write(d.join("src/page.html"), "<p>x</p>").unwrap();
+        fs::write(d.join("INDEX.HTM"), "<p>x</p>").unwrap();
+        fs::create_dir_all(d.join("dossier.html")).unwrap();
+        let sb = Sandbox::new(d.to_str().unwrap()).unwrap();
+        assert!(sb.html_file("src/page.html").unwrap().is_file());
+        assert!(sb.html_file("INDEX.HTM").is_ok(), "extension sans casse");
+        assert!(sb.html_file("src/a.txt").unwrap_err().fr().contains("HTML"), "autre extension");
+        assert!(sb.html_file("src/absente.html").unwrap_err().fr().contains("pas encore écrit"), "pas sur le disque (brouillon)");
+        assert!(sb.html_file("dossier.html").is_err(), "un dossier");
+        for bad in ["../x.html", "C:\\x.html", "/etc/x.html", "src/../../x.html"] {
+            assert!(sb.html_file(bad).unwrap_err().fr().contains("dossier de travail"), "{bad}");
+        }
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -480,7 +480,7 @@ async fn work_inner(app: &AppHandle, request: &str, mut w: Worker, mut step: Val
                     Done::Result(r) => (r, false),
                     Done::Stopped(r) => (r, true),
                 };
-                messages.push(json!({ "role": "tool", "tool_call_id": c["id"], "content": content }));
+                messages.push(json!({ "role": "tool", "tool_call_id": c["id"], "content": crate::i18n::french(&content) }));
                 if stop {
                     stopped = true;
                     return Ok(());

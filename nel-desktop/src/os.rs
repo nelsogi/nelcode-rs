@@ -231,6 +231,33 @@ pub fn open_link(link: &str) -> Result<(), String> {
     open(&url)
 }
 
+/// Ouvre un fichier (chemin absolu, déjà vérifié) avec le programme par défaut du système : le navigateur pour un
+/// .html. Windows : ShellExecute, sans ligne de commande. En debug, NELCODE_OPEN_LOG le note à la place (tests).
+pub fn open_file(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    if let Some(file) = std::env::var_os("NELCODE_OPEN_LOG") {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file).map_err(|e| e.to_string())?;
+        return writeln!(f, "file:{}", path.display()).map_err(|e| e.to_string());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let verb: Vec<u16> = "open".encode_utf16().chain([0]).collect();
+        // Sans le préfixe \\?\ de canonicalize : ShellExecute ne le comprend pas toujours.
+        let shown = path.to_string_lossy();
+        let plain = shown.strip_prefix(r"\\?\").unwrap_or(&shown);
+        let target: Vec<u16> = std::ffi::OsStr::new(plain).encode_wide().chain([0]).collect();
+        // SAFETY : deux chaînes UTF-16 terminées par 0, vivantes pendant l'appel.
+        let code = unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL)
+        } as usize;
+        if code > 32 { Ok(()) } else { Err(t!("rs.link.browser", code = code)) }
+    }
+    #[cfg(not(windows))]
+    open(&path.to_string_lossy())
+}
+
 /// Une adresse de l'interface elle-même (tauri://localhost, http(s)://tauri.localhost sous Windows) : la fenêtre ne va
 /// jamais ailleurs.
 pub fn is_app_url(url: &reqwest::Url) -> bool {

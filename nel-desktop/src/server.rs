@@ -194,7 +194,7 @@ fn respond(conn: &mut TcpStream, status: u16, body: &Value) {
 
 /// Une erreur au format de l'API OpenAI.
 fn error(conn: &mut TcpStream, status: u16, message: &str, kind: &str) {
-    respond(conn, status, &json!({ "error": { "message": message, "type": kind, "code": null } }));
+    respond(conn, status, &json!({ "error": { "message": crate::i18n::english(message), "type": kind, "code": null } }));
 }
 
 /// Compare deux chaînes en temps constant (la clé ne se devine pas octet par octet).

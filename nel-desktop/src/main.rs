@@ -305,10 +305,25 @@ fn open_link(url: String) -> Result<()> {
     os::open_link(&url)
 }
 
+/// Un fichier .html ou .htm du dossier de travail, déjà écrit sur le disque, dans le navigateur par défaut (après la
+/// confirmation de l'interface : son JavaScript s'exécute dans le navigateur).
+#[tauri::command]
+fn open_in_browser(dir: String, path: String) -> Result<()> {
+    let abs = agent::Sandbox::new(&dir)?.html_file(&path)?;
+    log::info("file opened in the browser");
+    os::open_file(&abs)
+}
+
 /// Les textes de l'interface dans une langue (« fr » ou « en ») : le JSON de ui/i18n, inclus dans l'exécutable.
 #[tauri::command]
 fn i18n_catalog(lang: String) -> &'static str {
     i18n::catalog(&lang)
+}
+
+/// Le début des messages codés de ce lancement (avec le secret) : l'interface les reconnaît et les convertit en objets.
+#[tauri::command]
+fn i18n_mark() -> &'static str {
+    i18n::mark()
 }
 
 /// La langue choisie par l'interface : celle des fenêtres natives (choix de fichiers).
@@ -1283,6 +1298,8 @@ fn main() {
             open_folder,
             open_link,
             i18n_catalog,
+            i18n_mark,
+            open_in_browser,
             set_language,
             get_settings,
             save_settings,

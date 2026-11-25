@@ -3,13 +3,13 @@
 
 // --- Mode Agent -----------------------------------------------------------------------------------------
 
-import { locale, num, t, tr } from './i18n.js';
+import { locale, num, stepText, t, tr } from './i18n.js';
 import { $, dialog, errText, h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { closeEdit, newSession, renderAll, renderHeader, renderMessages, saveSession } from './conversation.js';
 import { drawMarkdown, inlineMarkdown } from './markdown.js';
 import { openSettings } from './settings.js';
-import { refreshFiles } from './files.js';
+import { browserButton, isHtml, refreshFiles } from './files.js';
 
 // Le NELCODE.md modèle créé par le bouton de l'en-tête (écrit tel quel par la partie Rust).
 const NELCODE_TEMPLATE = 'agent.nelcode_template';   // une clé : le modèle dans la langue de l'interface
@@ -120,9 +120,10 @@ export function diffEl(lines) {
 const isProse = (st) => st.status !== 'error' && st.status !== 'rejected' && (st.kind === 'explorer' || st.kind === 'worker' || (st.kind === 'note' && (!st.tool || st.tool === 'Task' || st.tool === 'Agent')));
 
 function detailEl(st) {
-  if (!isProse(st) || S.settings.markdown === false) return h('pre', { class: 'detail' }, tr(st.detail));
+  const detail = stepText(st, 'detail');   // un texte du modèle ou d'un outil : tel quel
+  if (!isProse(st) || S.settings.markdown === false) return h('pre', { class: 'detail' }, detail);
   const el = h('div', { class: 'detail' });
-  drawMarkdown(el, tr(st.detail));
+  drawMarkdown(el, detail);
   return el;
 }
 
@@ -146,7 +147,7 @@ export function stepsEl(steps, m) {
     // La raison d'un refus ou d'une erreur (Claude Agent) accompagne le diff.
     if (st.detail && (!st.diff || st.protected || st.status === 'rejected' || st.status === 'error')) body.append(detailEl(st));
     if (st.diff) body.append(diffEl(st.diff));
-    if (st.error) body.append(h('div', { class: 'warn-text' }, st.error));
+    if (st.error) body.append(h('div', { class: 'warn-text' }, tr(st.error)));
     // Les boutons de la décision sont grisés dès le premier clic (un double clic décidait deux fois), rendus si erreur.
     const decide = (decision, e) => {
       const btns = [...(e?.currentTarget?.closest('.row-btns')?.querySelectorAll('button') ?? [])];
@@ -174,10 +175,14 @@ export function stepsEl(steps, m) {
       h('button', { class: 'btn primary', onclick: (e) => decide('accept', e) }, icon('check'), t('agent.accepter')),
       h('button', { class: 'btn', onclick: (e) => decide('reject', e) }, t('agent.refuser')),
       h('button', { class: 'btn', title: t('agent.accepter_cette_ecriture_suivantes_cette'), onclick: (e) => decide('accept_all', e) }, t('agent.accepter_tout_pour_cette_demande'))));
+    // Une page .html ou .htm écrite (acceptée, donc sur le disque ; jamais un brouillon) : dans le navigateur.
+    const dir = S.current?.workingDirectory;
+    const html = write && st.status === 'accepted' && dir && isHtml(st.path) ? browserButton(dir, st.path, 'btn') : null;
     if (write && st.status === 'accepted' && m && !st.parent) body.append(h('div', { class: 'row-btns' },
-      h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), t('agent.annuler'))));
+      h('button', { class: 'btn', onclick: () => undoSteps(m, [st.id], () => invoke('agent_undo', { request: st.request, step: st.id }).then(() => [st.id])) }, icon('undo-2'), t('agent.annuler')), html));
+    else if (html) body.append(h('div', { class: 'row-btns' }, html));
     (subs.get(st.parent) ?? box).append(h('details', { class: 'step ' + st.kind, 'data-step': st.id, 'data-status': st.status, open: (st.status === 'pending' || st.status === 'running') && !m },
-      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.kind === 'note' && !st.tool ? inlineMarkdown(tr(st.title)) : tr(st.title)),
+      h('summary', {}, icon(STEP_ICONS[st.kind] ?? 'asterisk'), h('span', { class: 'title' }, st.kind === 'note' && !st.tool ? inlineMarkdown(stepText(st, 'title')) : stepText(st, 'title')),
         n ? h('span', { class: 'count' }, t('agent.steps', { n })) : null, st.kind === 'explorer' || st.kind === 'worker' ? explorerMeta(st) : null, status), body));
   }
   const undoable = m && steps.filter((st) => (st.kind === 'write' || st.kind === 'edit') && st.status === 'accepted' && !st.parent);

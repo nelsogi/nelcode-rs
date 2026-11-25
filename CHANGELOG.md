@@ -38,6 +38,23 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - **Contrat commun** : le message système demande à l'agent d'écrire dans chaque tâche, mot pour mot, ce qui doit
   correspondre entre les travailleurs (noms de fichiers, classes, identifiants, fonctions et signatures), ou d'utiliser
   `after` quand un fichier doit partir de celui d'un autre.
+- **Ouvrir dans le navigateur** : un fichier `.html` ou `.htm` s'ouvre dans le navigateur par défaut du système, depuis
+  le panneau Fichiers (aperçu) ou depuis une étape d'écriture acceptée. C'est la partie Rust qui l'ouvre, seulement s'il
+  est dans le dossier de travail (ni « .. », ni chemin absolu, ni lien) et déjà écrit sur le disque (jamais un
+  brouillon). Une confirmation explique que le fichier a peut-être été écrit par l'IA et que son JavaScript
+  s'exécutera dans le navigateur, avec « Ne plus demander pour ce projet » (gardé sur ce PC, jamais exporté).
+
+### Sécurité
+
+- **Imitation d'un message de Nel Code** : un texte non fiable (réponse du modèle, contenu d'un fichier, sortie d'une
+  commande, résultat MCP, résumé d'un explorateur ou d'un travailleur, réponse d'un serveur) qui contenait
+  `{"$t":"clé",…}` était affiché comme un message de Nel Code (« Écriture acceptée »…), traduit, et pouvait imiter une
+  étape. Désormais, un message codé est marqué dans la partie Rust par un secret tiré à chaque lancement, qui ne sort
+  jamais (le modèle reçoit le texte français, le journal le texte anglais) ; l'interface le convertit dès l'arrivée
+  (`invoke` et `listen` de util.js) en objet `{ $t, p }`, et une chaîne y est toujours du texte brut, affichée telle
+  quelle. Les étapes enregistrées portent `v: 2` ; les anciennes conversations restent lisibles, leurs chaînes codées
+  n'étant décodées que dans les champs écrits par Nel Code (titres, demandes de confirmation, refus et erreurs), jamais
+  dans le texte d'un outil ni dans un paramètre qui en recevait (chemin, requête, commande, texte).
 
 ### Modifié
 
@@ -55,6 +72,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - Tests : unitaires (portées et chevauchements, brouillon, plan, rapport à l'agent, réglages) et
   `e2e/workers.test.mjs` (attribution exclusive, refus hors des fichiers attribués, brouillon jamais écrit sans
   accord, revue groupée, correction, Stop, limites, dépendances `after` et cycles, export).
+- Tests : messages codés imités dans une réponse du modèle, un fichier lu, un résultat MCP et une sortie de commande
+  (affichés bruts), ancienne conversation toujours traduite ; ouverture d'un `.html` (dossier de travail, disque,
+  confirmation, « Ne plus demander pour ce projet »).
 
 ## [1.1.0] - 2026-11-24
 

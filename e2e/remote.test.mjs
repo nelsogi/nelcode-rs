@@ -229,7 +229,7 @@ test('import depuis Qwen Code : fournisseurs, réglages de chaque modèle, clé'
   assert.deepEqual([r.body.temperature, r.body.top_p, r.body.max_tokens], [0.3, 0.5, 77]);
   // Sans settings.json de Qwen Code : un message clair.
   fs.rmSync(path.join(QWEN, 'settings.json'));
-  assert.match(await A.ev(`window.__TAURI__.core.invoke('import_qwen').catch((e) => I18N.tr(String(e)))`), /introuvable : Qwen Code n'est pas configuré/);
+  assert.match(await A.ev(`window.__TAURI__.core.invoke('import_qwen').catch((e) => I18N.fromRust(e).then(I18N.tr))`), /introuvable : Qwen Code n'est pas configuré/);
 });
 
 test('au redémarrage de l\'interface, le modèle distant reste choisi ; supprimer un fournisseur retire sa clé', async () => {

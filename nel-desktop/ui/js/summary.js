@@ -5,7 +5,7 @@
 // remplace, pour le modèle seulement, les messages avant l'indice upTo : ils restent dans la conversation (grisés).
 // Pas pour les .nelmodel (contexte trop petit), ni pour Claude Agent (qui gère son propre contexte).
 
-import { t, trFr } from './i18n.js';
+import { stepText, t } from './i18n.js';
 import { h, invoke, toast } from './util.js';
 import { S, UI } from './state.js';
 import { historyOf, startGen, summaryOf } from './conversation.js';
@@ -40,9 +40,9 @@ export function stepLine(st) {
   switch (st.kind) {
     case 'read': return st.status === 'done' ? `fichier lu : ${st.path}, ${lines(st.detail)} lignes` : `lecture refusée : ${st.path}`;
     case 'write': case 'edit': return `${st.kind === 'write' ? 'fichier créé' : 'fichier modifié'} : ${st.path} (${{ accepted: 'accepté', undone: 'annulé' }[st.status] ?? 'refusé'})`;
-    case 'command': return `commande : ${clip(st.command ?? trFr(st.title), 120)} (${st.status})`;
-    case 'error': return `erreur : ${clip(trFr(st.title), 80)} — ${clip(trFr(st.detail ?? '').replace(/\s+/g, ' '), 120)}`;
-    case 'list': case 'search': return trFr(st.title);
+    case 'command': return `commande : ${clip(st.command ?? stepText(st, 'title', 'fr'), 120)} (${st.status})`;
+    case 'error': return `erreur : ${clip(stepText(st, 'title', 'fr'), 80)} — ${clip(stepText(st, 'detail', 'fr').replace(/\s+/g, ' '), 120)}`;
+    case 'list': case 'search': return stepText(st, 'title', 'fr');
     default: return null;   // notes et plan : le plan est repris à part
   }
 }

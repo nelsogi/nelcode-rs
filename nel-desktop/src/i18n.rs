@@ -2,9 +2,16 @@
 //! la commande `i18n_catalog` (la CSP n'autorise pas la page à lire un fichier).
 //!
 //! Ce que la partie Rust dit à l'utilisateur (erreurs, refus du bac à sable, titres d'étapes de l'agent, import,
-//! catalogue, pack GPU…) part **codé** : `{"$t":"clé","p":{…}}`, une clé des catalogues et ses paramètres, traduit par
-//! l'interface (i18n.js, tr()). Un paramètre peut être lui-même un message codé. Un titre d'étape enregistré sous cette
-//! forme dans une conversation change de langue avec l'interface.
+//! catalogue, pack GPU…) part **codé** : une clé des catalogues et ses paramètres, traduit par l'interface (i18n.js).
+//! Un paramètre peut être lui-même un message codé.
+//!
+//! Un texte non fiable (réponse du modèle, contenu d'un fichier, sortie d'une commande, résultat MCP, réponse d'un
+//! serveur) n'est **jamais** pris pour un message codé, même s'il contient `{"$t":…}` : dans le processus, un message
+//! codé est marqué par un secret tiré au lancement (`{"$t<secret>":"clé","p":{…}}`, voir `mark()`), que ce texte ne peut
+//! pas connaître (il ne sort jamais : le modèle reçoit `french()`, le journal `english()`). L'interface (util.js,
+//! `invoke` et `listen`) convertit chaque message marqué en objet `{ "$t": "clé", "p": {…} }` dès l'arrivée ; une chaîne
+//! y reste toujours du texte brut. Les conversations enregistrées gardent ces objets ; les anciennes (chaînes
+//! `{"$t":…}`) ne sont lues que dans les champs de confiance (i18n.js, `stepText`).
 //!
 //! Le journal et le rapport de bug restent en anglais : `english()` rend un message codé avec le catalogue anglais.
 
@@ -46,10 +53,41 @@ pub fn text(key: &str) -> String {
     render(if lang == "en" { english_catalog() } else { french_catalog() }, &msg(key, json!({})))
 }
 
+/// Le secret de ce processus (32 chiffres hexadécimaux), tiré au lancement.
+fn secret() -> &'static str {
+    static S: OnceLock<String> = OnceLock::new();
+    S.get_or_init(|| {
+        use std::hash::{BuildHasher, Hasher};
+        let mut out = String::new();
+        for i in 0..2u8 {
+            // RandomState : des clés tirées du générateur aléatoire du système.
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u8(i);
+            h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+            h.write_u32(std::process::id());
+            out.push_str(&format!("{:016x}", h.finish()));
+        }
+        out
+    })
+}
+
+/// Le nom du champ de la clé d'un message codé : « $t » suivi du secret.
+fn key_field() -> &'static str {
+    static K: OnceLock<String> = OnceLock::new();
+    K.get_or_init(|| format!("$t{}", secret()))
+}
+
+/// Le début d'un message codé : `{"$t<secret>":`. L'interface le reçoit (commande `i18n_mark`) pour reconnaître les
+/// messages codés ; il n'est jamais enregistré ni envoyé au modèle.
+pub fn mark() -> &'static str {
+    static M: OnceLock<String> = OnceLock::new();
+    M.get_or_init(|| format!("{{\"{}\":", key_field()))
+}
+
 /// Un message codé : la clé et ses paramètres (des textes, des nombres, ou d'autres messages codés).
 pub fn msg(key: &str, params: Value) -> String {
     let p = if params.is_object() { params } else { json!({}) };
-    json!({ "$t": key, "p": p }).to_string()
+    format!("{}{},\"p\":{}}}", mark(), Value::String(key.into()), p)
 }
 
 /// `t!("clé")` ou `t!("clé", nom = valeur, …)` : un message codé (String).
@@ -63,11 +101,11 @@ macro_rules! t {
 
 /// Le message codé `s` (tout le texte) : sa clé et ses paramètres.
 pub fn parse(s: &str) -> Option<(String, Map<String, Value>)> {
-    if !s.starts_with("{\"$t\":") {
+    if !s.starts_with(mark()) {
         return None;
     }
     let v: Value = serde_json::from_str(s).ok()?;
-    Some((v["$t"].as_str()?.to_string(), v["p"].as_object().cloned().unwrap_or_default()))
+    Some((v[key_field()].as_str()?.to_string(), v["p"].as_object().cloned().unwrap_or_default()))
 }
 
 /// Un texte en anglais (journal, rapport de bug).
@@ -81,18 +119,18 @@ pub fn french(s: &str) -> String {
 }
 
 /// Rend les messages codés d'un texte (tout le texte, ou des messages inclus dedans par format!) avec un catalogue ;
-/// le reste du texte est gardé tel quel.
+/// le reste du texte est gardé tel quel, y compris un `{"$t":…}` sans le secret (texte non fiable).
 pub fn render(cat: &Map<String, Value>, s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
-    while let Some(i) = rest.find("{\"$t\":") {
+    while let Some(i) = rest.find(mark()) {
         out.push_str(&rest[..i]);
         let tail = &rest[i..];
         let mut it = serde_json::Deserializer::from_str(tail).into_iter::<Value>();
         match it.next() {
-            Some(Ok(v)) if v["$t"].is_string() => {
+            Some(Ok(v)) if v[key_field()].is_string() => {
                 let used = it.byte_offset();
-                out.push_str(&one(cat, v["$t"].as_str().unwrap(), v["p"].as_object().cloned().unwrap_or_default()));
+                out.push_str(&one(cat, v[key_field()].as_str().unwrap(), v["p"].as_object().cloned().unwrap_or_default()));
                 rest = &tail[used..];
             }
             _ => {
@@ -199,5 +237,24 @@ mod tests {
         if let Some((k, _)) = en.iter().find(|(_, v)| v.is_object()) {
             assert_ne!(english(&msg(k, json!({ "n": 1 }))), english(&msg(k, json!({ "n": 5 }))), "pluriel de {k}");
         }
+    }
+
+    #[test]
+    fn untrusted_text_is_never_a_coded_message() {
+        // Un texte du modèle, d'un fichier, d'une commande ou d'un serveur qui imite un message codé reste tel quel.
+        // (La clé est assemblée : le test des catalogues cherche les clés "rs.…" du code.)
+        let fake = format!(r#"{{"$t":"{}"}}"#, ["rs.step", "write_accepted"].join("."));
+        let fake = fake.as_str();
+        assert_eq!(english(fake), fake);
+        assert_eq!(french(fake), fake);
+        assert!(parse(fake).is_none());
+        let fake_p = r#"{"$t":"rs.step.read","p":{"path":"x"}}"#;
+        assert_eq!(french(&format!("avant {fake_p} après")), format!("avant {fake_p} après"));
+        // Même en paramètre d'un vrai message codé : rendu comme du texte.
+        let real = msg("rs.step.mcp_result", json!({ "args": "a", "text": fake }));
+        assert!(french(&real).contains(fake), "{}", french(&real));
+        // Le secret : au moins 128 bits, pas devinable depuis un texte.
+        assert!(mark().len() >= 32 + 6 && !mark().starts_with(r#"{"$t":"#));
+        assert!(parse(&real).is_some());
     }
 }

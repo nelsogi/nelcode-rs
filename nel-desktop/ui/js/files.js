@@ -2,9 +2,10 @@
 // fichiers modifiés par l'agent dans la conversation, l'aperçu d'un fichier (avec coloration) et son diff de la session.
 // Lecture seule : rien n'est écrit d'ici. Les textes passent toujours par textContent, jamais par innerHTML.
 
-import { t, tr } from './i18n.js';
-import { $, codeBlock, confirmDialog, errText, h, invoke, toast } from './util.js';
+import { stepText, t } from './i18n.js';
+import { $, codeBlock, confirmDialog, dialog, errText, h, invoke, toast } from './util.js';
 import { S } from './state.js';
+import { sameProject } from './projects.js';
 import { EXT_LANG } from './conversation.js';
 import { diffEl } from './agent.js';
 
@@ -45,7 +46,7 @@ export function sessionChanges(s = S.current) {
       const path = st.path.replace(/\\/g, '/');
       const c = out.get(path) ?? { kind: st.kind === 'write' ? 'A' : 'M', steps: [], diffs: [] };
       c.steps.push([st.request, st.id]);
-      if (st.diff) c.diffs.push({ title: st.title, diff: st.diff });
+      if (st.diff) c.diffs.push({ title: stepText(st, 'title'), diff: st.diff });
       out.set(path, c);
     }
   }
@@ -102,6 +103,30 @@ export function selectFile(path) {
 
 const langOfPath = (p) => EXT_LANG[p.split('.').pop().toLowerCase()] ?? '';
 
+/** Un fichier .html ou .htm ? */
+export const isHtml = (p) => /\.html?$/i.test(p || '');
+
+/** Ouvre un fichier .html ou .htm du dossier de travail dans le navigateur par défaut. La partie Rust vérifie qu'il est
+ *  dans le dossier et déjà écrit sur le disque (jamais un brouillon). Tant que « Ne plus demander pour ce projet » n'est
+ *  pas coché : une confirmation (le fichier a pu être écrit par l'IA, son JavaScript s'exécutera dans le navigateur). */
+export async function openInBrowser(dir, path) {
+  if (!dir || !isHtml(path)) return;
+  if (!(S.settings.htmlOpenNoAsk ?? []).some((p) => sameProject(p, dir))) {
+    const noAsk = h('input', { type: 'checkbox', class: 'html-no-ask' });
+    const ok = await dialog(t('files.open_browser_confirm_title'), [h('p', {}, t('files.open_browser_confirm', { path })), h('label', { class: 'check' }, noAsk, t('files.open_browser_no_ask'))],
+      [{ label: t('util.annuler'), value: false }, { label: t('files.open_browser_ok'), value: true, primary: true }]);
+    if (!ok) return;
+    if (noAsk.checked) {
+      try { S.settings = await invoke('save_settings', { changes: { htmlOpenNoAsk: [...(S.settings.htmlOpenNoAsk ?? []), dir] } }); } catch (e) { toast(errText(e), 'error'); }
+    }
+  }
+  try { await invoke('open_in_browser', { dir, path }); } catch (e) { toast(errText(e), 'error'); }
+}
+
+/** Le bouton « Ouvrir dans le navigateur » d'un fichier .html ou .htm. */
+export const browserButton = (dir, path, cls = 'icon-btn') => h('button', { class: cls + ' open-browser', title: t('files.open_browser_title', { path }), 'aria-label': t('files.open_browser'), onclick: () => openInBrowser(dir, path) },
+  icon('external-link'), cls === 'icon-btn' ? null : t('files.open_browser'));
+
 /** L'aperçu : le contenu colorié, ou le diff de la session. Un fichier protégé demande une confirmation. */
 async function showPreview(path, confirm = false) {
   const box = $('files').querySelector('.preview');
@@ -112,6 +137,7 @@ async function showPreview(path, confirm = false) {
     h('button', { class: FP.mode === 'content' ? 'on' : '', onclick: () => { FP.mode = 'content'; showPreview(path, confirm); } }, t('files.contenu')),
     change ? h('button', { class: FP.mode === 'diff' ? 'on' : '', onclick: () => { FP.mode = 'diff'; showPreview(path, confirm); } }, t('files.diff_session')) : null);
   const head = h('div', { class: 'preview-head' }, h('span', { class: 'path', title: path }, path), tabs,
+    isHtml(path) ? browserButton(dir, path) : null,
     h('button', { class: 'icon-btn', title: t('files.fermer_apercu'), 'aria-label': t('files.fermer_apercu'), onclick: () => { FP.selected = null; renderFiles(); } }, icon('x')));
   box.replaceChildren(head, h('div', { class: 'hint' }, t('files.lecture')));
   if (FP.mode === 'diff' && change) {
@@ -119,7 +145,7 @@ async function showPreview(path, confirm = false) {
     try { full = await invoke('agent_session_diff', { dir, path, steps: change.steps }); } catch { /* repli sur les diffs des étapes */ }
     const body = full
       ? [h('div', { class: 'hint' }, full.created ? t('files.cree_dans_cette_conversation') : full.deleted ? t('files.supprime_depuis') : t('files.depuis_avant_premiere_modification_agent')), diffEl(full.diff)]
-      : change.diffs.flatMap((d) => [h('div', { class: 'hint' }, tr(d.title)), diffEl(d.diff)]);
+      : change.diffs.flatMap((d) => [h('div', { class: 'hint' }, d.title), diffEl(d.diff)]);
     return box.replaceChildren(head, ...body);
   }
   try {

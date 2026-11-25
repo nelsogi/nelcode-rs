@@ -432,7 +432,7 @@ describe('application', () => {
     await A.ev(`T.key('Escape', {}, document)`);
     // La partie Rust vérifie elle-même.
     for (const url of ['javascript:alert(1)', 'file:///C:/Windows/System32/calc.exe', 'data:text/html,x', 'calc.exe', 'https://a@b.ch/'])
-      assert.match(await A.ev(`window.__TAURI__.core.invoke('open_link', { url: ${JSON.stringify(url)} }).then(() => 'ouvert', (e) => I18N.tr(String(e)))`), /adresse refusée/, url);
+      assert.match(await A.ev(`window.__TAURI__.core.invoke('open_link', { url: ${JSON.stringify(url)} }).then(() => 'ouvert', (e) => I18N.fromRust(e).then(I18N.tr))`), /adresse refusée/, url);
     assert.equal(opened().length, 1);
     // Une navigation ou une nouvelle fenêtre demandée par la page est bloquée par la partie Rust.
     await A.ev(`location.href = 'http://127.0.0.1:${server.address().port}/ailleurs'; window.open('http://127.0.0.1:${server.address().port}/fenetre'); true`);

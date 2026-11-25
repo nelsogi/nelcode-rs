@@ -1,12 +1,20 @@
 // Nel Code Desktop — util.js : Les petits outils de l'interface : appels au Rust, éléments du DOM, notifications, fenêtres, menus, coloration du code.
 // Les textes (messages, noms) passent toujours par textContent, jamais par innerHTML.
 
-import { locale, t, toEnglish, tr } from './i18n.js';
+import { fromRust, isCoded, locale, t, toEnglish, tr } from './i18n.js';
 import { UI } from './state.js';
 
-export const { invoke } = window.__TAURI__.core;
+// Les appels à la partie Rust et ses événements : les messages codés (marqués du secret du lancement) deviennent des
+// objets { $t, p } dès l'arrivée (i18n.js, fromRust) ; toute autre chaîne reste du texte brut.
+const core = window.__TAURI__.core, events = window.__TAURI__.event;
 
-export const { listen } = window.__TAURI__.event;
+export async function invoke(cmd, args) {
+  let r;
+  try { r = await core.invoke(cmd, args); } catch (e) { throw await fromRust(e); }
+  return fromRust(r);
+}
+
+export const listen = (name, handler) => events.listen(name, async (e) => handler({ ...e, payload: await fromRust(e.payload) }));
 
 export const $ = (id) => document.getElementById(id);
 
@@ -19,7 +27,8 @@ export function h(tag, props = {}, ...children) {
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v === true ? '' : v);
   }
-  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
+  // Un message codé de la partie Rust (objet) est traduit ; une chaîne est du texte brut.
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : isCoded(c) ? tr(c) : String(c));
   return el;
 }
 
@@ -38,7 +47,7 @@ export function localIso(d = new Date()) {
 export const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 // Le texte d'une erreur : un message codé de la partie Rust est traduit (i18n.js, tr()).
-export const errText = (e) => tr(String(e?.message ?? e));
+export const errText = (e) => (isCoded(e) ? tr(e) : String(e?.message ?? e));
 
 export const sizeText = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + ' Go' : (b / 1e6).toFixed(0) + ' Mo';
 
@@ -55,13 +64,14 @@ export function relDate(iso) {
 }
 
 // Une ligne du journal (%APPDATA%\NelCode\logs), en anglais. Seulement des événements, jamais le texte d'une conversation.
-export const logEvent = (message, level = 'info') => invoke('log_event', { level, message: toEnglish(String(message)) }).catch(() => {});
+export const logEvent = (message, level = 'info') => invoke('log_event', { level, message: String(toEnglish(message)) }).catch(() => {});
 
 /** Les notifications : discrètes, en bas à droite, 4 au plus (la plus ancienne part), une croix pour fermer.
  *  Durée par défaut selon le genre : succès 3 s, info 4,5 s, avertissement 6 s, erreur 9 s ; 0 : jusqu'à la croix. */
 const TOAST_MS = { success: 3000, '': 4500, warning: 6000, error: 9000, busy: 0 };
 const MAX_TOASTS = 4;
 export function toast(text, kind = '', ms = TOAST_MS[kind] ?? 4500) {
+  if (isCoded(text)) text = tr(text);
   if (kind === 'error' && typeof text === 'string') logEvent(text, 'error');
   const box = $('toasts');
   const close = h('button', { class: 'toast-close', title: t('util.fermer'), 'aria-label': t('util.fermer_notification'), onclick: () => el.remove() }, icon('x'));
