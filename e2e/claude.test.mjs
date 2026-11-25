@@ -2,7 +2,7 @@
 // stream-json enregistrés (e2e/fake-claude/*.jsonl) et note chaque lancement : arguments, message reçu sur l'entrée
 // standard, clé API, variables secrètes, dossier courant, Ctrl+C.
 
-import { test, before, after } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -32,6 +32,10 @@ before(async () => {
     NELCODE_E2E_SECRET_TOKEN: 'ne-doit-pas-passer',
   } });
 });
+
+
+// Chaque test part d'autorisations neuves (aucune commande, aucun outil « toujours autorisé » hérité).
+beforeEach(async () => { await A?.resetPermissions(); });
 
 after(async () => {
   await A?.ev(`window.__TAURI__.core.invoke('claude_agent_save_key', { key: '' })`).catch(() => {});   // pas de clé de test laissée dans Windows

@@ -171,7 +171,25 @@ export async function launch({ settings = {}, files = {}, env = {} } = {}) {
 
   await waitFor(`typeof S === 'object' && !!S.info.version && !!S.current`, 30_000, 'démarrage de l\'interface');
   await ev(HELPERS);
+  /**
+   * Les autorisations remises à neuf, comme au premier lancement : aucune commande autorisée, aucun outil MCP
+   * « toujours autorisé », aucun projet où un .html s'ouvre sans confirmation, Claude Agent en mode « default » sans
+   * outils autorisés. Appelé avant chaque test des fichiers qui partagent une application (beforeEach) : un test ne
+   * profite jamais d'un accord donné par un autre.
+   */
+  const resetPermissions = async () => {
+    const changes = { allowedCommands: [], htmlOpenNoAsk: [], claudeAllowedTools: [], claudePermissionMode: 'default' };
+    await ev(`window.__TAURI__.core.invoke('save_settings', { changes: ${JSON.stringify(changes)} }).then((s) => (S.settings = s, true))`);
+    const state = path.join(home, 'mcp-state.json');
+    if (fs.existsSync(state)) {
+      const s = JSON.parse(fs.readFileSync(state, 'utf8'));
+      delete s.always;
+      fs.writeFileSync(state, JSON.stringify(s, null, 2));
+    }
+    const s = await ev(`S.settings`);
+    assert.deepEqual([s.allowedCommands, s.htmlOpenNoAsk, s.claudeAllowedTools, s.claudePermissionMode], [[], [], [], 'default'], 'autorisations remises à neuf');
+  };
   /** Capture d'écran de la fenêtre, en PNG (scripts/captures.mjs). */
   const shot = async (file) => fs.writeFileSync(file, Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
-  return { home, pid: app.pid, ev, waitFor, ask, importAs, close, shot, readJson: (file) => JSON.parse(fs.readFileSync(path.join(home, file), 'utf8')) };
+  return { home, pid: app.pid, ev, waitFor, ask, importAs, close, shot, resetPermissions, readJson: (file) => JSON.parse(fs.readFileSync(path.join(home, file), 'utf8')) };
 }

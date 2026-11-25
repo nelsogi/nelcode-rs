@@ -75,6 +75,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 - Tests : messages codés imités dans une réponse du modèle, un fichier lu, un résultat MCP et une sortie de commande
   (affichés bruts), ancienne conversation toujours traduite ; ouverture d'un `.html` (dossier de travail, disque,
   confirmation, « Ne plus demander pour ce projet »).
+- Tests e2e isolés : chaque fichier a son dossier de données neuf, et dans les fichiers qui partagent une application
+  (agent, MCP, Claude Agent), chaque test repart d'autorisations neuves (`resetPermissions` : aucune commande
+  autorisée, aucun outil MCP « toujours autorisé », aucun projet sans confirmation pour les .html, Claude Agent en mode
+  « default »). Les tests de confirmation échouent si la confirmation est désactivée (vérifié).
 
 ## [1.1.0] - 2026-11-24
 

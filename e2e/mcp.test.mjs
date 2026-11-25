@@ -5,7 +5,7 @@
 // variables secrètes non transmises, serveur de projet jamais lancé sans accord (et nouvel accord quand sa
 // configuration change), page MCP, import de Claude Desktop.
 
-import { test, before, after } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -84,6 +84,10 @@ before(async () => {
   await add('enfant', { command: process.execPath, args: [SERVER, 'stdio', path.join(STATE, 'enfant.jsonl'), '--child'], disabled: true });
   await A.ev(`S.current.workingDirectory = ${JSON.stringify(DIR)}; renderHeader(); true`);
 });
+
+
+// Chaque test part d'autorisations neuves (aucune commande, aucun outil « toujours autorisé » hérité).
+beforeEach(async () => { await A?.resetPermissions(); });
 
 after(async () => {
   await A?.ev(`window.__TAURI__.core.invoke('delete_provider', { id: ${JSON.stringify(PROVIDER)} })`).catch(() => {});
@@ -399,9 +403,7 @@ test('import de Claude Desktop : chaque serveur vérifié, valeurs secrètes hor
 
 test('résultat MCP qui imite un message de Nel Code : affiché tel quel', async () => {
   await start('mcp-imite', 'Imite');
-  // « echo » est déjà toujours autorisé par un test précédent : pas de confirmation.
-  await A.waitFor(`!S.gen || !!${pending()}`, 15_000, 'appel MCP');
-  if (await A.ev(`!!${pending()}`)) await decide('Autoriser');
+  await decide('Autoriser');
   await finish();
   const step = (await lastMsg()).agent.steps.find((s) => s.kind === 'mcp');
   assert.equal(step.v, 2);

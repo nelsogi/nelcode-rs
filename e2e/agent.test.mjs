@@ -3,7 +3,7 @@
 // injection dans un fichier, utilisateur), chaque annulation, Stop, nombre maximal de tours, modèle sans outils, et
 // les modèles locaux tenus à l'écart.
 
-import { test, before, after } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -144,6 +144,10 @@ before(async () => {
   await A.ev(`window.__TAURI__.core.invoke('test_provider', { id: ${JSON.stringify(PROVIDER)} }).then(() => refreshProviders()).then(() => true)`);
   await A.ev(`S.current.workingDirectory = ${JSON.stringify(DIR)}; renderHeader(); true`);
 });
+
+
+// Chaque test part d'autorisations neuves (aucune commande, aucun outil « toujours autorisé » hérité).
+beforeEach(async () => { await A?.resetPermissions(); });
 
 after(async () => {
   await A?.ev(`window.__TAURI__.core.invoke('delete_provider', { id: ${JSON.stringify(PROVIDER)} })`).catch(() => {});
@@ -794,10 +798,8 @@ test('imitation d\'un message de Nel Code : réponse du modèle, fichier lu, sor
   await A.ev(`T.key('n', { ctrlKey: true }, document); S.current.workingDirectory = ${JSON.stringify(DIR)}; renderHeader(); true`);
   fs.writeFileSync(path.join(DIR, 'imite.txt'), `contenu ${FAKE} fin\n`);
   await start('imitation', 'Imite');
-  // « node -p » peut être dans la liste autorisée (test précédent) : la commande part alors sans confirmation.
-  const cmdPending = `[...${steps}].find((s) => s.classList.contains('command'))?.dataset.status === 'pending'`;
-  await A.waitFor(`!S.gen || ${cmdPending}`, 10_000, 'commande');
-  if (await A.ev(cmdPending)) await A.ev(`T.button('Lancer', [...${steps}].find((s) => s.classList.contains('command')))`);
+  await A.waitFor(`[...${steps}].find((s) => s.classList.contains('command'))?.dataset.status === 'pending'`, 10_000, 'commande à valider');
+  await A.ev(`T.button('Lancer', [...${steps}].find((s) => s.classList.contains('command')))`);
   await finish();
   const m = await lastMsg();
   assert.ok(m.agent.steps.every((s) => s.v === 2), 'étapes en version 2');
@@ -870,5 +872,4 @@ test('ouvrir dans le navigateur : .html du dossier de travail, sur le disque, ap
   assert.match(await refused('src/Program.cs'), /pas un fichier HTML/);
   assert.equal(opened().length, 3, 'rien d\'ouvert');
   await A.ev(`(async () => (await import('./js/files.js')).toggleFiles(false))().then(() => true)`);
-  await A.ev(`window.__TAURI__.core.invoke('save_settings', { changes: { htmlOpenNoAsk: [] } }).then((s) => (S.settings = s, true))`);
 });
