@@ -177,6 +177,9 @@ impl Sandbox {
         if ext != "html" && ext != "htm" {
             return Err(t!("rs.open.not_html", path = rel));
         }
+        if let Some(pattern) = self.protected(&abs) {
+            return Err(t!("rs.open.protected", path = rel, pattern = pattern));
+        }
         match fs::symlink_metadata(&abs) {
             Ok(m) if m.is_file() => Ok(abs),
             Ok(_) => Err(t!("rs.main.not_in_workdir", path = rel)),
@@ -348,8 +351,29 @@ pub(crate) fn current(path: &Path) -> Option<String> {
     fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
-/// Écrit le changement, si le fichier n'a pas bougé pendant la validation.
+/// `path` (résolu par le Sandbox : sa partie existante était alors sans lien) passe-t-il maintenant par un lien ou une
+/// jonction : le fichier lui-même, ou un dossier devenu lien depuis (une commande acceptée entre-temps, par exemple) ?
+pub(crate) fn through_link(path: &Path) -> bool {
+    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return true;
+    }
+    let mut existing = path;
+    while fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(p) => existing = p,
+            None => return false,
+        }
+    }
+    // La partie existante n'a pas changé de chemin réel : aucun lien dedans.
+    fs::canonicalize(existing).map_or(true, |c| c != existing)
+}
+
+/// Écrit le changement, si le fichier n'a pas bougé pendant la validation et si son chemin ne passe toujours par aucun
+/// lien (la validation, ou la revue groupée des travailleurs, peut durer : un dossier peut être devenu une jonction).
 pub(crate) fn apply(c: &Change) -> Result<()> {
+    if through_link(&c.path) {
+        return Err(t!("rs.edit.link_meanwhile", path = c.rel));
+    }
     if current(&c.path) != c.before {
         return Err(t!("rs.edit.changed_meanwhile", path = c.rel));
     }
@@ -1668,6 +1692,9 @@ mod tests {
         assert!(sb.html_file("src/a.txt").unwrap_err().fr().contains("HTML"), "autre extension");
         assert!(sb.html_file("src/absente.html").unwrap_err().fr().contains("pas encore écrit"), "pas sur le disque (brouillon)");
         assert!(sb.html_file("dossier.html").is_err(), "un dossier");
+        fs::create_dir_all(d.join(".git")).unwrap();
+        fs::write(d.join(".git/page.html"), "<p>x</p>").unwrap();
+        assert!(sb.html_file(".git/page.html").unwrap_err().fr().contains("protégé"), "fichier protégé");
         for bad in ["../x.html", "C:\\x.html", "/etc/x.html", "src/../../x.html"] {
             assert!(sb.html_file(bad).unwrap_err().fr().contains("dossier de travail"), "{bad}");
         }
@@ -1903,5 +1930,31 @@ mod tests {
         assert!(apply(&edit).unwrap_err().fr().contains("a changé"));
         assert_eq!(fs::read_to_string(d.join("src/a.txt")).unwrap(), "autre");
         fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn ecriture_refusee_si_un_dossier_devient_une_jonction() {
+        // Un fichier à créer (brouillon d'un travailleur, écriture à valider) ; avant l'écriture, son dossier est
+        // remplacé par une jonction vers l'extérieur : rien n'est écrit dehors.
+        let d = tmp();
+        let sb = Sandbox::new(d.to_str().unwrap()).unwrap();
+        let create = plan_write(&sb, "sortie/nouveau.txt", "x").unwrap();
+        let outside = d.with_extension("cible");
+        fs::create_dir_all(&outside).unwrap();
+        let ok = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(d.join("sortie")).arg(&outside).output().is_ok_and(|o| o.status.success());
+        if ok {
+            assert!(through_link(&create.path));
+            assert!(apply(&create).unwrap_err().fr().contains("lien"));
+            assert!(!outside.join("nouveau.txt").exists(), "rien d'écrit hors du dossier");
+        }
+        // Sans lien : écrit.
+        let plain = plan_write(&sb, "propre/b.txt", "b").unwrap();
+        assert!(!through_link(&plain.path));
+        apply(&plain).unwrap();
+        assert_eq!(fs::read_to_string(d.join("propre/b.txt")).unwrap(), "b");
+        let _ = fs::remove_dir(d.join("sortie"));
+        fs::remove_dir_all(&d).unwrap();
+        let _ = fs::remove_dir_all(&outside);
     }
 }

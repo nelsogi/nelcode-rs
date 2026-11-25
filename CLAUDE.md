@@ -85,7 +85,7 @@ pour tout vérifier : la sortie complète coûte cher en tokens.
 - **Pas de connexion Claude.ai** : on utilise l'exécutable `claude` déjà connecté sur le PC, ou une clé API Anthropic.
 - **CHANGELOG à jour** : chaque nouveauté ou correction va dans `CHANGELOG.md` ; README mis à jour si l'usage change.
 - **Un test par nouveauté** : test unitaire Rust et/ou e2e. Pas de commit avec un test qui échoue.
-- **Version actuelle 1.1.0** : les nouveautés vont dans la section [Non publié] du CHANGELOG. La version (Cargo.toml,
+- **Version actuelle 1.2.0** : les nouveautés vont dans la section [Non publié] du CHANGELOG. La version (Cargo.toml,
   CLAUDE.md) ne change qu'au moment d'une publication, où [Non publié] devient [X.Y.Z] avec la date. Ni tag ni release
   tant que demandé.
 - **Git** : commiter directement sur `master` (pas de branche) ; ne pas pousser sans demande. Messages au format

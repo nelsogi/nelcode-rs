@@ -570,7 +570,21 @@ pub fn provider(provider_id: &str, model: &str) -> Result<(String, String, Value
 
 /// Le corps d'une requête de chat : modèle, messages, streaming, et les réglages du modèle (sinon `sampling`).
 /// Avec `omitSampling` (Claude), ni temperature ni top_p. Pour Claude, un `max_tokens` par défaut.
-pub fn chat_body(provider: &Value, model: &str, settings: &Value, messages: Vec<Value>, sampling: (f32, f32)) -> Value {
+pub fn chat_body(provider: &Value, model: &str, settings: &Value, mut messages: Vec<Value>, sampling: (f32, f32)) -> Value {
+    // Un message codé de Nel Code part rendu en français : son secret ne sort jamais (voir i18n.rs).
+    for m in &mut messages {
+        match &mut m["content"] {
+            Value::String(s) => *s = crate::i18n::french(s),
+            Value::Array(parts) => {
+                for p in parts.iter_mut() {
+                    if let Some(t) = p["text"].as_str().map(crate::i18n::french) {
+                        p["text"] = t.into();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     let mut body = json!({
         "model": model,
         "messages": messages,
@@ -916,6 +930,11 @@ mod tests {
     fn corps_sans_temperature_pour_claude() {
         let msgs = vec![json!({ "role": "user", "content": "a" })];
         let openai = chat_body(&json!({}), "m", &json!({}), msgs.clone(), (0.7, 0.9));
+        // Un message codé ne part jamais tel quel (le secret du lancement) : rendu en français, texte et parties.
+        let coded = crate::t!("rs.step.read", path = "a.txt");
+        let b = chat_body(&json!({}), "m", &json!({}), vec![json!({ "role": "user", "content": format!("x {coded}") }), json!({ "role": "user", "content": [{ "type": "text", "text": coded }] })], (0.7, 0.9));
+        let sent = b.to_string();
+        assert!(!sent.contains(crate::i18n::mark()) && sent.contains("x Lecture de a.txt") && sent.contains("\"text\":\"Lecture de a.txt\""), "{sent}");
         assert_eq!((openai["temperature"].as_f64(), openai["top_p"].as_f64()), (Some(0.699999988079071), Some(0.8999999761581421)));
         assert!(openai.get("max_tokens").is_none());
         let claude = chat_body(&json!({ "kind": "anthropic", "omitSampling": true }), "claude-opus-5-5", &json!({ "temperature": 0.2 }), msgs.clone(), (0.7, 0.9));

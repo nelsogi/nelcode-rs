@@ -51,7 +51,7 @@ Nel Code is made first for **Windows**. The **Linux** and **macOS** versions are
 
 ### Windows
 
-1. Download `Nel Code_1.1.0_x64-setup.exe`.
+1. Download `Nel Code_1.2.0_x64-setup.exe`.
 2. Run it (in English or French, depending on Windows' language). The installer is **not signed**: if Windows
    SmartScreen shows "Windows protected your PC", click "More info", then "Run anyway".
 3. **WebView2** is required (already there on up-to-date Windows 10 and 11). If it is missing, the installer installs
@@ -64,9 +64,9 @@ responses.
 
 Two packages, for 64-bit PCs (x86_64) with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36…):
 
-- **AppImage** (`Nel Code_1.1.0_amd64.AppImage`): `chmod +x`, then run it. It **updates itself**. Without FUSE (some
+- **AppImage** (`Nel Code_1.2.0_amd64.AppImage`): `chmod +x`, then run it. It **updates itself**. Without FUSE (some
   recent distributions), install `libfuse2`, or run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **.deb** (Debian, Ubuntu): `sudo apt install "./Nel Code_1.1.0_amd64.deb"`. The package **does not update itself**:
+- **.deb** (Debian, Ubuntu): `sudo apt install "./Nel Code_1.2.0_amd64.deb"`. The package **does not update itself**:
   for a new version, download the new `.deb` and install it the same way.
 
 WebKitGTK 4.1 is required (already there on a recent GNOME or KDE desktop; otherwise the `.deb` installs it). API keys
@@ -75,7 +75,7 @@ cannot keep a key.
 
 ### macOS (experimental)
 
-1. Download `Nel Code_1.1.0_universal.dmg` (Intel and Apple Silicon Macs, macOS 11 or newer), open it and drag Nel Code
+1. Download `Nel Code_1.2.0_universal.dmg` (Intel and Apple Silicon Macs, macOS 11 or newer), open it and drag Nel Code
    into **Applications**.
 2. The app is **not signed** by an Apple developer: on first launch, macOS says it cannot verify the developer (or that
    the app is "damaged"). To open it anyway:
@@ -99,7 +99,7 @@ Then, in Ubuntu:
 ```bash
 sudo apt update && sudo apt install -y libfuse2t64 gnome-keyring
 # The .deb (or the AppImage, with chmod +x) downloaded from the Releases:
-sudo apt install -y "./Nel Code_1.1.0_amd64.deb"
+sudo apt install -y "./Nel Code_1.2.0_amd64.deb"
 # Then Nel Code in the applications menu (WSLg opens its window on Windows).
 ```
 
@@ -162,7 +162,10 @@ The **Files panel** (button on the right of the header, Ctrl+Shift+E) shows the 
 build folders), collapsible folder by folder. Clicking a file shows it, highlighted; a protected file (`.env`, `*.pem`…)
 is only shown after confirmation. Files created (**A**) or changed (**M**) by the agent in the conversation carry a
 badge, and their folders a dot; **Session diff** shows everything that changed since before the agent's first edit (for
-Claude Agent: the diffs of its steps). The panel is read-only.
+Claude Agent: the diffs of its steps). The panel is read-only. An `.html` or `.htm` file has an **Open in browser**
+button (also on an accepted write step): it opens in the default browser, only if it is in the working folder, already
+written to disk and not protected, after a confirmation (its JavaScript will run in the browser; "Don't ask again for
+this project").
 
 ### Chatting
 
@@ -640,8 +643,9 @@ approvals, always-allowed tools, last tool lists) and `logs\mcp\` (each MCP serv
 
 Nel Code runs models that can be wrong or be manipulated (an instruction hidden in a file, a page, a tool result): its
 protections never assume the model is trustworthy. Version 1.0.0 went through a full code review, and the new features of 1.1.0
-(Markdown rendering and links, navigation, settings import, translations, window state) through a targeted one; the
-details are in the [CHANGELOG](CHANGELOG.md) (in French).
+(Markdown rendering and links, navigation, settings import, translations, window state) and 1.2.0 (workers and drafts,
+opening in the browser, coded messages) through a targeted one; the details are in the [CHANGELOG](CHANGELOG.md) (in
+French).
 
 **What is protected**
 
@@ -655,6 +659,10 @@ details are in the [CHANGELOG](CHANGELOG.md) (in French).
 - **Responses**: a model's text never becomes HTML (elements created one by one, raw HTML shown as text); a link only
   opens in the browser, after confirmation, in http or https; images in responses are not loaded; the window never leaves
   the interface.
+- **Nel Code's messages**: text from the model, a file, a command, an MCP server or a sub-agent is never taken for a
+  Nel Code message, even if it imitates its form (`{"$t":…}`): Nel Code's messages are marked with a secret drawn at
+  each launch, which never leaves the application, and the interface receives them as separate objects; the rest is
+  shown as is.
 - **Secret variables**: a single list for agent commands, MCP servers and Claude Agent. A Nel Code variable whose name
   contains `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PWD`, `AUTH`, `CREDENTIAL` or `PRIVATE`, or starts with
   `ANTHROPIC_` or `OPENAI_`, is never passed to them.

@@ -4,6 +4,15 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ## [Non publié]
 
+## [1.2.0] - 2026-11-25
+
+En bref : le mode Agent peut répartir le travail entre des **travailleurs** qui écrivent en parallèle dans un
+brouillon en mémoire (fichiers attribués exclusifs, dépendances `after`, vérification des brouillons par l'agent
+principal, **revue groupée** avant toute écriture) ; un fichier `.html` ou `.htm` **s'ouvre dans le navigateur** après
+confirmation ; la **faille des messages codés** est fermée (un texte du modèle, d'un fichier, d'une commande ou de MCP
+qui imitait un message de Nel Code est affiché tel quel) ; l'**export** comprend les étapes du mode Agent et le
+résultat de la revue, et chaque réponse est signée de son modèle.
+
 ### Ajouté
 
 - **Travailleurs du mode Agent** (`spawn_worker`, `revise_worker`) : l'agent principal fait un plan, attribue chaque
@@ -46,6 +55,19 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 ### Sécurité
 
+Relecture ciblée des nouveautés de la 1.2.0 (travailleurs et brouillons, dépendances `after`, lecture des brouillons par
+l'agent principal, ouverture dans le navigateur, messages codés) :
+
+- **Écriture à travers un lien apparu entre-temps** : une écriture (validée, ou acceptée à la revue groupée des
+  travailleurs, qui peut venir plusieurs minutes après le brouillon) allait au chemin résolu au moment du brouillon. Si
+  un dossier de ce chemin était devenu entre-temps une jonction ou un lien vers l'extérieur (une commande acceptée, par
+  exemple), un fichier créé était écrit hors du dossier de travail. L'écriture revérifie maintenant que le chemin ne
+  passe par aucun lien, sinon rien n'est écrit (« passe maintenant par un lien ou une jonction »).
+- **Le secret des messages codés ne part jamais au modèle** : en plus des résultats d'outils, tout ce qui part au
+  fournisseur (message système, demande, notes de Nel Code, parties texte) est rendu en français au même endroit
+  (`chat_body`).
+- **Ouvrir dans le navigateur** refuse un fichier protégé (motifs par défaut et des réglages), qui n'est jamais montré
+  sans confirmation.
 - **Imitation d'un message de Nel Code** : un texte non fiable (réponse du modèle, contenu d'un fichier, sortie d'une
   commande, résultat MCP, résumé d'un explorateur ou d'un travailleur, réponse d'un serveur) qui contenait
   `{"$t":"clé",…}` était affiché comme un message de Nel Code (« Écriture acceptée »…), traduit, et pouvait imiter une
