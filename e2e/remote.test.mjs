@@ -210,7 +210,7 @@ test('import depuis Qwen Code : fournisseurs, réglages de chaque modèle, clé'
   await A.ev(`openSettings('providers')`);
   await A.waitFor(`T.settings()?.querySelector('.providers-field')`, 10_000);
   await A.ev(`T.button('Importer depuis Qwen Code', T.settings())`);
-  await A.waitFor(`T.toasts().includes('1 fournisseur(s) créé(s), 2 modèle(s) importé(s)')`, 10_000, 'import');
+  await A.waitFor(`T.toasts().includes('1 fournisseur créé, 2 modèles importés')`, 10_000, 'import');
   await A.waitFor(`T.settings().querySelectorAll('.provider-list .item').length === 2`, 5_000);
   await A.ev(`T.key('Escape', {}, document)`);
   const p = A.readJson('settings.json').providers.find((x) => x.url === base);

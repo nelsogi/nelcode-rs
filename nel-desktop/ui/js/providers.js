@@ -50,7 +50,7 @@ export async function providersSection() {
   const qwen = h('button', { class: 'btn', onclick: async () => {
     try {
       const r = await invoke('import_qwen');
-      toast(t('providers.qwen_code_fournisseur_cree_modele', { providers: r.providers, models: r.models, v2: r.keys ? t('providers.cle_rangee_dans', { keystore: S.info.keystore }) : '' }), 'success', 6000);
+      toast(t('providers.qwen_code_fournisseur_cree_modele', { providers: t('providers.n_created', { n: r.providers }), models: t('providers.n_imported', { n: r.models }), v2: r.keys ? t('providers.cle_rangee_dans', { keystore: S.info.keystore }) : '' }), 'success', 6000);
       await refreshProviders(); draw();
     } catch (e) { toast(t('providers.import_depuis_qwen_code', { error: errText(e) }), 'error', 8000); }
   } }, icon('download'), t('providers.importer_depuis_qwen_code'));

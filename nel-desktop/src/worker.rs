@@ -762,7 +762,8 @@ pub(crate) fn discard(run: &mut Run<'_>) {
     }
     if files > 0 {
         crate::log::info(&format!("agent: workers' drafts discarded ({files} file(s))"));
-        run.review_note = Some(format!("{NOTE_HEAD} Stop : les brouillons des travailleurs ont été jetés, rien n'a été écrit ({files} fichier(s)).]"));
+        let n = if files > 1 { format!("{files} fichiers") } else { format!("{files} fichier") };
+        run.review_note = Some(format!("{NOTE_HEAD} Stop : les brouillons des travailleurs ont été jetés, rien n'a été écrit ({n}).]"));
     }
 }
 
@@ -850,12 +851,21 @@ pub(crate) async fn review(run: &mut Run<'_>, cancel: &Notify) -> bool {
             f["decision"] = d.into();
         }
     }
-    run.update(&id, json!({ "status": "done", "workers": groups, "title": t!("rs.step.review_done", accepted = ok, rejected = refused, failed = failed) }));
+    let title = t!("rs.step.review_done", accepted = t!("rs.count.accepted", n = ok), rejected = t!("rs.count.rejected", n = refused), failed = t!("rs.count.failed", n = failed));
+    run.update(&id, json!({ "status": "done", "workers": groups, "title": title }));
     for w in &mut run.workers {
         w.ctx.draft.clear();
     }
     run.review_note = Some(review_note(&n_ok, &n_refused, &n_changed, &n_failed));
     false
+}
+
+/// La note envoyée à l'agent principal quand les travailleurs ont fini, avant sa réponse (vérification `n` sur `max`).
+pub fn verify_note(n: usize, max: usize, files: &[String]) -> String {
+    format!(
+        "Les travailleurs ont fini. Avant de répondre, lis leurs brouillons (read_file, list_files et search les voient, en lecture seule), vérifie qu'ils correspondent entre eux (noms de fichiers, classes, identifiants, fonctions appelées) et corrige avec revise_worker si besoin. Puis réponds. (Vérification {n}/{max} ; fichiers des brouillons : {})",
+        files.join(", ")
+    )
 }
 
 /// Le début de la note pour le modèle.
@@ -958,6 +968,14 @@ mod tests {
         assert_eq!(c.text("src/a/api.js").as_deref(), Some("api"));
         assert_eq!(c.created_under("src"), ["a/api.js"]);
         assert_eq!(c.texts()["src/a/api.js"], "api");
+    }
+
+    #[test]
+    fn note_de_verification() {
+        let n = verify_note(1, 2, &["src/a.js".into(), "src/b.js".into()]);
+        assert!(n.starts_with("Les travailleurs ont fini. Avant de répondre, lis leurs brouillons"));
+        assert!(n.contains("vérifie qu'ils correspondent entre eux (noms de fichiers, classes, identifiants, fonctions appelées) et corrige avec revise_worker si besoin"));
+        assert!(n.ends_with("(Vérification 1/2 ; fichiers des brouillons : src/a.js, src/b.js)"));
     }
 
     #[test]

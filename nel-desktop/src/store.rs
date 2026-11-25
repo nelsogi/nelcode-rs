@@ -171,7 +171,7 @@ pub fn read_package_info(path: &Path) -> Result<serde_json::Value> {
         missing.push("model.safetensors");
     }
     if !missing.is_empty() {
-        return Err(t!("rs.store.missing_files", files = missing.join(", ")));
+        return Err(t!("rs.store.missing_files", n = missing.len(), files = missing.join(", ")));
     }
     let info: serde_json::Value = serde_json::from_slice(&read_zip_entry(&mut zip, "model-info.json", 1 << 20)?)
         .map_err(|e| t!("rs.store.info_unreadable", error = e.to_string()))?;
@@ -484,6 +484,8 @@ fn normalize(mut s: serde_json::Value) -> serde_json::Value {
     s["workerConcurrency"] = (num(&s["workerConcurrency"], 2.0).clamp(1.0, 8.0) as u64).into();
     s["workerMax"] = (num(&s["workerMax"], 4.0).clamp(0.0, 10.0) as u64).into();
     s["workerTurns"] = (num(&s["workerTurns"], 10.0).clamp(1.0, 30.0) as u64).into();
+    // La vérification des brouillons par l'agent principal avant sa réponse : au plus ce nombre de fois (0 : jamais).
+    s["workerVerifyRounds"] = (num(&s["workerVerifyRounds"], 2.0).clamp(0.0, 5.0) as u64).into();
     let wm = &s["workerModel"];
     s["workerModel"] = match (wm["provider"].as_str(), wm["model"].as_str()) {
         (Some(p), Some(m)) if !p.is_empty() && !m.trim().is_empty() => serde_json::json!({ "provider": p, "model": m }),
@@ -575,11 +577,11 @@ pub const DENSITIES: [&str; 3] = ["compact", "normal", "comfortable"];
 /// secret (ils sont dans le trousseau, pas dans settings.json), ni ce qui est propre à ce PC (fournisseurs et leurs
 /// adresses, projets récents, dernier modèle, fenêtre, accords…). Une liste fermée : une clé ajoutée plus tard à
 /// settings.json n'est jamais exportée sans être ajoutée ici.
-pub const PORTABLE_SETTINGS: [&str; 38] = [
+pub const PORTABLE_SETTINGS: [&str; 39] = [
     "language", "theme", "accent", "textSize", "density", "markdown", "autoUpdate",
     "defaultModel", "temperature", "topK", "topP", "maxReplyTokens", "repetitionPenalty", "contextLimit", "summaryThreshold",
     "agentMaxTurns", "commandTimeout", "allowedCommands", "protectedFiles", "explorerConcurrency", "explorerMax", "explorerTurns",
-    "workerConcurrency", "workerMax", "workerTurns",
+    "workerConcurrency", "workerMax", "workerTurns", "workerVerifyRounds",
     "claudeModel", "claudePermissionMode", "claudeAllowedTools", "claudeProjectSettings",
     "mcpStartTimeout", "mcpCallTimeout", "imageMaxSide", "device",
     "budgetMonthly", "budgetConfirm", "prices", "serverEnabled", "serverPort",
@@ -1008,6 +1010,9 @@ mod tests {
         assert_eq!((s["workerConcurrency"].as_u64(), s["workerMax"].as_u64(), s["workerTurns"].as_u64()), (Some(1), Some(10), Some(30)));
         assert_eq!(s["workerModel"], serde_json::json!({ "provider": "p1", "model": "m" }));
         assert!(normalize(serde_json::json!({ "workerModel": { "provider": "p" } }))["workerModel"].is_null());
+        assert_eq!(normalize(serde_json::json!({}))["workerVerifyRounds"], 2);
+        assert_eq!(normalize(serde_json::json!({ "workerVerifyRounds": 9 }))["workerVerifyRounds"], 5);
+        assert_eq!(normalize(serde_json::json!({ "workerVerifyRounds": -1 }))["workerVerifyRounds"], 0);
         assert!(PORTABLE_SETTINGS.contains(&"workerMax") && !PORTABLE_SETTINGS.contains(&"workerModel"), "le modèle (fournisseur de ce PC) ne s'exporte pas");
     }
 }

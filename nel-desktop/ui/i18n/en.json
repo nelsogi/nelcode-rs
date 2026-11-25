@@ -76,9 +76,17 @@
   "agent.review.created": "created",
   "agent.review.hint": "Nothing is written to disk yet. Accept or deny each file, then confirm; a restore point was taken before the request.",
   "agent.review.modified": "modified",
+  "agent.review.n_accepted": {
+    "one": "{n} accepted",
+    "other": "{n} accepted"
+  },
+  "agent.review.n_rejected": {
+    "one": "{n} denied",
+    "other": "{n} denied"
+  },
   "agent.review.reject": "Deny",
   "agent.review.reject_all": "Deny all",
-  "agent.review.validate": "Confirm: {accepted} accepted, {rejected} denied",
+  "agent.review.validate": "Confirm: {accepted}, {rejected}",
   "agent.sk_ant": "sk-ant-…",
   "agent.steps": {
     "one": "{n} step",
@@ -217,6 +225,7 @@
   "conversation.export_me": "Me",
   "conversation.export_review": "Grouped review",
   "conversation.export_steps": "Steps",
+  "conversation.export_task": "Task: {task}",
   "conversation.exporter_markdown": "Export as Markdown…",
   "conversation.exporter_texte": "Export as text…",
   "conversation.fermer": "Close",
@@ -488,6 +497,14 @@
   "mcp.importer_claude_desktop": "Import from Claude Desktop",
   "mcp.importer_fichier": "Import a file…",
   "mcp.journal": "Log",
+  "mcp.n_enabled": {
+    "one": "{n} of {total} enabled",
+    "other": "{n} of {total} enabled"
+  },
+  "mcp.n_tools": {
+    "one": "{n} tool",
+    "other": "{n} tools"
+  },
   "mcp.nom_lettres_chiffres": "name (letters, digits, - and _)",
   "mcp.nom_valeur_par_ligne": "NAME=value (one per line)",
   "mcp.non_autorise": "not approved",
@@ -516,7 +533,7 @@
   "mcp.serveur_mcp_projet": "Project MCP server",
   "mcp.serveur_mcp_refuse_il_ne": "MCP server \"{name}\" denied: it will not start.",
   "mcp.serveurs_globaux": "Global servers: {globalFile}",
-  "mcp.serveurs_mcp_cette_conversation_sur": "This conversation's MCP servers: {on} of {v1} enabled, {v2} tool(s).\nClick: choose the servers.",
+  "mcp.serveurs_mcp_cette_conversation_sur": "This conversation's MCP servers: {enabled}, {tools}.\nClick: choose the servers.",
   "mcp.serveurs_mcp_conversation": "The conversation's MCP servers",
   "mcp.serveurs_projet": "Project servers: {projectFile}",
   "mcp.state.error": "error",
@@ -651,13 +668,21 @@
     "one": "{n} model{key}",
     "other": "{n} models{key}"
   },
+  "providers.n_created": {
+    "one": "{n} provider created",
+    "other": "{n} providers created"
+  },
+  "providers.n_imported": {
+    "one": "{n} model imported",
+    "other": "{n} models imported"
+  },
   "providers.ne_pas_envoyer_temperature_top": "Do not send temperature/top_p",
   "providers.ne_voit_pas": "does not see them",
   "providers.ne_voit_pas_images": "Does not see images",
   "providers.nom_ex_ollama_labo": "Name (e.g. Lab Ollama)",
   "providers.nouveau_fournisseur": "New provider",
   "providers.pas_encore_enregistre": "not saved yet",
-  "providers.qwen_code_fournisseur_cree_modele": "Qwen Code: {providers} provider(s) created, {models} model(s) imported{v2}.",
+  "providers.qwen_code_fournisseur_cree_modele": "Qwen Code: {providers}, {models}{v2}.",
   "providers.retirer_cle": "Remove the key",
   "providers.serveur_compatible_avec_api_openai": "A server compatible with the OpenAI API: llama.cpp, Ollama (http://host:11434/v1), LM Studio… Its models appear in the list with the \"network\" badge. The key goes into the {keystore}, never into settings.json.",
   "providers.serveur_repond_mais_ne_propose": "The server answers, but offers no model.",
@@ -709,6 +734,18 @@
   "rs.commands.bad_name": "invalid name: lowercase letters, digits, \"-\" and \"_\", 40 characters at most",
   "rs.commands.bad_scope": "unknown scope (project or global)",
   "rs.commands.exists": "the /{name} command already exists: {path}",
+  "rs.count.accepted": {
+    "one": "{n} accepted",
+    "other": "{n} accepted"
+  },
+  "rs.count.failed": {
+    "one": "{n} failed",
+    "other": "{n} failed"
+  },
+  "rs.count.rejected": {
+    "one": "{n} denied",
+    "other": "{n} denied"
+  },
   "rs.dialog.add_images": "Add images",
   "rs.dialog.export_conversation": "Export the conversation",
   "rs.dialog.export_settings": "Export settings",
@@ -928,7 +965,7 @@
     "one": "Review of the workers' changes — {n} file",
     "other": "Review of the workers' changes — {n} files"
   },
-  "rs.step.review_done": "Review of the workers' changes: {accepted} accepted, {rejected} denied, {failed} failed",
+  "rs.step.review_done": "Review of the workers' changes: {accepted}, {rejected}, {failed}",
   "rs.step.search": "Search for \"{query}\"",
   "rs.step.search_confirm": "Search for \"{query}\" — {files} to confirm",
   "rs.step.search_confirm_detail": "The search can also go through these protected files (keys, passwords…):\n{files}",
@@ -952,6 +989,7 @@
   "rs.step.stopped": "stopped",
   "rs.step.tool_refused": "Tool refused: {name}",
   "rs.step.unknown_tool": "Unknown tool: {name}",
+  "rs.step.verify": "The agent checks the drafts ({n}/{max})",
   "rs.step.worker": "Worker {worker}: {task}",
   "rs.step.worker_revise": "Correction for worker {worker}",
   "rs.step.worker_title": "Worker",
@@ -966,7 +1004,10 @@
   "rs.store.format_zero": "formatVersion 0 is invalid",
   "rs.store.info_unreadable": "model-info.json unreadable: {error}",
   "rs.store.load_failed": "the model does not load: {error}",
-  "rs.store.missing_files": "file(s) missing from the .nelmodel: {files}",
+  "rs.store.missing_files": {
+    "one": "file missing from the .nelmodel: {files}",
+    "other": "files missing from the .nelmodel: {files}"
+  },
   "rs.store.no_format_version": "model-info.json does not state a formatVersion",
   "rs.store.no_weights": "neither model.safetensors nor weights.dat",
   "rs.store.not_zip": "\"{name}\" is not a valid zip archive",
@@ -1181,6 +1222,8 @@
   "set.workerModel.opt.same": "Same as the agent (default)",
   "set.workerTurns.hint": "How many times a worker may read or write before returning its summary (10 by default; a correction gives as many again).",
   "set.workerTurns.label": "Turns per worker",
+  "set.workerVerifyRounds.hint": "When the workers are done, the agent rereads all their drafts and can ask for corrections before answering, at most this many times (2 by default; 0: no check).",
+  "set.workerVerifyRounds.label": "Checks by the agent",
   "settings-page.active": "on",
   "settings-page.annuler": "Cancel",
   "settings-page.aucun_reglage_ne_correspond": "No setting matches \"{query}\".",

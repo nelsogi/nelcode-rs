@@ -99,6 +99,7 @@ export const SETTINGS = [
   { key: 'workerConcurrency', cat: 'agent', group: 'workers', type: 'range', def: 2, min: 1, max: 8, step: 1 },
   { key: 'workerMax', cat: 'agent', group: 'workers', type: 'range', def: 4, min: 0, max: 10, step: 1 },
   { key: 'workerTurns', cat: 'agent', group: 'workers', type: 'range', def: 10, min: 1, max: 30, step: 1 },
+  { key: 'workerVerifyRounds', cat: 'agent', group: 'workers', type: 'range', def: 2, min: 0, max: 5, step: 1 },
   { key: 'workerModel', cat: 'agent', group: 'workers', type: 'select', def: null, cls: 'worker-model', encode: explorerKey, decode: (v) => (v ? JSON.parse(v) : null),
     options: () => [['', t('set.workerModel.opt.same')], ...S.providers.flatMap((p) => (p.models ?? []).map((m) => [JSON.stringify({ provider: p.id, model: m.id }), `${m.id} — ${p.name}`]))] },
 

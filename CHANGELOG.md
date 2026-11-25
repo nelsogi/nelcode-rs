@@ -30,6 +30,11 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
   les écrire ; les autres brouillons lui restent invisibles. Dépendance inconnue, sur soi-même ou circulaire (même
   indirecte), ou vers un travailleur refusé : refus expliqué à l'agent. Un id de travailleur n'est jamais donné deux
   fois dans une demande.
+- **Vérification par l'agent principal** : quand les travailleurs ont fini, et avant sa réponse finale, l'agent reçoit
+  une note (« Les travailleurs ont fini. Avant de répondre, lis leurs brouillons, vérifie qu'ils correspondent entre
+  eux… et corrige avec revise_worker si besoin ») et peut lire **tous** les brouillons, en lecture seule
+  (`read_file`, `list_files`, `search`). Une étape « Vérification des brouillons par l'agent (1/2) » le montre.
+  Réglages → Agent → Travailleurs : vérifications par l'agent (2 par défaut ; 0 : jamais).
 - **Contrat commun** : le message système demande à l'agent d'écrire dans chaque tâche, mot pour mot, ce qui doit
   correspondre entre les travailleurs (noms de fichiers, classes, identifiants, fonctions et signatures), ou d'utiliser
   `after` quand un fichier doit partir de celui d'un autre.
@@ -38,7 +43,11 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le p
 
 - **Export** : chaque réponse est signée du modèle qui l'a écrite (gardé avec la réponse ; plus jamais « MiniChat »
   pour un autre modèle), et l'export comprend, en version courte, les étapes du mode Agent (outils, explorateurs et
-  travailleurs avec leur nombre d'étapes) et le résultat de la revue groupée, fichier par fichier.
+  travailleurs avec leur nombre d'étapes) et le résultat de la revue groupée, fichier par fichier. La tâche de chaque
+  travailleur y est en entier (le contrat donné par l'agent), jamais coupée.
+- **Pluriels** : « 2 acceptés, 1 refusé », « 1 fournisseur créé, 2 modèles importés », la puce MCP (« 1 sur 3
+  activé, 4 outils ») et les fichiers manquants d'un .nelmodel utilisent les pluriels du système de traduction, au lieu
+  de « (s) » ; de même pour ce qui part au modèle (« 3 lignes inchangées », « plan mis à jour : 2 tâches »).
 - **Réglages → Agent → Travailleurs** : travailleurs en même temps (2), par demande (4 ; 0 : pas de travailleurs),
   tours par travailleur (10) et leur modèle. Exportés avec les réglages portables (sauf le modèle, propre au PC).
 - **Suivi** : les tokens des travailleurs ont leurs lignes (`worker`), comptent dans le budget et dans l'en-tête de la

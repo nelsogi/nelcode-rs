@@ -20,6 +20,8 @@ const workers = [];   // les requêtes des travailleurs
 let active = 0, maxActive = 0;   // les travailleurs en cours de réponse (parallélisme)
 
 const call = (name, args) => ({ name, args });
+// Une tâche longue, sur plusieurs lignes : le contrat donné au travailleur (l'export la garde entière).
+const LONG_TASK = `VA : écris src/va/a.js avec la fonction nom(). ${'Le contrat dit exactement nom, sans autre nom. '.repeat(6)}\nDeuxième ligne du contrat : export function nom() {}`;
 const work = (task, files, plan_task) => call('spawn_worker', plan_task ? { task, files, plan_task } : { task, files });
 // L'agent principal : n = nombre de résultats d'outils déjà reçus → [contenu, appels].
 const MAIN = {
@@ -42,6 +44,15 @@ const MAIN = {
   'chef-stop-vide': () => ['', [work('ATTEND', ['s4'])]],
   'chef-limite': (n) => (n ? ['Limité.', []] : ['', [work('L', ['l1']), work('L', ['l2']), work('L', ['l3'])]]),
   'chef-seul': () => ['OK.', []],
+  // La vérification : n résultats d'outils, v notes « Les travailleurs ont fini » déjà reçues.
+  'chef-verif': (n, b) => {
+    const v = b.messages.filter((m) => m.role === 'user' && m.content?.startsWith('Les travailleurs ont fini.')).length;
+    if (v === 0) return n ? ['Fini sans vérifier.', []] : ['', [work(LONG_TASK, ['src/va']), work('VB', ['src/vb'])]];
+    if (v === 1 && n === 2) return ['Je relis.', [call('read_file', { path: 'src/va/a.js' }), call('list_files', {}), call('search', { query: 'appelle', path: 'src' })]];
+    if (v === 1 && n === 5) return ['', [call('revise_worker', { worker: 'T2', instructions: 'Appelle nom(), défini dans src/va/a.js, et pas name()' })]];
+    if (v === 1) return ['Corrigé.', []];
+    return ['Vérifié.', []];
+  },
   'chef-dep': (n) => (n ? ['Dépendances faites.', []] : ['', [work('BASE', ['src/base']), call('spawn_worker', { task: 'SUITE', files: ['src/suite'], after: ['T1'] }), work('AUTRE', ['src/autre2'])]]),
   'chef-cycle': (n) => (n ? ['Refusé.', []] : ['', [
     call('spawn_worker', { task: 'C1', files: ['c1'], after: ['T2'] }), call('spawn_worker', { task: 'C2', files: ['c2'], after: ['T1'] }),
@@ -71,6 +82,12 @@ const WORKER = (task, n, body) => {
     return n ? ['Trop tard.', [], 15_000] : ['', [call('write_file', { path: `${dir}/x.txt`, content: 'x' })]];
   }
   if (task === 'ATTEND') return ['Trop tard.', [], 15_000];
+  if (task.startsWith('VA : ')) return n ? ['VA fait.', []] : ['', [call('write_file', { path: 'src/va/a.js', content: 'export function nom() {}\n' })]];
+  if (task === 'VB') {
+    const rev = body.messages.findIndex((m) => m.role === 'user' && m.content?.startsWith('Correction demandée'));
+    if (rev > 0) return body.messages.slice(rev).some((m) => m.role === 'tool') ? ['VB corrigé.', []] : ['', [call('edit_file', { path: 'src/vb/b.js', old_text: 'name()', new_text: 'nom()' })]];
+    return n ? ['VB fait.', []] : ['', [call('write_file', { path: 'src/vb/b.js', content: "import { nom } from '../va/a.js';\nappelle name();\n" })]];
+  }
   if (task === 'BASE') return n ? ['Base faite.', []] : ['', [call('write_file', { path: 'src/base/api.js', content: 'export function nom() {}\n' })], 800];
   if (task === 'AUTRE') return n ? ['Autre fait.', []] : ['', [call('write_file', { path: 'src/autre2/z.js', content: 'secret du brouillon\n' })]];
   if (task === 'SUITE') return n ? ['Suite faite.', []] : ['', [
@@ -94,7 +111,7 @@ function chat(res, body) {
     [content, calls, delay] = WORKER(body.messages[1].content, n, body);
   } else {
     chats.push(body);
-    [content, calls, delay] = MAIN[body.model](n) ?? ['?', []];
+    [content, calls, delay] = MAIN[body.model](n, body) ?? ['?', []];
   }
   setTimeout(() => answer(res, content, calls), delay ?? 0);
 }
@@ -216,7 +233,7 @@ test('attribution exclusive, plan des travailleurs, brouillon vu par ses lecture
   await pick('src/ui/old.js', 'rejected');
   assert.equal(await A.ev(`${review}.querySelector('[data-action="validate"]').disabled`), true);
   await pick('src/a.cs', 'accepted');
-  assert.match(await A.ev(`${review}.querySelector('[data-action="validate"]').textContent`), /Valider : 2 accepté\(s\), 1 refusé\(s\)/);
+  assert.match(await A.ev(`${review}.querySelector('[data-action="validate"]').textContent`), /^Valider : 2 acceptés, 1 refusé$/);
   await action('validate');
   await finish();
   assert.equal(read('src/ui/new.js'), 'nouveau\n');
@@ -227,7 +244,7 @@ test('attribution exclusive, plan des travailleurs, brouillon vu par ses lecture
   assert.ok(m.agent.checkpoint?.id, 'point de restauration pris avant');
   const done = m.agent.steps.find((s) => s.kind === 'review');
   assert.equal(done.status, 'done');
-  assert.equal(fr(done.title), 'Revue des changements des travailleurs : 2 accepté(s), 1 refusé(s), 0 en erreur');
+  assert.equal(fr(done.title), 'Revue des changements des travailleurs : 2 acceptés, 1 refusé, 0 en erreur');
   assert.deepEqual(done.workers.flatMap((g) => g.files.map((f) => f.decision)), ['accepted', 'rejected', 'accepted']);
   // Au message suivant, l'agent reçoit une note avec le résultat de la revue, jointe à sa réponse.
   assert.match(m.agent.reviewNote, /Acceptés et écrits : src\/ui\/new\.js, src\/a\.cs\. Refusés par l'utilisateur \(non écrits\) : src\/ui\/old\.js\.\]$/);
@@ -303,7 +320,7 @@ test('brouillon jamais écrit sans accord : Tout refuser ne touche à rien ; Tou
   assert.equal(read('src/neuf/x.js'), 'x\n');
   assert.equal(read('src/autre/y.js'), 'manuel\n');
   m = await lastMsg();
-  assert.equal(fr(m.agent.steps.find((s) => s.kind === 'review').title), 'Revue des changements des travailleurs : 1 accepté(s), 0 refusé(s), 1 en erreur');
+  assert.equal(fr(m.agent.steps.find((s) => s.kind === 'review').title), 'Revue des changements des travailleurs : 1 accepté, 0 refusé, 1 en erreur');
   // Au message suivant, l'agent sait ce qui a vraiment été écrit (Tout refuser, puis Tout accepter avec un conflit).
   await start('chef-seul', 'Qu\'est-ce qui a été écrit ?');
   await finish();
@@ -336,7 +353,7 @@ test('Stop : confirmation si des brouillons existent (Annuler continue), puis to
   assert.deepEqual(m.agent.steps.filter((s) => s.kind === 'worker').map((s) => s.status), ['stopped', 'stopped', 'stopped']);
   assert.deepEqual(m.agent.steps.filter((s) => s.parent && s.kind === 'write').map((s) => s.status), ['discarded', 'discarded']);
   assert.ok(!m.agent.steps.some((s) => s.kind === 'review'));
-  assert.match(m.agent.reviewNote, /Stop : les brouillons des travailleurs ont été jetés, rien n'a été écrit \(2 fichier\(s\)\)/);
+  assert.match(m.agent.reviewNote, /Stop : les brouillons des travailleurs ont été jetés, rien n'a été écrit \(2 fichiers\)/);
   for (const d of ['s1', 's2', 's3']) assert.ok(!exists(d), `rien d'écrit dans ${d}`);
   await sleep(300);
   assert.equal(workers.length - before, 4, 'deux tours chacun pour les deux premiers ; le troisième n\'a jamais commencé');
@@ -377,11 +394,11 @@ test('after : le travailleur attend T1, lit son brouillon sans pouvoir l\'écrir
   const md = await A.ev(`exportText(S.current, true)`);
   assert.ok(!md.includes('MiniChat'), 'plus jamais MiniChat');
   assert.match(md, /\*\*Moi\*\*\n\nFais la base puis la suite\n\n\*\*chef-dep\*\*\n\n\*Étapes\*\n\n/);
-  assert.match(md, /- Travailleur T1 : BASE \(1 étape\)\n- Travailleur T2 : SUITE \(6 étapes\)\n- Travailleur T3 : AUTRE \(1 étape\)\n/);
-  assert.match(md, /\*Revue groupée\*\n\n- Revue des changements des travailleurs : 3 accepté\(s\), 0 refusé\(s\), 0 en erreur\n  - src\/base\/api\.js \(T1\) — acceptée\n  - src\/suite\/use\.js \(T2\) — acceptée\n  - src\/autre2\/z\.js \(T3\) — acceptée\n\nDépendances faites\./);
+  assert.match(md, /- Travailleur T1 : BASE \(1 étape\)\n  - Tâche : BASE\n- Travailleur T2 : SUITE \(6 étapes\)\n  - Tâche : SUITE\n- Travailleur T3 : AUTRE \(1 étape\)\n  - Tâche : AUTRE\n/);
+  assert.match(md, /\*Revue groupée\*\n\n- Revue des changements des travailleurs : 3 acceptés, 0 refusé, 0 en erreur\n  - src\/base\/api\.js \(T1\) — acceptée\n  - src\/suite\/use\.js \(T2\) — acceptée\n  - src\/autre2\/z\.js \(T3\) — acceptée\n\nDépendances faites\./);
   assert.match(md, /\*\*chef\*\*\n\n\*Étapes\*\n\n/, 'les réponses plus anciennes aussi');
   const txt = await A.ev(`exportText(S.current, false)`);
-  assert.match(txt, /> Fais la base puis la suite\n\n● \[chef-dep\]\nÉtapes\n  - Travailleur T1 : BASE \(1 étape\)/);
+  assert.match(txt, /> Fais la base puis la suite\n\n● \[chef-dep\]\nÉtapes\n  - Travailleur T1 : BASE \(1 étape\)\n    - Tâche : BASE\n/);
   for (const d of ['src/base', 'src/suite', 'src/autre2']) fs.rmSync(path.join(DIR, d), { recursive: true });
 });
 
@@ -398,6 +415,44 @@ test('after : dépendance circulaire, sur soi-même ou inconnue refusée, avec l
   const m = await lastMsg();
   assert.deepEqual(m.agent.steps.filter((s) => s.kind === 'worker').map((s) => s.status), ['error', 'error', 'error', 'error']);
   assert.ok(!m.agent.steps.some((s) => s.kind === 'review'));
+});
+
+test('vérification : les travailleurs ont fini, l\'agent reçoit la note, lit tous les brouillons, corrige avec revise_worker ; 2 fois au plus ; 0 : jamais', async () => {
+  await start('chef-verif', 'Fais VA et VB, et vérifie');
+  await reviewPending();
+  const body = chats.at(-1);
+  const notes = body.messages.filter((m) => m.role === 'user' && m.content.startsWith('Les travailleurs ont fini.')).map((m) => m.content);
+  assert.equal(notes.length, 2, 'deux vérifications (réglage par défaut)');
+  assert.match(notes[0], /^Les travailleurs ont fini\. Avant de répondre, lis leurs brouillons .*vérifie qu'ils correspondent entre eux \(noms de fichiers, classes, identifiants, fonctions appelées\) et corrige avec revise_worker si besoin\. Puis réponds\. \(Vérification 1\/2 ; fichiers des brouillons : src\/va\/a\.js, src\/vb\/b\.js\)$/);
+  assert.match(notes[1], /\(Vérification 2\/2 ;/);
+  // L'agent principal lit tous les brouillons (le disque n'a encore rien).
+  const r = body.messages.filter((x) => x.role === 'tool').map((x) => x.content);
+  assert.match(r[2], /1  export function nom\(\) \{\}/, 'read_file : le brouillon de T1');
+  assert.ok(r[3].split('\n').includes('src/va/a.js') && r[3].split('\n').includes('src/vb/b.js'), 'list_files : les deux brouillons');
+  assert.match(r[4], /^src\/vb\/b\.js:2: appelle name\(\);/, 'search : le brouillon de T2');
+  assert.match(r[5], /^Travailleur T2 \(« VB »\) : terminé\.\nRésumé :\nVB corrigé\./, 'revise_worker après la vérification');
+  assert.ok(!exists('src/va/a.js') && !exists('src/vb/b.js'));
+  const steps = await genSteps();
+  assert.deepEqual(steps.filter((s) => s.kind === 'verify').map((s) => fr(s.title)), ['Vérification des brouillons par l\'agent (1/2)', 'Vérification des brouillons par l\'agent (2/2)']);
+  assert.ok(steps.some((s) => !s.parent && s.kind === 'read' && s.path === 'src/va/a.js' && s.draft), 'lecture du brouillon par l\'agent');
+  await action('accept_all');
+  await finish();
+  const m = await lastMsg();
+  assert.equal(m.content, 'Vérifié.');
+  assert.equal(read('src/vb/b.js'), "import { nom } from '../va/a.js';\nappelle nom();\n");
+  // L'export garde la tâche entière, sur plusieurs lignes.
+  const md = await A.ev(`exportText(S.current, true)`);
+  assert.ok(md.includes(`  - Tâche : ${LONG_TASK.replace('\n', '\n    ')}\n`), 'tâche entière dans l\'export');
+  for (const d of ['src/va', 'src/vb']) fs.rmSync(path.join(DIR, d), { recursive: true });
+  // 0 : pas de vérification, la réponse part tout de suite.
+  await settings({ workerVerifyRounds: 0 });
+  await start('chef-verif', 'Sans vérifier');
+  await reviewPending();
+  assert.ok(!chats.at(-1).messages.some((m) => m.role === 'user' && m.content.startsWith('Les travailleurs ont fini.')));
+  await action('reject_all');
+  await finish();
+  assert.equal((await lastMsg()).content, 'Fini sans vérifier.');
+  await settings({ workerVerifyRounds: 2 });
 });
 
 test('limites (travailleurs par demande, tours), 0 : pas de travailleurs ; réglages ; modèle des travailleurs', async () => {
@@ -429,7 +484,7 @@ test('limites (travailleurs par demande, tours), 0 : pas de travailleurs ; régl
   // Les réglages : trois curseurs et le choix du modèle, dans le groupe « Travailleurs ».
   await A.ev(`openSettings('agent')`);
   await A.waitFor(`T.settings()?.textContent.includes('Travailleurs en même temps')`, 10_000);
-  assert.ok(await A.ev(`T.settings().textContent.includes('Travailleurs par demande') && T.settings().textContent.includes('Tours par travailleur')`));
+  assert.ok(await A.ev(`T.settings().textContent.includes('Travailleurs par demande') && T.settings().textContent.includes('Tours par travailleur') && T.settings().textContent.includes("Vérifications par l'agent")`));
   assert.equal(await A.ev(`T.settings().querySelector('select.worker-model').value`), '');
   await A.ev(`T.key('Escape', {}, document)`);
 });

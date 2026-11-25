@@ -273,7 +273,8 @@ pub fn diff(before: &str, after: &str) -> Vec<(char, String)> {
             while k < lines.len() && !near[k] {
                 k += 1;
             }
-            out.push(('…', format!("{} ligne(s) inchangée(s)", k - start)));
+            let n = k - start;
+            out.push(('…', format!("{n} {}", if n > 1 { "lignes inchangées" } else { "ligne inchangée" })));
         }
     }
     out
@@ -737,10 +738,31 @@ impl<'a> Run<'a> {
         !matches!(self.role, Role::Main)
     }
 
-    fn worker(&mut self) -> Option<&mut crate::worker::Ctx> {
-        match &mut self.role {
-            Role::Worker(c) => Some(c),
-            _ => None,
+    /// Le texte d'un fichier dans les brouillons visibles : pour un travailleur, le sien puis ceux de ses dépendances ;
+    /// pour l'agent principal, ceux de tous les travailleurs (lecture seule, pour vérifier avant de répondre).
+    fn draft_text(&self, rel: &str) -> Option<String> {
+        match &self.role {
+            Role::Worker(c) => c.text(rel),
+            Role::Main => self.workers.iter().find_map(|w| w.ctx.draft.get(rel).map(|d| d.after.clone())),
+            Role::Explorer => None,
+        }
+    }
+
+    /// Les fichiers créés dans les brouillons visibles, sous `dir` (relatifs à `dir`).
+    fn draft_created_under(&self, dir: &str) -> Vec<String> {
+        match &self.role {
+            Role::Worker(c) => c.created_under(dir),
+            Role::Main => self.workers.iter().flat_map(|w| crate::worker::Ctx { draft: w.ctx.draft.clone(), ..Default::default() }.created_under(dir)).collect(),
+            Role::Explorer => vec![],
+        }
+    }
+
+    /// Les textes des brouillons visibles, par chemin relatif.
+    fn draft_texts(&self) -> HashMap<String, String> {
+        match &self.role {
+            Role::Worker(c) => c.texts(),
+            Role::Main => self.workers.iter().flat_map(|w| w.ctx.draft.iter().map(|(k, d)| (k.clone(), d.after.clone()))).collect(),
+            Role::Explorer => HashMap::new(),
         }
     }
 
@@ -815,10 +837,11 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
             match sb.resolve(path).and_then(|d| if d.is_dir() { Ok(d) } else { Err(t!("rs.sandbox.not_a_folder", path = path)) }) {
                 Ok(dir) => {
                     let mut files = walk(&dir);
-                    // Un travailleur voit aussi les fichiers créés dans son brouillon.
+                    // Les fichiers créés dans les brouillons visibles (travailleur, ou agent principal qui vérifie).
                     let dir_rel = sb.rel(&dir);
-                    if let Some(w) = run.worker() {
-                        files.extend(w.created_under(&dir_rel));
+                    let created = run.draft_created_under(&dir_rel);
+                    if !created.is_empty() {
+                        files.extend(created);
                         files.sort();
                         files.dedup();
                     }
@@ -864,8 +887,8 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
                     }
                 }
             }
-            // Un travailleur lit son brouillon d'abord.
-            let drafted = run.worker().and_then(|w| w.text(&rel));
+            // Un travailleur lit son brouillon d'abord ; l'agent principal, ceux des travailleurs.
+            let drafted = run.draft_text(&rel);
             let is_draft = drafted.is_some();
             match drafted.map_or_else(|| read_text(&abs, &rel), Ok).map(|t| (rel.clone(), t)) {
                 Ok((rel, text)) => {
@@ -906,14 +929,13 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
                     let mut skipped = String::new();
                     let mut confirmed = None;
                     let mut searched = files;
-                    // Un travailleur cherche dans son brouillon (fichiers modifiés et créés).
-                    let mut overlay: HashMap<String, String> = HashMap::new();
+                    // Les brouillons visibles : fichiers modifiés et créés.
                     let dir_rel = sb.rel(&dir);
-                    if let Some(w) = run.worker() {
-                        searched.extend(w.created_under(&dir_rel));
+                    let overlay = run.draft_texts();
+                    if !overlay.is_empty() {
+                        searched.extend(run.draft_created_under(&dir_rel));
                         searched.sort();
                         searched.dedup();
-                        overlay = w.texts();
                     }
                     if !protected.is_empty() && run.helper() {
                         // Un explorateur ou un travailleur ne parcourt jamais les fichiers protégés (il ne peut pas demander).
@@ -1041,7 +1063,7 @@ async fn exec(run: &mut Run<'_>, sb: &Sandbox, name: &str, args: &Value, cancel:
                 let n = tasks.len();
                 run.plan = Value::Array(tasks);
                 let _ = run.app.emit("agent-plan", json!({ "request": run.request, "tasks": run.plan }));
-                Done::Result(format!("plan mis à jour : {n} tâche(s), {done} faite(s)"))
+                Done::Result(format!("plan mis à jour : {}, {done} {}", plural(n, "tâche"), if done > 1 { "faites" } else { "faite" }))
             }
             Err(e) => fail(run, "plan", "Plan".into(), e),
         },
@@ -1479,6 +1501,10 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
         let mut messages = vec![json!({ "role": "system", "content": system })];
         messages.extend(remote::fit(history, message, images, m["contextLength"].as_u64(), m["maxTokens"].as_u64().unwrap_or(1024)));
         let percent = settings["summaryThreshold"].as_u64().unwrap_or(80);
+        // La vérification des brouillons par l'agent principal, avant sa réponse : au plus `verify_max` fois, et
+        // seulement si des travailleurs ont travaillé depuis la dernière.
+        let verify_max = settings["workerVerifyRounds"].as_u64().unwrap_or(2) as usize;
+        let (mut rounds, mut unverified) = (0, false);
         for turn_no in 0..max_turns {
             let shrunk = shrink_if_full(&mut messages, m["contextLength"].as_u64(), percent);
             if shrunk > 0 {
@@ -1497,6 +1523,21 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
             tokens += t.tokens;
             prompt_tokens += t.prompt_tokens; // chaque tour renvoie tout le contexte : c'est ce qui est facturé
             if t.stopped || t.tool_calls.is_empty() {
+                let drafted: Vec<String> = run.workers.iter().flat_map(|w| w.ctx.draft.keys().cloned()).collect();
+                // Les travailleurs ont fini : avant la réponse finale, l'agent relit leurs brouillons (s'il reste un tour).
+                if !t.stopped && unverified && rounds < verify_max && !drafted.is_empty() && turn_no + 1 < max_turns {
+                    rounds += 1;
+                    unverified = false;
+                    if !t.content.trim().is_empty() {
+                        run.step(json!({ "kind": "note", "title": short(&t.content, 90), "detail": t.content.trim(), "status": "done" }));
+                        messages.push(json!({ "role": "assistant", "content": t.content }));
+                    }
+                    run.step(json!({ "kind": "verify", "title": t!("rs.step.verify", n = rounds, max = verify_max), "detail": drafted.join("\n"), "status": "done" }));
+                    let _ = app.emit("agent-clear", ());
+                    messages.push(json!({ "role": "user", "content": crate::worker::verify_note(rounds, verify_max, &drafted) }));
+                    crate::log::info(&format!("agent: workers' drafts sent for verification ({rounds}/{verify_max})"));
+                    continue;
+                }
                 (text, stopped) = (t.content, t.stopped);
                 return Ok(());
             }
@@ -1531,7 +1572,9 @@ pub async fn run(app: &AppHandle, provider_id: &str, model: &str, history: &[(St
                         let name = calls[i]["function"]["name"].as_str().unwrap_or_default().to_string();
                         vec![fail(&mut run, "error", t!("rs.step.unknown_tool", name = name), t!("rs.worker.disabled"))]
                     } else {
-                        crate::worker::work_all(&mut run, &sb, &calls[i..i + n], &workers, &cancel).await
+                        let outs = crate::worker::work_all(&mut run, &sb, &calls[i..i + n], &workers, &cancel).await;
+                        unverified |= run.workers.iter().any(|w| !w.ctx.draft.is_empty());
+                        outs
                     }
                 } else {
                     vec![call_tool(&mut run, &sb, &calls[i], &cancel).await]
@@ -1803,7 +1846,7 @@ mod tests {
         assert_eq!(k(diff("", "x\ny")), ["+x", "+y"]);
         let long: String = (0..20).map(|i| format!("l{i}\n")).collect();
         let changed = long.replace("l10\n", "L10\n");
-        assert_eq!(k(diff(&long, &changed)), ["…7 ligne(s) inchangée(s)", " l7", " l8", " l9", "-l10", "+L10", " l11", " l12", " l13", "…6 ligne(s) inchangée(s)"]);
+        assert_eq!(k(diff(&long, &changed)), ["…7 lignes inchangées", " l7", " l8", " l9", "-l10", "+L10", " l11", " l12", " l13", "…6 lignes inchangées"]);
         assert_eq!(k(diff("a\nb", "a\nx\nb")), [" a", "+x", " b"]);
     }
 

@@ -106,7 +106,7 @@ export function toggleAgent() {
   toast(s.agent ? t('agent.mode_agent_peut_lire_fichiers', { name: S.model.name, v1: s.workingDirectory || '(aucun dossier)' }) : t('agent.mode_agent_desactive'), '', 4000);
 }
 
-export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot', mcp: 'plug', worker: 'hammer', review: 'list-checks' };   // i18n-ignore (noms d'icônes)
+export const STEP_ICONS = { list: 'folder', read: 'eye', search: 'search', write: 'file-plus', edit: 'pencil', note: 'asterisk', error: 'circle-alert', command: 'terminal', plan: 'list-checks', explorer: 'bot', mcp: 'plug', worker: 'hammer', review: 'list-checks', verify: 'eye' };   // i18n-ignore (noms d'icônes)
 
 // Les états d'une étape et d'une tâche du plan : des clés (step.status.*, plan.status.*), traduites à l'affichage.
 export const STEP_STATUS = Object.fromEntries(['pending', 'accepted', 'rejected', 'undone', 'error', 'running', 'stopped', 'waiting', 'draft', 'discarded'].map((k) => [k, 'step.status.' + k]));
@@ -227,7 +227,7 @@ function reviewEl(st, m) {
   const all = paths.every((p) => choice.has(p));
   box.append(h('div', { class: 'row-btns review-actions' },
     h('button', { class: 'btn primary', 'data-action': 'validate', disabled: !all, onclick: (e) => send('agent_review', { accepted }, e) }, icon('check'),
-      t('agent.review.validate', { accepted: accepted.length, rejected: paths.length - accepted.length })),
+      t('agent.review.validate', { accepted: t('agent.review.n_accepted', { n: accepted.length }), rejected: t('agent.review.n_rejected', { n: paths.length - accepted.length }) })),
     h('button', { class: 'btn', 'data-action': 'accept_all', onclick: (e) => send('agent_decide', { decision: 'accept_all' }, e) }, t('agent.review.accept_all')),
     h('button', { class: 'btn', 'data-action': 'reject_all', onclick: (e) => send('agent_decide', { decision: 'reject' }, e) }, t('agent.review.reject_all'))));
   return box;

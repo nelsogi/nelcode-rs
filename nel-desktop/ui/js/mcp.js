@@ -49,7 +49,7 @@ export async function refreshMcp() {
   const on = avail.filter((x) => x.on).length;
   chip.classList.toggle('on', on > 0);
   chip.replaceChildren(icon('plug'), h('span', {}, `MCP ${on}/${avail.length}`));
-  chip.title = t('mcp.serveurs_mcp_cette_conversation_sur', { on: on, v1: avail.length, v2: ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tools, 0) });
+  chip.title = t('mcp.serveurs_mcp_cette_conversation_sur', { enabled: t('mcp.n_enabled', { n: on, total: avail.length }), tools: t('mcp.n_tools', { n: ctx.servers.filter((x) => x.on).reduce((a, x) => a + x.tools, 0) }) });
   if (!$('menu').hidden && $('menu').classList.contains('mcp-pop')) drawPopover();
   refreshContext();
   checkApprovals();

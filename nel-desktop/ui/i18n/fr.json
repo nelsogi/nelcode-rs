@@ -76,9 +76,17 @@
   "agent.review.created": "créé",
   "agent.review.hint": "Rien n'est encore écrit sur le disque. Accepte ou refuse chaque fichier, puis valide ; un point de restauration a été pris avant la demande.",
   "agent.review.modified": "modifié",
+  "agent.review.n_accepted": {
+    "one": "{n} accepté",
+    "other": "{n} acceptés"
+  },
+  "agent.review.n_rejected": {
+    "one": "{n} refusé",
+    "other": "{n} refusés"
+  },
   "agent.review.reject": "Refuser",
   "agent.review.reject_all": "Tout refuser",
-  "agent.review.validate": "Valider : {accepted} accepté(s), {rejected} refusé(s)",
+  "agent.review.validate": "Valider : {accepted}, {rejected}",
   "agent.sk_ant": "sk-ant-…",
   "agent.steps": {
     "one": "{n} étape",
@@ -217,6 +225,7 @@
   "conversation.export_me": "Moi",
   "conversation.export_review": "Revue groupée",
   "conversation.export_steps": "Étapes",
+  "conversation.export_task": "Tâche : {task}",
   "conversation.exporter_markdown": "Exporter en Markdown…",
   "conversation.exporter_texte": "Exporter en texte…",
   "conversation.fermer": "Fermer",
@@ -488,6 +497,14 @@
   "mcp.importer_claude_desktop": "Importer de Claude Desktop",
   "mcp.importer_fichier": "Importer un fichier…",
   "mcp.journal": "Journal",
+  "mcp.n_enabled": {
+    "one": "{n} sur {total} activé",
+    "other": "{n} sur {total} activés"
+  },
+  "mcp.n_tools": {
+    "one": "{n} outil",
+    "other": "{n} outils"
+  },
   "mcp.nom_lettres_chiffres": "nom (lettres, chiffres, - et _)",
   "mcp.nom_valeur_par_ligne": "NOM=valeur (une par ligne)",
   "mcp.non_autorise": "non autorisé",
@@ -516,7 +533,7 @@
   "mcp.serveur_mcp_projet": "Serveur MCP du projet",
   "mcp.serveur_mcp_refuse_il_ne": "Serveur MCP « {name} » refusé : il ne démarrera pas.",
   "mcp.serveurs_globaux": "Serveurs globaux : {globalFile}",
-  "mcp.serveurs_mcp_cette_conversation_sur": "Serveurs MCP de cette conversation : {on} sur {v1} activé(s), {v2} outil(s).\nClic : choisir les serveurs.",
+  "mcp.serveurs_mcp_cette_conversation_sur": "Serveurs MCP de cette conversation : {enabled}, {tools}.\nClic : choisir les serveurs.",
   "mcp.serveurs_mcp_conversation": "Serveurs MCP de la conversation",
   "mcp.serveurs_projet": "Serveurs du projet : {projectFile}",
   "mcp.state.error": "erreur",
@@ -651,13 +668,21 @@
     "one": "{n} modèle{key}",
     "other": "{n} modèles{key}"
   },
+  "providers.n_created": {
+    "one": "{n} fournisseur créé",
+    "other": "{n} fournisseurs créés"
+  },
+  "providers.n_imported": {
+    "one": "{n} modèle importé",
+    "other": "{n} modèles importés"
+  },
   "providers.ne_pas_envoyer_temperature_top": "Ne pas envoyer temperature/top_p",
   "providers.ne_voit_pas": "ne les voit pas",
   "providers.ne_voit_pas_images": "Ne voit pas les images",
   "providers.nom_ex_ollama_labo": "Nom (ex. Ollama du labo)",
   "providers.nouveau_fournisseur": "Nouveau fournisseur",
   "providers.pas_encore_enregistre": "pas encore enregistré",
-  "providers.qwen_code_fournisseur_cree_modele": "Qwen Code : {providers} fournisseur(s) créé(s), {models} modèle(s) importé(s){v2}.",
+  "providers.qwen_code_fournisseur_cree_modele": "Qwen Code : {providers}, {models}{v2}.",
   "providers.retirer_cle": "Retirer la clé",
   "providers.serveur_compatible_avec_api_openai": "Un serveur compatible avec l'API OpenAI : llama.cpp, Ollama (http://hôte:11434/v1), LM Studio… Ses modèles apparaissent dans la liste avec le badge « réseau ». La clé va dans le {keystore}, jamais dans settings.json.",
   "providers.serveur_repond_mais_ne_propose": "Le serveur répond, mais ne propose aucun modèle.",
@@ -709,6 +734,18 @@
   "rs.commands.bad_name": "nom invalide : lettres minuscules, chiffres, « - » et « _ », 40 caractères au plus",
   "rs.commands.bad_scope": "portée inconnue (project ou global)",
   "rs.commands.exists": "la commande /{name} existe déjà : {path}",
+  "rs.count.accepted": {
+    "one": "{n} accepté",
+    "other": "{n} acceptés"
+  },
+  "rs.count.failed": {
+    "one": "{n} en erreur",
+    "other": "{n} en erreur"
+  },
+  "rs.count.rejected": {
+    "one": "{n} refusé",
+    "other": "{n} refusés"
+  },
   "rs.dialog.add_images": "Ajouter des images",
   "rs.dialog.export_conversation": "Exporter la conversation",
   "rs.dialog.export_settings": "Exporter les réglages",
@@ -928,7 +965,7 @@
     "one": "Revue des changements des travailleurs — {n} fichier",
     "other": "Revue des changements des travailleurs — {n} fichiers"
   },
-  "rs.step.review_done": "Revue des changements des travailleurs : {accepted} accepté(s), {rejected} refusé(s), {failed} en erreur",
+  "rs.step.review_done": "Revue des changements des travailleurs : {accepted}, {rejected}, {failed}",
   "rs.step.search": "Recherche de \"{query}\"",
   "rs.step.search_confirm": "Recherche de \"{query}\" — {files} à confirmer",
   "rs.step.search_confirm_detail": "La recherche peut aussi parcourir ces fichiers protégés (clés, mots de passe…) :\n{files}",
@@ -952,6 +989,7 @@
   "rs.step.stopped": "arrêté",
   "rs.step.tool_refused": "Outil refusé : {name}",
   "rs.step.unknown_tool": "Outil inconnu : {name}",
+  "rs.step.verify": "Vérification des brouillons par l'agent ({n}/{max})",
   "rs.step.worker": "Travailleur {worker} : {task}",
   "rs.step.worker_revise": "Correction du travailleur {worker}",
   "rs.step.worker_title": "Travailleur",
@@ -966,7 +1004,10 @@
   "rs.store.format_zero": "formatVersion 0 invalide",
   "rs.store.info_unreadable": "model-info.json illisible : {error}",
   "rs.store.load_failed": "le modèle ne se charge pas : {error}",
-  "rs.store.missing_files": "fichier(s) manquant(s) dans le .nelmodel : {files}",
+  "rs.store.missing_files": {
+    "one": "fichier manquant dans le .nelmodel : {files}",
+    "other": "fichiers manquants dans le .nelmodel : {files}"
+  },
   "rs.store.no_format_version": "model-info.json n'indique pas de formatVersion",
   "rs.store.no_weights": "ni model.safetensors ni weights.dat",
   "rs.store.not_zip": "« {name} » n'est pas une archive zip valide",
@@ -1181,6 +1222,8 @@
   "set.workerModel.opt.same": "Le même que l'agent (par défaut)",
   "set.workerTurns.hint": "Combien de fois un travailleur peut lire ou écrire avant de rendre son résumé (10 par défaut ; une correction en redonne autant).",
   "set.workerTurns.label": "Tours par travailleur",
+  "set.workerVerifyRounds.hint": "Quand les travailleurs ont fini, l'agent relit tous leurs brouillons et peut demander des corrections avant de répondre, au plus ce nombre de fois (2 par défaut ; 0 : pas de vérification).",
+  "set.workerVerifyRounds.label": "Vérifications par l'agent",
   "settings-page.active": "activé",
   "settings-page.annuler": "Annuler",
   "settings-page.aucun_reglage_ne_correspond": "Aucun réglage ne correspond à « {query} ».",

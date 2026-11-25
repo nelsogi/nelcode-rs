@@ -124,8 +124,10 @@ export function stepsText(m, markdown) {
   for (const st of steps) if (st.parent) count[st.parent] = (count[st.parent] ?? 0) + 1;
   const status = (k) => (STEP_STATUS[k] ? ` — ${t(STEP_STATUS[k])}` : '');
   const block = (head, lines) => (markdown ? `*${head}*\n\n${lines.join('\n')}\n\n` : `${head}\n${lines.map((l) => `  ${l}`).join('\n')}\n\n`);
+  // Un travailleur : sa tâche entière (le contrat donné par l'agent), jamais coupée.
+  const task = (st) => (st.kind === 'worker' && st.task ? [`  - ${t('conversation.export_task', { task: st.task.replace(/\n/g, '\n    ') })}`] : []);
   let text = block(t('conversation.export_steps'), steps.filter((st) => !st.parent && st.kind !== 'review')
-    .map((st) => `- ${tr(st.title)}${count[st.id] ? ` (${t('agent.steps', { n: count[st.id] })})` : ''}${status(st.status)}`));
+    .flatMap((st) => [`- ${tr(st.title)}${count[st.id] ? ` (${t('agent.steps', { n: count[st.id] })})` : ''}${status(st.status)}`, ...task(st)]));
   const rv = steps.find((st) => st.kind === 'review');
   if (rv) text += block(t('conversation.export_review'), [`- ${tr(rv.title)}${status(rv.status)}`,
     ...(rv.workers ?? []).flatMap((g) => g.files.map((f) => `  - ${f.path} (${g.worker})${status(f.decision)}`))]);
